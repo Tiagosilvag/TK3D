@@ -1,7 +1,8 @@
 import type { ProductCostBreakdown } from '@/lib/costing'
+import { formatCurrency } from '@/lib/format'
 
 function money(value: number): string {
-  return `R$ ${value.toFixed(2)}`
+  return formatCurrency(value)
 }
 
 const ROWS: { key: keyof ProductCostBreakdown; label: string }[] = [
