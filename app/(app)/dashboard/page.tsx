@@ -4,6 +4,7 @@ import {
   getTotalWasteCost,
   getTopProducts,
   getConsignmentStockSummary,
+  getConsignmentRevenue,
 } from '@/lib/reports'
 
 // This page aggregates data mutated by actions on several other routes
@@ -25,16 +26,18 @@ function EmptyState({ children }: { children: React.ReactNode }) {
 }
 
 export default async function DashboardPage() {
-  const [revenue, wasteCost, topProducts, consignmentStock] = await Promise.all([
+  const [revenue, wasteCost, topProducts, consignmentStock, consignmentRevenue] = await Promise.all([
     getRevenueByChannel(),
     getTotalWasteCost(),
     getTopProducts(5),
     getConsignmentStockSummary(),
+    getConsignmentRevenue(),
   ])
 
-  const totalRevenue = revenue.DIRETA + revenue.MARKETPLACE
+  const totalRevenue = revenue.DIRETA + revenue.MARKETPLACE + consignmentRevenue
   const diretaShare = totalRevenue > 0 ? (revenue.DIRETA / totalRevenue) * 100 : 0
-  const marketplaceShare = totalRevenue > 0 ? 100 - diretaShare : 0
+  const marketplaceShare = totalRevenue > 0 ? (revenue.MARKETPLACE / totalRevenue) * 100 : 0
+  const consignmentShare = totalRevenue > 0 ? 100 - diretaShare - marketplaceShare : 0
   const consignmentUnits = consignmentStock.reduce((sum, s) => sum + s.remaining, 0)
 
   const consignmentByPartner = [...consignmentStock]
@@ -73,6 +76,12 @@ export default async function DashboardPage() {
               </dt>
               <dd className="mt-1 text-lg font-semibold tabular-nums text-slate-900">{currency.format(revenue.MARKETPLACE)}</dd>
             </div>
+            <div>
+              <dt className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                <span className="h-2 w-2 rounded-full bg-amber-400" /> Consignação
+              </dt>
+              <dd className="mt-1 text-lg font-semibold tabular-nums text-slate-900">{currency.format(consignmentRevenue)}</dd>
+            </div>
           </dl>
         </div>
         <div className="mt-6 flex h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
@@ -80,6 +89,7 @@ export default async function DashboardPage() {
             <>
               <div className="h-full bg-emerald-500" style={{ width: `${diretaShare}%` }} />
               <div className="h-full bg-slate-300" style={{ width: `${marketplaceShare}%` }} />
+              <div className="h-full bg-amber-400" style={{ width: `${consignmentShare}%` }} />
             </>
           ) : null}
         </div>

@@ -28,6 +28,15 @@ export async function getTotalWasteCost(): Promise<number> {
   }, 0)
 }
 
+export async function getConsignmentRevenue(): Promise<number> {
+  const reports = await prisma.consignmentSaleReport.findMany({ include: { delivery: true } })
+  return reports.reduce((sum, r) => {
+    const unitPrice = r.delivery.unitPrice.toNumber()
+    const commission = r.commissionPercent.toNumber()
+    return sum + r.quantitySold * unitPrice * (1 - commission)
+  }, 0)
+}
+
 export async function getTopProducts(limit = 5) {
   const grouped = await prisma.sale.groupBy({
     by: ['productId'],

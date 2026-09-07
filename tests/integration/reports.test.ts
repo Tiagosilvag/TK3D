@@ -5,6 +5,7 @@ import {
   getTotalWasteCost,
   getTopProducts,
   getConsignmentStockSummary,
+  getConsignmentRevenue,
 } from '@/lib/reports'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
@@ -116,6 +117,38 @@ describe('getTopProducts', () => {
     }
     const top = await getTopProducts(5)
     expect(top).toHaveLength(5)
+  })
+})
+
+describe('getConsignmentRevenue', () => {
+  it('soma o repasse (quantidade * preço unitário * (1 - comissão)) de todos os relatórios de venda', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+
+    const deliveryA = await prisma.consignmentDelivery.create({
+      data: { partnerId: partner.id, productId: product.id, quantityDelivered: 10, unitPrice: 25, deliveryDate: new Date() },
+    })
+    await prisma.consignmentSaleReport.create({
+      data: { deliveryId: deliveryA.id, quantitySold: 4, reportDate: new Date(), commissionPercent: 0.3 },
+    })
+
+    const deliveryB = await prisma.consignmentDelivery.create({
+      data: { partnerId: partner.id, productId: product.id, quantityDelivered: 5, unitPrice: 50, deliveryDate: new Date() },
+    })
+    await prisma.consignmentSaleReport.create({
+      data: { deliveryId: deliveryB.id, quantitySold: 2, reportDate: new Date(), commissionPercent: 0.2 },
+    })
+
+    // deliveryA: 4 * 25 * (1 - 0.3) = 70
+    // deliveryB: 2 * 50 * (1 - 0.2) = 80
+    // total = 150
+    const total = await getConsignmentRevenue()
+    expect(total).toBeCloseTo(150, 2)
+  })
+
+  it('retorna zero quando não há relatórios de venda', async () => {
+    const total = await getConsignmentRevenue()
+    expect(total).toBe(0)
   })
 })
 
