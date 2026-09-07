@@ -7,4 +7,6 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       APP_PASSWORD: ${APP_PASSWORD}
       SESSION_SECRET: ${SESSION_SECRET}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
