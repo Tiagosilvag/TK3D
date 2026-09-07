@@ -2,6 +2,8 @@ import { prisma } from '@/lib/prisma'
 import { SupplyForm } from './SupplyForm'
 import { deleteSupply } from '@/actions/supplies'
 
+export const dynamic = 'force-dynamic'
+
 const SUPPLY_UNIT_LABELS: Record<string, string> = {
   UN: 'Unidade',
   ML: 'Mililitro',

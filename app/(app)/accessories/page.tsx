@@ -2,6 +2,8 @@ import { prisma } from '@/lib/prisma'
 import { AccessoryForm } from './AccessoryForm'
 import { deleteAccessory } from '@/actions/accessories'
 
+export const dynamic = 'force-dynamic'
+
 const ACCESSORY_TYPE_LABELS: Record<string, string> = {
   CORRENTE_BOLINHA: 'Corrente bolinha',
   CORRENTE_ELO: 'Corrente elo',

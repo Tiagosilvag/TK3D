@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma'
 import { ProductForm } from './ProductForm'
 import { deleteProduct, getProductCostBreakdown } from '@/actions/products'
 
+export const dynamic = 'force-dynamic'
+
 export default async function ProductsPage() {
   const [products, printers, filaments, packagingItems, accessories] = await Promise.all([
     prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),

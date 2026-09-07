@@ -2,6 +2,8 @@ import { prisma } from '@/lib/prisma'
 import { DeliveryForm } from './DeliveryForm'
 import { deleteConsignmentDelivery } from '@/actions/consignmentDeliveries'
 
+export const dynamic = 'force-dynamic'
+
 export default async function ConsignmentDeliveriesPage() {
   const [deliveries, partners, products] = await Promise.all([
     prisma.consignmentDelivery.findMany({

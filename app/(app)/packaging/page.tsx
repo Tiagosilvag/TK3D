@@ -2,6 +2,8 @@ import { prisma } from '@/lib/prisma'
 import { PackagingForm } from './PackagingForm'
 import { deletePackagingItem } from '@/actions/packaging'
 
+export const dynamic = 'force-dynamic'
+
 export default async function PackagingPage() {
   const items = await prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } })
 

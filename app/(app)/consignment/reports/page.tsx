@@ -2,6 +2,8 @@ import { prisma } from '@/lib/prisma'
 import { SaleReportForm } from './SaleReportForm'
 import { deleteConsignmentSaleReport } from '@/actions/consignmentSaleReports'
 
+export const dynamic = 'force-dynamic'
+
 export default async function ConsignmentSaleReportsPage() {
   const [reports, deliveries] = await Promise.all([
     prisma.consignmentSaleReport.findMany({

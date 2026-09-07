@@ -3,6 +3,8 @@ import { calculateFilamentPricePerKg } from '@/lib/costing'
 import { FilamentForm } from './FilamentForm'
 import { deleteFilament } from '@/actions/filaments'
 
+export const dynamic = 'force-dynamic'
+
 export default async function FilamentsPage() {
   const filaments = await prisma.filament.findMany({ where: { active: true }, orderBy: { manufacturer: 'asc' } })
 

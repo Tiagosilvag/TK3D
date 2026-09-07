@@ -3,6 +3,8 @@ import { ProductionRunForm } from './ProductionRunForm'
 import { deleteProductionRun } from '@/actions/productionRuns'
 import { calculateWasteCost } from '@/lib/costing'
 
+export const dynamic = 'force-dynamic'
+
 export default async function ProductionPage() {
   const [runs, products, printers, filaments, settings] = await Promise.all([
     prisma.productionRun.findMany({

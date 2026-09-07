@@ -2,6 +2,8 @@ import { prisma } from '@/lib/prisma'
 import { PartnerForm } from './PartnerForm'
 import { deleteConsignmentPartner } from '@/actions/consignmentPartners'
 
+export const dynamic = 'force-dynamic'
+
 export default async function ConsignmentPartnersPage() {
   const partners = await prisma.consignmentPartner.findMany({ where: { active: true }, orderBy: { name: 'asc' } })
 

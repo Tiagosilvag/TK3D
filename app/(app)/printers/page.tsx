@@ -3,6 +3,8 @@ import { calculatePrinterDepreciationCostPerHour } from '@/lib/costing'
 import { PrinterForm } from './PrinterForm'
 import { deletePrinter } from '@/actions/printers'
 
+export const dynamic = 'force-dynamic'
+
 export default async function PrintersPage() {
   const printers = await prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } })
 
