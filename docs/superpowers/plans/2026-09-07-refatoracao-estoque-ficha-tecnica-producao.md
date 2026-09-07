@@ -2,16 +2,62 @@
 
 Spec: `docs/superpowers/specs/2026-09-07-refatoracao-estoque-ficha-tecnica-producao-design.md`
 
-8 tasks, sequenciais (cada uma depende do schema/interface da anterior).
+9 tasks, sequenciais (cada uma depende do schema/interface da anterior).
 TDD em cada task. **Sem revisão por task** — só uma revisão final de todo
-o branch depois da Task 8 (decisão explícita do usuário, para economizar
+o branch depois da Task 9 (decisão explícita do usuário, para economizar
 token). Cada implementador é responsável por auto-verificar
 build/lint/test verdes antes de encerrar sua própria task, já que não
 haverá um revisor a meio de caminho pra pegar erros cedo.
 
 ---
 
-## Task 1 — Configurações: novos campos globais + costing.ts
+## Task 1 — Impressoras: editar e excluir permanentemente
+
+**Arquivos:** `actions/printers.ts`, `app/(app)/printers/{page,PrinterForm}.tsx`.
+
+Tarefa independente do resto do plano (não usa nenhum schema novo das
+demais tasks) — entra primeiro só porque foi pedida antes.
+
+- `updatePrinter(id, formData)` já existe em `actions/printers.ts` e já
+  funciona — só falta UI. Adicionar edição inline na tabela: um botão
+  "Editar" por linha ativa um modo de edição (via query param
+  `?editId=<id>` lido pelo Server Component da página, que busca essa
+  impressora e passa como prop `editingPrinter` pro `PrinterForm`).
+  `PrinterForm` ganha um modo de edição: campos pré-preenchidos, botão
+  vira "Salvar", chama `updatePrinter(editingPrinter.id, formData)` em
+  vez de `createPrinter`, e um link "Cancelar edição" que remove o query
+  param. Reaproveitar a mesma prévia de custo ao vivo já existente no
+  formulário.
+- Nova action `deletePrinterPermanently(id)`: `prisma.printer.delete({
+  where: { id } })` — delete físico de verdade. Se houver `Product`/
+  `ProductionRun` referenciando essa impressora, a FK vai rejeitar
+  (`Prisma.PrismaClientKnownRequestError` código `P2003` ou `P2014`,
+  cheque qual o Prisma realmente lança aqui) — capture e retorne
+  `{ success: false, error: 'Não é possível excluir: esta impressora tem
+  produtos ou produções vinculadas. Desative-a em vez disso.' }` em vez
+  de deixar o erro estourar sem tratamento (diferente do padrão
+  `deleteFilament`/`deleteAccessory` que deixam propagar — aqui vale a
+  pena capturar porque a impressora já tem um fluxo de
+  desativar/reativar como alternativa segura, então a mensagem deve
+  apontar pra ele).
+- Manter o botão "Desativar" (soft-delete) já existente e o fluxo de
+  reativação — não remover nada que já funciona. Adicionar um segundo
+  botão/link "Excluir permanentemente" (usando `ConfirmDeleteForm` com
+  `confirmMessage` deixando claro que é irreversível), tanto na lista de
+  ativas quanto na de inativas (hoje as inativas só têm "Reativar", sem
+  opção de excluir de vez).
+- Teste de integração: editar uma impressora e confirmar que os campos
+  mudam; excluir permanentemente uma impressora sem vínculos e confirmar
+  que some do banco de fato (`findUnique` retorna `null`, não só
+  `active=false`); tentar excluir uma impressora referenciada por um
+  `Product` e confirmar que retorna o erro amigável e a impressora
+  continua no banco.
+- Verificar `npm run build`, `npm test`, `npm run lint` limpos antes de
+  commitar.
+
+---
+
+## Task 2 — Configurações: novos campos globais + costing.ts
 
 **Arquivos:** `prisma/schema.prisma` (Settings + `RoundingMode` enum),
 `lib/costing.ts`, `lib/validation/settings.ts`, `actions/settings.ts`,
@@ -52,7 +98,7 @@ haverá um revisor a meio de caminho pra pegar erros cedo.
 
 ---
 
-## Task 2 — Acessórios → estoque
+## Task 3 — Acessórios → estoque
 
 **Arquivos:** `prisma/schema.prisma` (`Accessory` reescrito +
 `AccessoryPurchase` novo), `lib/validation/accessory.ts`,
@@ -98,7 +144,7 @@ haverá um revisor a meio de caminho pra pegar erros cedo.
 
 ---
 
-## Task 3 — Insumos → estoque
+## Task 4 — Insumos → estoque
 
 **Arquivos:** espelha a Task 2 para `Supply`/`SupplyPurchase`.
 
@@ -113,7 +159,7 @@ haverá um revisor a meio de caminho pra pegar erros cedo.
 
 ---
 
-## Task 4 — Ficha técnica: schema + costing.ts
+## Task 5 — Ficha técnica: schema + costing.ts
 
 **Arquivos:** `prisma/schema.prisma` (`ProductAccessoryUsage` novo,
 remove `Product.accessoryId`, adiciona `suggestedPrice`/
@@ -156,7 +202,7 @@ de dados.
 
 ---
 
-## Task 5 — Produtos: UI da ficha técnica + simulação de preço
+## Task 6 — Produtos: UI da ficha técnica + simulação de preço
 
 **Arquivos:** `app/(app)/products/{page,[id]/page,ProductForm,
 CostBreakdown}.tsx`, `actions/products.ts`.
@@ -184,7 +230,7 @@ CostBreakdown}.tsx`, `actions/products.ts`.
 
 ---
 
-## Task 6 — Produção: schema + consumo transacional multi-recurso
+## Task 7 — Produção: schema + consumo transacional multi-recurso
 
 **Arquivos:** `prisma/schema.prisma` (`ProductionRun` ganha `costSnapshot
 Json`, `status`, `wasteReason`, `cancelReason`, `cancelDate` + enums
@@ -235,7 +281,7 @@ multi-tabela) — capriche na cobertura de teste.
 
 ---
 
-## Task 7 — Produção: UI
+## Task 8 — Produção: UI
 
 **Arquivos:** `app/(app)/production/{page,ProductionRunForm}.tsx`.
 
@@ -251,7 +297,7 @@ multi-tabela) — capriche na cobertura de teste.
 
 ---
 
-## Task 8 — Dashboard e relatórios
+## Task 9 — Dashboard e relatórios
 
 **Arquivos:** `app/(app)/dashboard/page.tsx`, `lib/reports.ts` (novas
 funções de agregação).
@@ -274,12 +320,13 @@ funções de agregação).
 
 ## Execution Handoff
 
-Use `superpowers:subagent-driven-development`. Tasks 1→8 estritamente
-sequenciais (cada uma consome schema/função da anterior). **Não dispare
+Use `superpowers:subagent-driven-development`. Tasks 1→9 estritamente
+sequenciais (cada uma consome schema/função da anterior — exceto a Task 1,
+independente, que só entra primeiro porque foi pedida antes). **Não dispare
 revisão de task individual** — cada implementador só precisa deixar
 build/test/lint verdes e commitar antes de passar pra próxima. Só depois
-da Task 8 completa, gere um pacote de diff do branch inteiro (base = commit
-antes desta Task 1, head = commit final da Task 8) e dispare UMA revisão
+da Task 9 completa, gere um pacote de diff do branch inteiro (base = commit
+antes desta Task 1, head = commit final da Task 9) e dispare UMA revisão
 final cobrindo todo o escopo (consistência entre telas, segurança de
 migration em produção não-vazia, fluxo ponta-a-ponta, spec completo) —
 mesmo padrão da revisão final já feita no plano anterior. Se a revisão
