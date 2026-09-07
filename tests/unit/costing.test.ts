@@ -3,6 +3,7 @@ import {
   calculatePrinterDepreciationCostPerHour,
   calculateFilamentPricePerKg,
   calculateProductCost,
+  calculateWasteCost,
 } from '@/lib/costing'
 
 describe('calculatePrinterDepreciationCostPerHour', () => {
@@ -91,5 +92,32 @@ describe('calculateProductCost', () => {
     // subtotal = 2.4 + 0.54 + 0.92 + 2.5 + 0.3 = 6.66 -> finalCost 7.326 -> suggested 14.652
     expect(result.suggestedPrice).toBeCloseTo(14.652, 3)
     expect(result.marketplacePrice).toBeCloseTo(23.667, 2)
+  })
+})
+
+describe('calculateWasteCost', () => {
+  it('calcula custo de filamento e tempo perdidos em uma falha de impressão', () => {
+    // 20g desperdiçados a R$80/kg -> R$1.60; 0.5h perdida a (0.46 dep + 1 * 0.27 energia)/h -> R$0.365
+    const result = calculateWasteCost({
+      gramsWasted: 20,
+      timeWastedHours: 0.5,
+      filamentPricePerKg: 80,
+      printerDepreciationCostPerHour: 0.46,
+      printerAvgPowerConsumptionKwh: 0.27,
+      energyCostPerKwh: 1,
+    })
+    expect(result).toBeCloseTo(1.965, 3)
+  })
+
+  it('retorna 0 quando não há desperdício', () => {
+    const result = calculateWasteCost({
+      gramsWasted: 0,
+      timeWastedHours: 0,
+      filamentPricePerKg: 80,
+      printerDepreciationCostPerHour: 0.46,
+      printerAvgPowerConsumptionKwh: 0.27,
+      energyCostPerKwh: 1,
+    })
+    expect(result).toBe(0)
   })
 })

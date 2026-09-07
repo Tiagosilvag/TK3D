@@ -11,6 +11,7 @@ const NAV_LINKS: { href: string; label: string }[] = [
   { href: '/accessories', label: 'Acessórios' },
   { href: '/supplies', label: 'Insumos' },
   { href: '/products', label: 'Produtos' },
+  { href: '/production', label: 'Produção' },
   { href: '/settings', label: 'Configurações' },
 ]
 

@@ -53,6 +53,21 @@ export interface ProductCostBreakdown {
   marketplacePrice: number
 }
 
+export interface WasteCostInput {
+  gramsWasted: number
+  timeWastedHours: number
+  filamentPricePerKg: number
+  printerDepreciationCostPerHour: number
+  printerAvgPowerConsumptionKwh: number
+  energyCostPerKwh: number
+}
+
+export function calculateWasteCost(input: WasteCostInput): number {
+  const filamentWasteCost = input.gramsWasted * (input.filamentPricePerKg / 1000)
+  const timeWasteCost = input.timeWastedHours * (input.printerDepreciationCostPerHour + input.energyCostPerKwh * input.printerAvgPowerConsumptionKwh)
+  return filamentWasteCost + timeWasteCost
+}
+
 export function calculateProductCost(input: ProductCostInput, settings: Settings): ProductCostBreakdown {
   const filamentCost = input.weightGrams * (input.filamentPricePerKg / 1000)
   const electricityCost = input.printerAvgPowerConsumptionKwh * settings.energyCostPerKwh * input.printTimeHours
