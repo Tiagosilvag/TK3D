@@ -7,6 +7,8 @@ import {
   calculateProductCost,
   calculateWasteCost,
   getStockStatus,
+  getStockStatusWithThresholds,
+  calculateWeightedAverageCost,
   applyRounding,
 } from '@/lib/costing'
 
@@ -60,6 +62,97 @@ describe('getStockStatus', () => {
   it('0% ou menos -> esgotado', () => {
     expect(getStockStatus(0)).toEqual({ emoji: '⚫', label: 'Esgotado' })
     expect(getStockStatus(-5)).toEqual({ emoji: '⚫', label: 'Esgotado' })
+  })
+})
+
+// Accessory/Supply stock status (task-3 brief): the spec is explicit that
+// these use Settings.stockLowThresholdPercent/stockCriticalThresholdPercent
+// instead of Filament's hardcoded 30%/10% -- "NÃO reusar a versão fixa
+// 30/10 do Filament sem parametrizar, ou os dois sistemas ficam acoplados
+// incorretamente". Thresholds are passed as fractions (0-1), matching how
+// Settings stores every percentage in this app; percentRemaining is 0-100,
+// matching getStockStatus's existing convention.
+describe('getStockStatusWithThresholds', () => {
+  it('com os limiares default de Settings (0.30/0.10), reproduz exatamente getStockStatus', () => {
+    for (const p of [100, 31, 30, 20, 10, 9.9, 0.1, 0, -5]) {
+      expect(getStockStatusWithThresholds(p, 0.30, 0.10)).toEqual(getStockStatus(p))
+    }
+  })
+
+  it('limiares diferentes (0.50/0.20) mudam o resultado -- prova que não é o 30/10 fixo do Filament', () => {
+    // 40% estaria "em estoque" pelo Filament (>30%), mas aqui, com low=50%,
+    // cai em "estoque baixo".
+    expect(getStockStatusWithThresholds(40, 0.50, 0.20)).toEqual({ emoji: '🟡', label: 'Estoque baixo' })
+    // 15% estaria "estoque baixo" pelo Filament (10-30%), mas aqui, com
+    // critical=20%, cai em "estoque crítico".
+    expect(getStockStatusWithThresholds(15, 0.50, 0.20)).toEqual({ emoji: '🔴', label: 'Estoque crítico' })
+    // acima do low threshold (50%) continua "em estoque".
+    expect(getStockStatusWithThresholds(51, 0.50, 0.20)).toEqual({ emoji: '🟢', label: 'Em estoque' })
+  })
+
+  it('0% ou menos -> esgotado, independente dos limiares', () => {
+    expect(getStockStatusWithThresholds(0, 0.50, 0.20)).toEqual({ emoji: '⚫', label: 'Esgotado' })
+    expect(getStockStatusWithThresholds(-1, 0.05, 0.01)).toEqual({ emoji: '⚫', label: 'Esgotado' })
+  })
+})
+
+// Weighted-average purchase cost (task-3 brief §Accessory, also reused by
+// Supply in task 4): newAvgCost = (currentStock*avgUnitCost + totalCost) /
+// (currentStock+quantity) -- the brief's "forma mais simples" that avoids
+// dividing then re-multiplying purchaseTotalCost/purchaseQuantity*purchaseQuantity.
+describe('calculateWeightedAverageCost', () => {
+  it('primeira compra (estoque zerado): resultado é só totalCost/quantity', () => {
+    // cadastro de um Accessory novo = a primeira compra (brief): currentStock
+    // e avgUnitCost nascem zerados, então a média ponderada colapsa para o
+    // custo unitário simples da própria compra.
+    // hand-compute: (0*0 + 16) / (0 + 20) = 16/20 = 0.8
+    const result = calculateWeightedAverageCost({
+      currentStock: 0,
+      avgUnitCost: 0,
+      purchaseQuantity: 20,
+      purchaseTotalCost: 16,
+    })
+    expect(result).toBeCloseTo(0.8, 6)
+  })
+
+  it('segunda compra recalcula a média ponderada corretamente (hand-computed)', () => {
+    // Estoque atual: 100 unidades a R$0,50/un (valor em estoque = R$50).
+    // Nova compra: 50 unidades por R$30 no total (R$0,60/un).
+    // hand-compute: (100*0.5 + 30) / (100+50) = (50+30)/150 = 80/150 = 0.5333...
+    const result = calculateWeightedAverageCost({
+      currentStock: 100,
+      avgUnitCost: 0.5,
+      purchaseQuantity: 50,
+      purchaseTotalCost: 30,
+    })
+    expect(result).toBeCloseTo(0.533333, 6)
+  })
+
+  it('terceira compra a um preço mais barato puxa a média pra baixo (hand-computed)', () => {
+    // Continuando do estado após a 2a compra: 150 unidades a R$0,5333.../un
+    // (valor em estoque ~= R$80). Nova compra: 150 unidades por R$45 no
+    // total (R$0,30/un, mais barato que a média atual).
+    // hand-compute: (150*0.533333... + 45) / (150+150) = (80 + 45)/300 = 125/300 = 0.41666...
+    const result = calculateWeightedAverageCost({
+      currentStock: 150,
+      avgUnitCost: 80 / 150,
+      purchaseQuantity: 150,
+      purchaseTotalCost: 45,
+    })
+    expect(result).toBeCloseTo(0.416667, 6)
+  })
+
+  it('compra a um preço mais caro puxa a média pra cima (hand-computed)', () => {
+    // Estoque: 10 unidades a R$1,00/un (valor R$10). Compra: 10 unidades por
+    // R$30 (R$3,00/un, bem mais caro).
+    // hand-compute: (10*1 + 30) / (10+10) = 40/20 = 2.0
+    const result = calculateWeightedAverageCost({
+      currentStock: 10,
+      avgUnitCost: 1,
+      purchaseQuantity: 10,
+      purchaseTotalCost: 30,
+    })
+    expect(result).toBeCloseTo(2.0, 6)
   })
 })
 

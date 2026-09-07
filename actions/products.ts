@@ -88,7 +88,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
       printerMaintenanceCostPerHour,
       suppliesCost,
       packagingCost: product.packagingItem?.unitCost.toNumber() ?? 0,
-      accessoryCost: product.accessory?.unitCost.toNumber() ?? 0,
+      accessoryCost: product.accessory?.avgUnitCost.toNumber() ?? 0,
       includeDepreciation: settings.includeDepreciation,
       includeEnergyCost: settings.includeEnergyCost,
       includeMaintenance: settings.includeMaintenance,

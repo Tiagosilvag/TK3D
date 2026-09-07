@@ -123,14 +123,35 @@ enum AccessoryType {
 }
 
 model Accessory {
-  id        String        @id @default(cuid())
-  name      String
-  type      AccessoryType
-  unitCost  Decimal       @db.Decimal(10, 4)
-  active    Boolean       @default(true)
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  products  Product[]
+  id           String              @id @default(cuid())
+  name         String
+  type         AccessoryType
+  colorName    String              @default("") // "" = sem cor / genérico
+  colorHex     String?
+  currentStock Decimal             @db.Decimal(10, 2) // sempre em unidades
+  avgUnitCost  Decimal             @db.Decimal(10, 4) // custo médio ponderado, recalculado a cada compra
+  active       Boolean             @default(true)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  purchases    AccessoryPurchase[]
+  products     Product[]
+
+  @@unique([name, type, colorName])
+}
+
+model AccessoryPurchase {
+  id           String    @id @default(cuid())
+  accessoryId  String
+  // onDelete: Cascade — purchase history is owned by its Accessory (it only
+  // exists to explain how that accessory's stock/avgUnitCost got where they
+  // are); Product's own accessoryId FK (no cascade) is the reference that
+  // actually blocks a physical deleteAccessory (spec §7 / task-3 brief).
+  accessory    Accessory @relation(fields: [accessoryId], references: [id], onDelete: Cascade)
+  quantity     Decimal   @db.Decimal(10, 2)
+  totalCost    Decimal   @db.Decimal(10, 2)
+  purchaseDate DateTime
+  notes        String?
+  createdAt    DateTime  @default(now())
 }
 
 enum SupplyUnit {
@@ -171,7 +192,13 @@ model Product {
   packagingItemId       String?
   packagingItem         PackagingItem?        @relation(fields: [packagingItemId], references: [id])
   accessoryId           String?
-  accessory             Accessory?            @relation(fields: [accessoryId], references: [id])
+  // onDelete: Restrict (explicit -- Prisma's implicit default for an
+  // optional relation is SetNull, which would silently orphan this pointer
+  // instead of blocking the delete): deleteAccessory (task-3 brief) must
+  // let a real FK error propagate when a Product still references the
+  // accessory, same "não referenciado" guarantee deleteFilament already
+  // gets for free from its required (non-nullable) relation.
+  accessory             Accessory?            @relation(fields: [accessoryId], references: [id], onDelete: Restrict)
   finishingType         FinishingType         @default(NENHUM)
   usesGlue              Boolean               @default(false)
   notes                 String?

@@ -44,6 +44,45 @@ export function getStockStatus(percentRemaining: number): StockStatus {
   return { emoji: '🟢', label: 'Em estoque' }
 }
 
+// Accessory/Supply stock status (spec §1.1/§1.3, task-3 brief): same shape
+// as getStockStatus above, but with the low/critical thresholds passed in
+// (as fractions, 0-1 -- same convention Settings stores every percentage
+// in) instead of Filament's hardcoded 30%/10%. Accessories and Insumos are
+// a deliberately independent, configurable stock system (Settings.
+// stockLowThresholdPercent/stockCriticalThresholdPercent) -- Filament's
+// getStockStatus above is untouched on purpose, to avoid regressing an
+// already-tested, in-production threshold.
+export function getStockStatusWithThresholds(
+  percentRemaining: number,
+  lowThresholdPercent: number,
+  criticalThresholdPercent: number,
+): StockStatus {
+  if (percentRemaining <= 0) return { emoji: '⚫', label: 'Esgotado' }
+  if (percentRemaining < criticalThresholdPercent * 100) return { emoji: '🔴', label: 'Estoque crítico' }
+  if (percentRemaining <= lowThresholdPercent * 100) return { emoji: '🟡', label: 'Estoque baixo' }
+  return { emoji: '🟢', label: 'Em estoque' }
+}
+
+// Weighted-average purchase cost (spec §1.1, task-3 brief): every new
+// AccessoryPurchase (and, task 4, SupplyPurchase) folds into the running
+// average instead of replacing it. Creating a brand-new Accessory is just
+// this same formula starting from a zeroed-out stock (currentStock=0,
+// avgUnitCost=0), which collapses to purchaseTotalCost/purchaseQuantity --
+// so createAccessory and registerAccessoryPurchase share this one function.
+export interface WeightedAverageCostInput {
+  currentStock: number
+  avgUnitCost: number
+  purchaseQuantity: number
+  purchaseTotalCost: number
+}
+
+export function calculateWeightedAverageCost(input: WeightedAverageCostInput): number {
+  return (
+    (input.currentStock * input.avgUnitCost + input.purchaseTotalCost) /
+    (input.currentStock + input.purchaseQuantity)
+  )
+}
+
 export interface Settings {
   energyCostPerKwh: number
   laborCostPerHour: number

@@ -140,7 +140,7 @@ describe('products actions', () => {
     const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
     const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
     const packagingItem = await prisma.packagingItem.create({ data: { name: 'Saquinho', unitCost: 0.1 } })
-    const accessory = await prisma.accessory.create({ data: { name: 'Mosquetão', type: 'MOSQUETAO', unitCost: 0.3 } })
+    const accessory = await prisma.accessory.create({ data: { name: 'Mosquetão', type: 'MOSQUETAO', colorName: '', currentStock: 10, avgUnitCost: 0.3 } })
     const supply = await prisma.supply.create({ data: { name: 'Cola', unit: 'ML', unitCost: 0.05 } })
 
     const result = await createProduct(fd({
