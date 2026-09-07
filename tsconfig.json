@@ -1,4 +1,11 @@
 {
+  "ts-node": {
+    "compilerOptions": {
+      "module": "CommonJS",
+      "noUnusedLocals": false,
+      "noUnusedParameters": false
+    }
+  },
   "compilerOptions": {
     "target": "ES2017",
     "useDefineForClassFields": true,
@@ -45,6 +52,7 @@
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "prisma"
   ]
 }

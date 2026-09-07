@@ -12,3 +12,207 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+model Settings {
+  id                    Int      @id @default(1)
+  energyCostPerKwh      Decimal  @default(1.00) @db.Decimal(10, 4)
+  laborCostPerHour      Decimal  @default(10.00) @db.Decimal(10, 2)
+  failureRatePercent    Decimal  @default(0.10) @db.Decimal(5, 4)
+  marketplaceFeePercent Decimal  @default(0.20) @db.Decimal(5, 4)
+  taxPercent            Decimal  @default(0.055) @db.Decimal(5, 4)
+  marketplaceFixedFee   Decimal  @default(4.00) @db.Decimal(10, 2)
+  defaultMarkup         Decimal  @default(2.00) @db.Decimal(6, 2)
+  updatedAt             DateTime @updatedAt
+}
+
+model Printer {
+  id                     String          @id @default(cuid())
+  name                   String          @unique
+  purchasePrice          Decimal         @db.Decimal(10, 2)
+  depreciationHours      Decimal         @db.Decimal(10, 2)
+  maintenanceCost        Decimal         @db.Decimal(10, 2)
+  avgPowerConsumptionKwh Decimal         @db.Decimal(6, 4)
+  active                 Boolean         @default(true)
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+  products               Product[]
+  productionRuns         ProductionRun[]
+}
+
+model Filament {
+  id            String          @id @default(cuid())
+  manufacturer  String          @unique
+  diameterMm    Decimal         @db.Decimal(4, 2)
+  spoolPrice    Decimal         @db.Decimal(10, 2)
+  spoolWeightKg Decimal         @db.Decimal(6, 3)
+  densityGCm3   Decimal         @db.Decimal(5, 3)
+  nozzleTempC   Int
+  bedTempC      Int
+  active        Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  products      Product[]
+  productionRuns ProductionRun[]
+}
+
+model PackagingItem {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  unitCost  Decimal   @db.Decimal(10, 4)
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+}
+
+enum AccessoryType {
+  CORRENTE_BOLINHA
+  CORRENTE_ELO
+  MOSQUETAO
+  CLICKER
+  OUTRO
+}
+
+model Accessory {
+  id        String        @id @default(cuid())
+  name      String
+  type      AccessoryType
+  unitCost  Decimal       @db.Decimal(10, 4)
+  active    Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  products  Product[]
+}
+
+enum SupplyUnit {
+  UN
+  ML
+  G
+}
+
+model Supply {
+  id        String               @id @default(cuid())
+  name      String               @unique
+  unit      SupplyUnit
+  unitCost  Decimal              @db.Decimal(10, 4)
+  active    Boolean              @default(true)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+  usages    ProductSupplyUsage[]
+}
+
+enum FinishingType {
+  NENHUM
+  CANETA_VERNIZ
+  RESINA_UV
+  OUTRO
+}
+
+model Product {
+  id                    String                  @id @default(cuid())
+  name                  String
+  category              String                  @default("Chaveiro")
+  printerId             String
+  printer               Printer                 @relation(fields: [printerId], references: [id])
+  filamentId            String
+  filament              Filament                @relation(fields: [filamentId], references: [id])
+  weightGrams           Decimal                 @db.Decimal(10, 2)
+  printTimeHours        Decimal                 @db.Decimal(10, 3)
+  laborTimeHours        Decimal                 @db.Decimal(10, 3)
+  packagingItemId       String?
+  packagingItem         PackagingItem?          @relation(fields: [packagingItemId], references: [id])
+  accessoryId           String?
+  accessory             Accessory?              @relation(fields: [accessoryId], references: [id])
+  finishingType         FinishingType           @default(NENHUM)
+  usesGlue              Boolean                 @default(false)
+  notes                 String?
+  active                Boolean                 @default(true)
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  supplyUsages          ProductSupplyUsage[]
+  productionRuns        ProductionRun[]
+  sales                 Sale[]
+  consignmentDeliveries ConsignmentDelivery[]
+}
+
+model ProductSupplyUsage {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  supplyId  String
+  supply    Supply   @relation(fields: [supplyId], references: [id])
+  quantity  Decimal  @db.Decimal(10, 3)
+
+  @@unique([productId, supplyId])
+}
+
+model ProductionRun {
+  id              String   @id @default(cuid())
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id])
+  printerId       String
+  printer         Printer  @relation(fields: [printerId], references: [id])
+  filamentId      String
+  filament        Filament @relation(fields: [filamentId], references: [id])
+  date            DateTime
+  quantityPlanned Int
+  quantitySuccess Int
+  quantityFailed  Int
+  gramsWasted     Decimal  @db.Decimal(10, 2)
+  timeWastedHours Decimal  @db.Decimal(10, 3)
+  notes           String?
+  createdAt       DateTime @default(now())
+}
+
+enum SaleChannel {
+  DIRETA
+  MARKETPLACE
+}
+
+model Sale {
+  id              String      @id @default(cuid())
+  channel         SaleChannel
+  productId       String
+  product         Product     @relation(fields: [productId], references: [id])
+  quantity        Int
+  unitPrice       Decimal     @db.Decimal(10, 2)
+  saleDate        DateTime
+  buyerOrPlatform String?
+  notes           String?
+  createdAt       DateTime    @default(now())
+}
+
+model ConsignmentPartner {
+  id                       String                @id @default(cuid())
+  name                     String
+  defaultCommissionPercent Decimal               @db.Decimal(5, 4)
+  notes                    String?
+  active                   Boolean               @default(true)
+  createdAt                DateTime              @default(now())
+  deliveries               ConsignmentDelivery[]
+}
+
+model ConsignmentDelivery {
+  id                String                  @id @default(cuid())
+  partnerId         String
+  partner           ConsignmentPartner      @relation(fields: [partnerId], references: [id])
+  productId         String
+  product           Product                 @relation(fields: [productId], references: [id])
+  quantityDelivered Int
+  unitPrice         Decimal                 @db.Decimal(10, 2)
+  deliveryDate      DateTime
+  notes             String?
+  createdAt         DateTime                @default(now())
+  saleReports       ConsignmentSaleReport[]
+}
+
+model ConsignmentSaleReport {
+  id                String              @id @default(cuid())
+  deliveryId        String
+  delivery          ConsignmentDelivery @relation(fields: [deliveryId], references: [id])
+  quantitySold      Int
+  reportDate        DateTime
+  commissionPercent Decimal             @db.Decimal(5, 4)
+  notes             String?
+  createdAt         DateTime            @default(now())
+}
