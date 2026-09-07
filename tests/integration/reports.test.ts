@@ -77,14 +77,14 @@ describe('getTotalWasteCost', () => {
     })
 
     // printerDepreciationCostPerHour = 1 / 1 = 1 (maintenance is no longer folded
-    // into depreciation; getTotalWasteCost's time-waste-cost term is depreciation
-    // + energy only, unchanged by the printer costing rework)
+    // into depreciation, it's a separate term below)
+    // printerMaintenanceCostPerHour = purchasePrice(1) * annualMaintenancePercent(0.10, Settings default) / annualUsageHours(2000, Settings default) = 0.00005
     // filamentPricePerKg = 100 / 1 = 100
     // filamentWasteCost = 100g * (100/1000) = 10
-    // timeWasteCost = 1h * (1 + 1*0.1) = 1.1
-    // total = 11.1
+    // timeWasteCost = 1h * (1 + 0.00005 + 1*0.1) = 1.10005
+    // total = 10 + 1.10005 = 11.10005
     const total = await getTotalWasteCost()
-    expect(total).toBeCloseTo(11.1, 2)
+    expect(total).toBeCloseTo(11.10005, 5)
   })
 
   it('retorna zero quando não há execuções de produção', async () => {

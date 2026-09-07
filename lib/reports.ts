@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { calculateWasteCost, calculatePrinterDepreciationCostPerHour, calculateFilamentPricePerKg } from '@/lib/costing'
+import { calculateWasteCost, calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour, calculateFilamentPricePerKg } from '@/lib/costing'
 
 export async function getRevenueByChannel(): Promise<Record<'DIRETA' | 'MARKETPLACE', number>> {
   const sales = await prisma.sale.findMany()
@@ -18,6 +18,11 @@ export async function getTotalWasteCost(): Promise<number> {
       purchasePrice: run.printer.purchasePrice.toNumber(),
       depreciationHours: run.printer.depreciationHours.toNumber(),
     })
+    const printerMaintenanceCostPerHour = calculatePrinterMaintenanceCostPerHour({
+      purchasePrice: run.printer.purchasePrice.toNumber(),
+      annualMaintenancePercent: settings.annualMaintenancePercent.toNumber(),
+      annualUsageHours: settings.annualUsageHours.toNumber(),
+    })
     const filamentPricePerKg = calculateFilamentPricePerKg({
       spoolPrice: run.filament.spoolPrice.toNumber(),
       spoolWeightKg: run.filament.spoolWeightKg.toNumber(),
@@ -27,6 +32,7 @@ export async function getTotalWasteCost(): Promise<number> {
       timeWastedHours: run.timeWastedHours.toNumber(),
       filamentPricePerKg,
       printerDepreciationCostPerHour,
+      printerMaintenanceCostPerHour,
       printerAvgPowerConsumptionKwh: run.printer.avgPowerConsumptionKwh.toNumber(),
       energyCostPerKwh: settings.energyCostPerKwh.toNumber(),
     })

@@ -69,13 +69,14 @@ export interface WasteCostInput {
   timeWastedHours: number
   filamentPricePerKg: number
   printerDepreciationCostPerHour: number
+  printerMaintenanceCostPerHour: number
   printerAvgPowerConsumptionKwh: number
   energyCostPerKwh: number
 }
 
 export function calculateWasteCost(input: WasteCostInput): number {
   const filamentWasteCost = input.gramsWasted * (input.filamentPricePerKg / 1000)
-  const timeWasteCost = input.timeWastedHours * (input.printerDepreciationCostPerHour + input.energyCostPerKwh * input.printerAvgPowerConsumptionKwh)
+  const timeWasteCost = input.timeWastedHours * (input.printerDepreciationCostPerHour + input.printerMaintenanceCostPerHour + input.energyCostPerKwh * input.printerAvgPowerConsumptionKwh)
   return filamentWasteCost + timeWasteCost
 }
 

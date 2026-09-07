@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { ProductionRunForm } from './ProductionRunForm'
 import { deleteProductionRun } from '@/actions/productionRuns'
-import { calculateWasteCost, calculatePrinterDepreciationCostPerHour, calculateFilamentPricePerKg } from '@/lib/costing'
+import { calculateWasteCost, calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour, calculateFilamentPricePerKg } from '@/lib/costing'
 import { formatCurrency } from '@/lib/format'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 
@@ -20,6 +20,8 @@ export default async function ProductionPage() {
   ])
 
   const energyCostPerKwh = settings.energyCostPerKwh.toNumber()
+  const annualMaintenancePercent = settings.annualMaintenancePercent.toNumber()
+  const annualUsageHours = settings.annualUsageHours.toNumber()
 
   return (
     <div className="tk-page">
@@ -50,6 +52,11 @@ export default async function ProductionPage() {
               purchasePrice: run.printer.purchasePrice.toNumber(),
               depreciationHours: run.printer.depreciationHours.toNumber(),
             })
+            const printerMaintenanceCostPerHour = calculatePrinterMaintenanceCostPerHour({
+              purchasePrice: run.printer.purchasePrice.toNumber(),
+              annualMaintenancePercent,
+              annualUsageHours,
+            })
             const filamentPricePerKg = calculateFilamentPricePerKg({
               spoolPrice: run.filament.spoolPrice.toNumber(),
               spoolWeightKg: run.filament.spoolWeightKg.toNumber(),
@@ -59,6 +66,7 @@ export default async function ProductionPage() {
               timeWastedHours: run.timeWastedHours.toNumber(),
               filamentPricePerKg,
               printerDepreciationCostPerHour,
+              printerMaintenanceCostPerHour,
               printerAvgPowerConsumptionKwh: run.printer.avgPowerConsumptionKwh.toNumber(),
               energyCostPerKwh,
             })

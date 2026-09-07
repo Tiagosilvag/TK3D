@@ -131,16 +131,21 @@ describe('calculateProductCost', () => {
 
 describe('calculateWasteCost', () => {
   it('calcula custo de filamento e tempo perdidos em uma falha de impressão', () => {
-    // 20g desperdiçados a R$80/kg -> R$1.60; 0.5h perdida a (0.46 dep + 1 * 0.27 energia)/h -> R$0.365
+    // Anycubic Kobra X: purchasePrice 3600, depreciationHours 10000 -> depreciation 0.36 R$/h
+    // Settings defaults (annualMaintenancePercent 0.10, annualUsageHours 2000) -> maintenance 3600*0.10/2000 = 0.18 R$/h
+    // 20g desperdiçados a R$80/kg -> R$1.60
+    // 0.5h perdida a (0.36 dep + 0.18 manutenção + 1 * 0.27 energia)/h = 0.81/h -> R$0.405
+    // total = 1.6 + 0.405 = 2.005
     const result = calculateWasteCost({
       gramsWasted: 20,
       timeWastedHours: 0.5,
       filamentPricePerKg: 80,
-      printerDepreciationCostPerHour: 0.46,
+      printerDepreciationCostPerHour: 0.36,
+      printerMaintenanceCostPerHour: 0.18,
       printerAvgPowerConsumptionKwh: 0.27,
       energyCostPerKwh: 1,
     })
-    expect(result).toBeCloseTo(1.965, 3)
+    expect(result).toBeCloseTo(2.005, 3)
   })
 
   it('retorna 0 quando não há desperdício', () => {
@@ -148,7 +153,8 @@ describe('calculateWasteCost', () => {
       gramsWasted: 0,
       timeWastedHours: 0,
       filamentPricePerKg: 80,
-      printerDepreciationCostPerHour: 0.46,
+      printerDepreciationCostPerHour: 0.36,
+      printerMaintenanceCostPerHour: 0.18,
       printerAvgPowerConsumptionKwh: 0.27,
       energyCostPerKwh: 1,
     })
