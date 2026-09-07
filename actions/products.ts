@@ -99,7 +99,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
 const supplyUsageSchema = z.object({
   productId: z.string().min(1),
   supplyId: z.string().min(1),
-  quantity: z.coerce.number().positive(),
+  quantity: z.coerce.number().positive('Quantidade deve ser maior que zero'),
 })
 
 export async function addProductSupplyUsage(formData: FormData): Promise<ActionResult> {
