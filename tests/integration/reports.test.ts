@@ -71,6 +71,7 @@ describe('getTotalWasteCost', () => {
         quantityPlanned: 10,
         quantitySuccess: 8,
         quantityFailed: 2,
+        gramsUsed: 200,
         gramsWasted: 100,
         timeWastedHours: 1,
       },

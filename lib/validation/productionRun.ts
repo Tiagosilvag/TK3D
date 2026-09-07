@@ -8,6 +8,7 @@ export const productionRunSchema = z.object({
   quantityPlanned: z.coerce.number().int('Quantidade planejada deve ser um número inteiro').positive('Quantidade planejada deve ser maior que zero'),
   quantitySuccess: z.coerce.number().int('Quantidade de sucesso deve ser um número inteiro').nonnegative('Quantidade de sucesso não pode ser negativa'),
   quantityFailed: z.coerce.number().int('Quantidade de falhas deve ser um número inteiro').nonnegative('Quantidade de falhas não pode ser negativa'),
+  gramsUsed: z.coerce.number({ invalid_type_error: 'Peso inválido' }).nonnegative('Não pode ser negativo'),
   gramsWasted: z.coerce.number().nonnegative('Gramas desperdiçadas não pode ser negativo'),
   timeWastedHours: z.coerce.number().nonnegative('Tempo desperdiçado não pode ser negativo'),
   notes: z.string().optional().nullable(),

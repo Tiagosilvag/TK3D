@@ -70,6 +70,10 @@ export function ProductionRunForm({
         <input name="quantityFailed" type="number" step="1" min="0" className="tk-input-full" required />
       </label>
       <label className="text-sm">
+        Filamento usado (g)
+        <input name="gramsUsed" type="number" step="0.01" min="0" className="tk-input-full" required />
+      </label>
+      <label className="text-sm">
         Filamento desperdiçado (g)
         <input name="gramsWasted" type="number" step="0.01" min="0" className="tk-input-full" required />
       </label>

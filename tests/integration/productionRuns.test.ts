@@ -59,6 +59,7 @@ describe('productionRuns actions', () => {
       quantityPlanned: '10',
       quantitySuccess: '8',
       quantityFailed: '2',
+      gramsUsed: '240',
       gramsWasted: '15',
       timeWastedHours: '0.5',
     }))
@@ -81,6 +82,7 @@ describe('productionRuns actions', () => {
       quantityPlanned: '10',
       quantitySuccess: '8',
       quantityFailed: '5',
+      gramsUsed: '240',
       gramsWasted: '15',
       timeWastedHours: '0.5',
     }))
@@ -101,6 +103,7 @@ describe('productionRuns actions', () => {
       quantityPlanned: '10',
       quantitySuccess: '10',
       quantityFailed: '0',
+      gramsUsed: '0',
       gramsWasted: '0',
       timeWastedHours: '0',
     }))
@@ -111,5 +114,52 @@ describe('productionRuns actions', () => {
 
     const gone = await prisma.productionRun.findUnique({ where: { id: run.id } })
     expect(gone).toBeNull()
+  })
+
+  it('deduz gramsUsed + gramsWasted do estoque do filamento ao criar um registro válido', async () => {
+    const { printer, filament, product } = await createSupportRecords()
+
+    const result = await createProductionRun(fd({
+      productId: product.id,
+      printerId: printer.id,
+      filamentId: filament.id,
+      date: '2026-09-01',
+      quantityPlanned: '10',
+      quantitySuccess: '8',
+      quantityFailed: '2',
+      gramsUsed: '240',
+      gramsWasted: '15',
+      timeWastedHours: '0.5',
+    }))
+    expect(result.success).toBe(true)
+
+    const updatedFilament = await prisma.filament.findUniqueOrThrow({ where: { id: filament.id } })
+    expect(updatedFilament.currentStockGrams.toNumber()).toBe(1000 - (240 + 15))
+  })
+
+  it('rejeita e não altera nada (nem o registro nem o estoque) quando gramsUsed + gramsWasted excede o estoque disponível', async () => {
+    const { printer, filament, product } = await createSupportRecords()
+    // filament.currentStockGrams is 1000g; request more than that.
+
+    const result = await createProductionRun(fd({
+      productId: product.id,
+      printerId: printer.id,
+      filamentId: filament.id,
+      date: '2026-09-01',
+      quantityPlanned: '10',
+      quantitySuccess: '8',
+      quantityFailed: '2',
+      gramsUsed: '900',
+      gramsWasted: '200',
+      timeWastedHours: '0.5',
+    }))
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('Quantidade excede o estoque disponível (1000g)')
+
+    const run = await prisma.productionRun.findFirst({ where: { productId: product.id } })
+    expect(run).toBeNull()
+
+    const unchangedFilament = await prisma.filament.findUniqueOrThrow({ where: { id: filament.id } })
+    expect(unchangedFilament.currentStockGrams.toNumber()).toBe(1000)
   })
 })

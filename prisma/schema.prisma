@@ -189,6 +189,7 @@ model ProductionRun {
   quantityPlanned Int
   quantitySuccess Int
   quantityFailed  Int
+  gramsUsed       Decimal  @db.Decimal(10, 2)
   gramsWasted     Decimal  @db.Decimal(10, 2)
   timeWastedHours Decimal  @db.Decimal(10, 3)
   notes           String?

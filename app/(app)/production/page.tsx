@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { ProductionRunForm } from './ProductionRunForm'
 import { deleteProductionRun } from '@/actions/productionRuns'
-import { calculateWasteCost, calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour, calculateFilamentPricePerKg } from '@/lib/costing'
+import { calculateWasteCost, calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour, calculateFilamentPricePerKg, calculateFilamentPricePerGram } from '@/lib/costing'
 import { formatCurrency } from '@/lib/format'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 
@@ -41,6 +41,7 @@ export default async function ProductionPage() {
             <th>Plan.</th>
             <th>Sucesso</th>
             <th>Falhas</th>
+            <th>Custo do filamento</th>
             <th>Desperdício</th>
             <th>Custo desperdício</th>
             <th></th>
@@ -58,6 +59,10 @@ export default async function ProductionPage() {
               annualUsageHours,
             })
             const filamentPricePerKg = calculateFilamentPricePerKg({
+              spoolPrice: run.filament.spoolPrice.toNumber(),
+              spoolWeightKg: run.filament.spoolWeightKg.toNumber(),
+            })
+            const filamentCost = run.gramsUsed.toNumber() * calculateFilamentPricePerGram({
               spoolPrice: run.filament.spoolPrice.toNumber(),
               spoolWeightKg: run.filament.spoolWeightKg.toNumber(),
             })
@@ -80,6 +85,7 @@ export default async function ProductionPage() {
                 <td>{run.quantityPlanned}</td>
                 <td>{run.quantitySuccess}</td>
                 <td>{run.quantityFailed}</td>
+                <td>{formatCurrency(filamentCost)}</td>
                 <td>{run.gramsWasted.toNumber()}g / {run.timeWastedHours.toNumber()}h</td>
                 <td>{formatCurrency(wasteCost)}</td>
                 <td>

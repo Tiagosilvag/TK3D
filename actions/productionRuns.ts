@@ -13,11 +13,32 @@ function parse(formData: FormData) {
   })
 }
 
+// The stock-sufficiency check below (gramsUsed + gramsWasted <= currentStockGrams)
+// cannot be expressed in the Zod schema alone because it depends on a database
+// read — same reasoning as createConsignmentSaleReport's balance check. The
+// create + decrement pair runs in a single $transaction so a run that fails
+// never partially applies (row created but stock unchanged, or vice versa).
 export async function createProductionRun(formData: FormData): Promise<ActionResult> {
   const parsed = parse(formData)
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
-  await prisma.productionRun.create({ data: parsed.data })
+
+  const totalConsumed = parsed.data.gramsUsed + parsed.data.gramsWasted
+  const filament = await prisma.filament.findUniqueOrThrow({ where: { id: parsed.data.filamentId } })
+  const currentStock = filament.currentStockGrams.toNumber()
+  if (totalConsumed > currentStock) {
+    return { success: false, error: `Quantidade excede o estoque disponível (${currentStock}g)` }
+  }
+
+  await prisma.$transaction([
+    prisma.productionRun.create({ data: parsed.data }),
+    prisma.filament.update({
+      where: { id: parsed.data.filamentId },
+      data: { currentStockGrams: { decrement: totalConsumed } },
+    }),
+  ])
+
   revalidatePath('/production')
+  revalidatePath('/filaments')
   return { success: true }
 }
 
