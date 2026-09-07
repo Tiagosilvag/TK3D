@@ -46,11 +46,13 @@ function fd(obj: Record<string, string>): FormData {
 describe('products actions', () => {
   it('cria um produto e calcula o custo corretamente', async () => {
     await prisma.settings.create({ data: { id: 1 } })
-    const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, maintenanceCost: 1000, avgPowerConsumptionKwh: 0.27 } })
+    const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
     const filament = await prisma.filament.create({ data: { manufacturer: 'F1', diameterMm: 1.75, spoolPrice: 80, spoolWeightKg: 1, densityGCm3: 1.24, nozzleTempC: 220, bedTempC: 60 } })
-    // Matches Task 3's hand-typed costing.test.ts fixture exactly (suppliesCost: 0.3,
-    // packagingCost: 0, accessoryCost: 0) so the suggestedPrice (14.652) validated there
-    // against the spreadsheet is reproduced here end-to-end through real DB records.
+    // Matches the costing.test.ts fixture exactly (suppliesCost: 0.3, packagingCost: 0,
+    // accessoryCost: 0), with printer costing now driven by Settings defaults
+    // (annualMaintenancePercent 0.10, annualUsageHours 2000): depreciation
+    // 3600/10000=0.36 R$/h, maintenance 3600*0.10/2000=0.18 R$/h. suggestedPrice
+    // (15.004) is reproduced here end-to-end through real DB records.
     const supply = await prisma.supply.create({ data: { name: 'Cola Teste', unit: 'ML', unitCost: 0.3 } })
 
     const result = await createProduct(fd({
@@ -75,7 +77,7 @@ describe('products actions', () => {
     expect(usageResult.success).toBe(true)
 
     const breakdown = await getProductCostBreakdown(product.id)
-    expect(breakdown.suggestedPrice).toBeCloseTo(14.652, 2)
+    expect(breakdown.suggestedPrice).toBeCloseTo(15.004, 2)
   })
 
   it('rejeita produto sem impressora selecionada', async () => {
@@ -95,7 +97,7 @@ describe('products actions', () => {
   })
 
   it('atualiza e depois remove (soft-delete)', async () => {
-    const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, maintenanceCost: 1000, avgPowerConsumptionKwh: 0.27 } })
+    const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
     const filament = await prisma.filament.create({ data: { manufacturer: 'F1', diameterMm: 1.75, spoolPrice: 80, spoolWeightKg: 1, densityGCm3: 1.24, nozzleTempC: 220, bedTempC: 60 } })
 
     const created = await createProduct(fd({
@@ -134,7 +136,7 @@ describe('products actions', () => {
 
   it('inclui custo de insumos, embalagem e acessório no breakdown', async () => {
     await prisma.settings.create({ data: { id: 1 } })
-    const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, maintenanceCost: 1000, avgPowerConsumptionKwh: 0.27 } })
+    const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
     const filament = await prisma.filament.create({ data: { manufacturer: 'F1', diameterMm: 1.75, spoolPrice: 80, spoolWeightKg: 1, densityGCm3: 1.24, nozzleTempC: 220, bedTempC: 60 } })
     const packagingItem = await prisma.packagingItem.create({ data: { name: 'Saquinho', unitCost: 0.1 } })
     const accessory = await prisma.accessory.create({ data: { name: 'Mosquetão', type: 'MOSQUETAO', unitCost: 0.3 } })

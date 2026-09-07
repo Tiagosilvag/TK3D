@@ -1,11 +1,20 @@
 export interface PrinterDepreciationInput {
   purchasePrice: number
-  maintenanceCost: number
   depreciationHours: number
 }
 
 export function calculatePrinterDepreciationCostPerHour(input: PrinterDepreciationInput): number {
-  return (input.purchasePrice + input.maintenanceCost) / input.depreciationHours
+  return input.purchasePrice / input.depreciationHours
+}
+
+export interface PrinterMaintenanceInput {
+  purchasePrice: number
+  annualMaintenancePercent: number
+  annualUsageHours: number
+}
+
+export function calculatePrinterMaintenanceCostPerHour(input: PrinterMaintenanceInput): number {
+  return (input.purchasePrice * input.annualMaintenancePercent) / input.annualUsageHours
 }
 
 export interface FilamentPriceInput {
@@ -34,6 +43,7 @@ export interface ProductCostInput {
   filamentPricePerKg: number
   printerAvgPowerConsumptionKwh: number
   printerDepreciationCostPerHour: number
+  printerMaintenanceCostPerHour: number
   suppliesCost: number
   packagingCost: number
   accessoryCost: number
@@ -43,6 +53,7 @@ export interface ProductCostBreakdown {
   filamentCost: number
   electricityCost: number
   printerCost: number
+  maintenanceCost: number
   laborCost: number
   suppliesCost: number
   packagingCost: number
@@ -72,9 +83,10 @@ export function calculateProductCost(input: ProductCostInput, settings: Settings
   const filamentCost = input.weightGrams * (input.filamentPricePerKg / 1000)
   const electricityCost = input.printerAvgPowerConsumptionKwh * settings.energyCostPerKwh * input.printTimeHours
   const printerCost = input.printerDepreciationCostPerHour * input.printTimeHours
+  const maintenanceCost = input.printerMaintenanceCostPerHour * input.printTimeHours
   const laborCost = settings.laborCostPerHour * input.laborTimeHours
 
-  const subtotal = filamentCost + electricityCost + printerCost + laborCost
+  const subtotal = filamentCost + electricityCost + printerCost + maintenanceCost + laborCost
     + input.suppliesCost + input.packagingCost + input.accessoryCost
 
   const finalCost = subtotal * (1 + settings.failureRatePercent)
@@ -86,6 +98,7 @@ export function calculateProductCost(input: ProductCostInput, settings: Settings
     filamentCost,
     electricityCost,
     printerCost,
+    maintenanceCost,
     laborCost,
     suppliesCost: input.suppliesCost,
     packagingCost: input.packagingCost,

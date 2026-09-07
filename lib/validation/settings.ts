@@ -10,6 +10,8 @@ export const settingsSchema = z.object({
   taxPercent: percent(),
   marketplaceFixedFee: z.coerce.number().nonnegative('Taxa fixa não pode ser negativa'),
   defaultMarkup: z.coerce.number().positive('Markup deve ser maior que zero'),
+  annualMaintenancePercent: percent(),
+  annualUsageHours: z.coerce.number().positive('Deve ser maior que zero'),
 })
 
 export type SettingsInput = z.infer<typeof settingsSchema>

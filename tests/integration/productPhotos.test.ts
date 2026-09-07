@@ -22,7 +22,7 @@ afterAll(async () => {
 
 async function createTestProduct() {
   const printer = await prisma.printer.create({
-    data: { name: 'Foto Printer', purchasePrice: 1000, depreciationHours: 1000, maintenanceCost: 0, avgPowerConsumptionKwh: 0.1 },
+    data: { name: 'Foto Printer', purchasePrice: 1000, depreciationHours: 1000, avgPowerConsumptionKwh: 0.1 },
   })
   const filament = await prisma.filament.create({
     data: { manufacturer: 'Foto Filament', diameterMm: 1.75, spoolPrice: 100, spoolWeightKg: 1, densityGCm3: 1.24, nozzleTempC: 200, bedTempC: 60 },

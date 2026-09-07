@@ -22,6 +22,8 @@ export default async function SettingsPage() {
           taxPercent: settings.taxPercent.toNumber(),
           marketplaceFixedFee: settings.marketplaceFixedFee.toNumber(),
           defaultMarkup: settings.defaultMarkup.toNumber(),
+          annualMaintenancePercent: settings.annualMaintenancePercent.toNumber(),
+          annualUsageHours: settings.annualUsageHours.toNumber(),
         }}
       />
     </div>

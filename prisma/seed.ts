@@ -10,11 +10,11 @@ async function main() {
   })
 
   const printers = [
-    { name: 'Bambu Lab A1 Mini', purchasePrice: 3000, depreciationHours: 10000, maintenanceCost: 700, avgPowerConsumptionKwh: 0.15 },
-    { name: 'Anycubic Kobra X', purchasePrice: 3600, depreciationHours: 10000, maintenanceCost: 1000, avgPowerConsumptionKwh: 0.27 },
-    { name: 'Bambulab A1', purchasePrice: 4800, depreciationHours: 10000, maintenanceCost: 1000, avgPowerConsumptionKwh: 0.15, active: false },
-    { name: 'Snapmaker U1', purchasePrice: 15000, depreciationHours: 25000, maintenanceCost: 2300, avgPowerConsumptionKwh: 0.3, active: false },
-    { name: 'Anycubic Kobra S1', purchasePrice: 6000, depreciationHours: 10000, maintenanceCost: 1200, avgPowerConsumptionKwh: 0.35, active: false },
+    { name: 'Bambu Lab A1 Mini', purchasePrice: 3000, depreciationHours: 10000, avgPowerConsumptionKwh: 0.15 },
+    { name: 'Anycubic Kobra X', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 },
+    { name: 'Bambulab A1', purchasePrice: 4800, depreciationHours: 10000, avgPowerConsumptionKwh: 0.15, active: false },
+    { name: 'Snapmaker U1', purchasePrice: 15000, depreciationHours: 25000, avgPowerConsumptionKwh: 0.3, active: false },
+    { name: 'Anycubic Kobra S1', purchasePrice: 6000, depreciationHours: 10000, avgPowerConsumptionKwh: 0.35, active: false },
   ]
   for (const p of printers) {
     await prisma.printer.upsert({ where: { name: p.name }, update: {}, create: p as any })

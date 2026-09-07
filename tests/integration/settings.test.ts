@@ -27,6 +27,8 @@ describe('settings actions', () => {
       taxPercent: '0.06',
       marketplaceFixedFee: '5',
       defaultMarkup: '2.5',
+      annualMaintenancePercent: '0.08',
+      annualUsageHours: '1800',
     }))
     expect(result.success).toBe(true)
 
@@ -38,6 +40,8 @@ describe('settings actions', () => {
     expect(settings.taxPercent.toNumber()).toBeCloseTo(0.06)
     expect(settings.marketplaceFixedFee.toNumber()).toBeCloseTo(5)
     expect(settings.defaultMarkup.toNumber()).toBeCloseTo(2.5)
+    expect(settings.annualMaintenancePercent.toNumber()).toBeCloseTo(0.08)
+    expect(settings.annualUsageHours.toNumber()).toBeCloseTo(1800)
   })
 
   it('rejeita failureRatePercent fora do intervalo 0-1', async () => {
@@ -49,6 +53,8 @@ describe('settings actions', () => {
       taxPercent: '0.06',
       marketplaceFixedFee: '5',
       defaultMarkup: '2.5',
+      annualMaintenancePercent: '0.08',
+      annualUsageHours: '1800',
     }))
     expect(result.success).toBe(false)
   })
@@ -62,6 +68,8 @@ describe('settings actions', () => {
       taxPercent: '0.055',
       marketplaceFixedFee: '4',
       defaultMarkup: '2',
+      annualMaintenancePercent: '0.10',
+      annualUsageHours: '2000',
     }))
     expect(first.success).toBe(true)
 
@@ -73,6 +81,8 @@ describe('settings actions', () => {
       taxPercent: '0.055',
       marketplaceFixedFee: '4',
       defaultMarkup: '2',
+      annualMaintenancePercent: '0.10',
+      annualUsageHours: '2000',
     }))
     expect(second.success).toBe(true)
 

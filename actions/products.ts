@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { productSchema } from '@/lib/validation/product'
-import { calculateProductCost, calculatePrinterDepreciationCostPerHour, calculateFilamentPricePerKg, type ProductCostBreakdown } from '@/lib/costing'
+import { calculateProductCost, calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour, calculateFilamentPricePerKg, type ProductCostBreakdown } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
@@ -58,8 +58,13 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
 
   const printerDepreciationCostPerHour = calculatePrinterDepreciationCostPerHour({
     purchasePrice: product.printer.purchasePrice.toNumber(),
-    maintenanceCost: product.printer.maintenanceCost.toNumber(),
     depreciationHours: product.printer.depreciationHours.toNumber(),
+  })
+
+  const printerMaintenanceCostPerHour = calculatePrinterMaintenanceCostPerHour({
+    purchasePrice: product.printer.purchasePrice.toNumber(),
+    annualMaintenancePercent: settings.annualMaintenancePercent.toNumber(),
+    annualUsageHours: settings.annualUsageHours.toNumber(),
   })
 
   const filamentPricePerKg = calculateFilamentPricePerKg({
@@ -80,6 +85,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
       filamentPricePerKg,
       printerAvgPowerConsumptionKwh: product.printer.avgPowerConsumptionKwh.toNumber(),
       printerDepreciationCostPerHour,
+      printerMaintenanceCostPerHour,
       suppliesCost,
       packagingCost: product.packagingItem?.unitCost.toNumber() ?? 0,
       accessoryCost: product.accessory?.unitCost.toNumber() ?? 0,

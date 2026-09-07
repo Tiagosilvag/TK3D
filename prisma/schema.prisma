@@ -15,15 +15,17 @@ datasource db {
 }
 
 model Settings {
-  id                    Int      @id @default(1)
-  energyCostPerKwh      Decimal  @default(1.00) @db.Decimal(10, 4)
-  laborCostPerHour      Decimal  @default(10.00) @db.Decimal(10, 2)
-  failureRatePercent    Decimal  @default(0.10) @db.Decimal(5, 4)
-  marketplaceFeePercent Decimal  @default(0.20) @db.Decimal(5, 4)
-  taxPercent            Decimal  @default(0.055) @db.Decimal(5, 4)
-  marketplaceFixedFee   Decimal  @default(4.00) @db.Decimal(10, 2)
-  defaultMarkup         Decimal  @default(2.00) @db.Decimal(6, 2)
-  updatedAt             DateTime @updatedAt
+  id                       Int      @id @default(1)
+  energyCostPerKwh         Decimal  @default(1.00) @db.Decimal(10, 4)
+  laborCostPerHour         Decimal  @default(10.00) @db.Decimal(10, 2)
+  failureRatePercent       Decimal  @default(0.10) @db.Decimal(5, 4)
+  marketplaceFeePercent    Decimal  @default(0.20) @db.Decimal(5, 4)
+  taxPercent               Decimal  @default(0.055) @db.Decimal(5, 4)
+  marketplaceFixedFee      Decimal  @default(4.00) @db.Decimal(10, 2)
+  defaultMarkup            Decimal  @default(2.00) @db.Decimal(6, 2)
+  annualMaintenancePercent Decimal  @default(0.10) @db.Decimal(5, 4)
+  annualUsageHours         Decimal  @default(2000) @db.Decimal(10, 2)
+  updatedAt                DateTime @updatedAt
 }
 
 model Printer {
@@ -31,7 +33,6 @@ model Printer {
   name                   String          @unique
   purchasePrice          Decimal         @db.Decimal(10, 2)
   depreciationHours      Decimal         @db.Decimal(10, 2)
-  maintenanceCost        Decimal         @db.Decimal(10, 2)
   avgPowerConsumptionKwh Decimal         @db.Decimal(6, 4)
   active                 Boolean         @default(true)
   createdAt              DateTime        @default(now())

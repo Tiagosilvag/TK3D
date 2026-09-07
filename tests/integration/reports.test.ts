@@ -34,7 +34,7 @@ afterAll(async () => {
 })
 
 async function createSupportRecords() {
-  const printer = await prisma.printer.create({ data: { name: 'P', purchasePrice: 1, depreciationHours: 1, maintenanceCost: 0, avgPowerConsumptionKwh: 0.1 } })
+  const printer = await prisma.printer.create({ data: { name: 'P', purchasePrice: 1, depreciationHours: 1, avgPowerConsumptionKwh: 0.1 } })
   const filament = await prisma.filament.create({ data: { manufacturer: 'F', diameterMm: 1.75, spoolPrice: 100, spoolWeightKg: 1, densityGCm3: 1.2, nozzleTempC: 200, bedTempC: 60 } })
   const product = await prisma.product.create({ data: { name: 'X', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0 } })
   return { printer, filament, product }
@@ -76,7 +76,9 @@ describe('getTotalWasteCost', () => {
       },
     })
 
-    // printerDepreciationCostPerHour = (1 + 0) / 1 = 1
+    // printerDepreciationCostPerHour = 1 / 1 = 1 (maintenance is no longer folded
+    // into depreciation; getTotalWasteCost's time-waste-cost term is depreciation
+    // + energy only, unchanged by the printer costing rework)
     // filamentPricePerKg = 100 / 1 = 100
     // filamentWasteCost = 100g * (100/1000) = 10
     // timeWasteCost = 1h * (1 + 1*0.1) = 1.1

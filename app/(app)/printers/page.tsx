@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { calculatePrinterDepreciationCostPerHour } from '@/lib/costing'
+import { calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour } from '@/lib/costing'
 import { formatCurrency } from '@/lib/format'
 import { PrinterForm } from './PrinterForm'
 import { deletePrinter, reactivatePrinter } from '@/actions/printers'
@@ -8,38 +8,55 @@ import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 export const dynamic = 'force-dynamic'
 
 export default async function PrintersPage() {
-  const [printers, inactivePrinters] = await Promise.all([
+  const [printers, inactivePrinters, settings] = await Promise.all([
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.printer.findMany({ where: { active: false }, orderBy: { name: 'asc' } }),
+    prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
   ])
+
+  const annualMaintenancePercent = settings.annualMaintenancePercent.toNumber()
+  const annualUsageHours = settings.annualUsageHours.toNumber()
+  const energyCostPerKwh = settings.energyCostPerKwh.toNumber()
 
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Impressoras</h1>
-      <PrinterForm />
+      <PrinterForm settings={{ annualMaintenancePercent, annualUsageHours, energyCostPerKwh }} />
       <table className="mt-6 w-full text-sm">
         <thead>
           <tr className="tk-table-head-row">
             <th className="py-2">Nome</th>
             <th>Preço</th>
+            <th>Vida útil (h)</th>
             <th>Depreciação R$/h</th>
             <th>Consumo kWh/h</th>
+            <th>Energia R$/h</th>
+            <th>Manutenção R$/h</th>
+            <th>Custo total R$/h</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           {printers.map((p) => {
-            const depCost = calculatePrinterDepreciationCostPerHour({
-              purchasePrice: p.purchasePrice.toNumber(),
-              maintenanceCost: p.maintenanceCost.toNumber(),
-              depreciationHours: p.depreciationHours.toNumber(),
-            })
+            const purchasePrice = p.purchasePrice.toNumber()
+            const depreciationHours = p.depreciationHours.toNumber()
+            const avgPowerConsumptionKwh = p.avgPowerConsumptionKwh.toNumber()
+
+            const depCost = calculatePrinterDepreciationCostPerHour({ purchasePrice, depreciationHours })
+            const maintCost = calculatePrinterMaintenanceCostPerHour({ purchasePrice, annualMaintenancePercent, annualUsageHours })
+            const electricityCost = avgPowerConsumptionKwh * energyCostPerKwh
+            const totalCost = depCost + maintCost + electricityCost
+
             return (
               <tr key={p.id} className="tk-row">
                 <td className="py-2">{p.name}</td>
-                <td>{formatCurrency(p.purchasePrice.toNumber())}</td>
+                <td>{formatCurrency(purchasePrice)}</td>
+                <td>{depreciationHours}</td>
                 <td>{formatCurrency(depCost)}</td>
-                <td>{p.avgPowerConsumptionKwh.toNumber()}</td>
+                <td>{avgPowerConsumptionKwh}</td>
+                <td>{formatCurrency(electricityCost)}</td>
+                <td>{formatCurrency(maintCost)}</td>
+                <td>{formatCurrency(totalCost)}</td>
                 <td>
                   <ConfirmDeleteForm action={async () => { 'use server'; await deletePrinter(p.id) }} />
                 </td>

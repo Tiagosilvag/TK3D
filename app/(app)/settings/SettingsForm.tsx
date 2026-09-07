@@ -10,6 +10,8 @@ type SettingsValues = {
   taxPercent: number
   marketplaceFixedFee: number
   defaultMarkup: number
+  annualMaintenancePercent: number
+  annualUsageHours: number
 }
 
 export function SettingsForm({ settings }: { settings: SettingsValues }) {
@@ -49,6 +51,14 @@ export function SettingsForm({ settings }: { settings: SettingsValues }) {
       <label className="text-sm">
         Markup padrão
         <input name="defaultMarkup" type="number" step="0.01" defaultValue={settings.defaultMarkup} className="tk-input-full" required />
+      </label>
+      <label className="text-sm">
+        Manutenção anual estimada (0 a 1, % do preço de compra da impressora)
+        <input name="annualMaintenancePercent" type="number" step="0.0001" min="0" max="1" defaultValue={settings.annualMaintenancePercent} className="tk-input-full" required />
+      </label>
+      <label className="text-sm">
+        Horas de uso estimadas por ano (por impressora)
+        <input name="annualUsageHours" type="number" step="1" defaultValue={settings.annualUsageHours} className="tk-input-full" required />
       </label>
       <button className="mt-2 tk-btn-primary">Salvar</button>
       {message && <p className="text-sm text-slate-600 dark:text-slate-400">{message}</p>}

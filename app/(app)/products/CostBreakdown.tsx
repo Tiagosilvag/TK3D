@@ -9,6 +9,7 @@ const ROWS: { key: keyof ProductCostBreakdown; label: string }[] = [
   { key: 'filamentCost', label: 'Filamento' },
   { key: 'electricityCost', label: 'Energia' },
   { key: 'printerCost', label: 'Depreciação da impressora' },
+  { key: 'maintenanceCost', label: 'Manutenção' },
   { key: 'laborCost', label: 'Mão de obra' },
   { key: 'suppliesCost', label: 'Insumos' },
   { key: 'packagingCost', label: 'Embalagem' },

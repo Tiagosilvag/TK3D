@@ -16,7 +16,6 @@ export async function getTotalWasteCost(): Promise<number> {
   return runs.reduce((sum, run) => {
     const printerDepreciationCostPerHour = calculatePrinterDepreciationCostPerHour({
       purchasePrice: run.printer.purchasePrice.toNumber(),
-      maintenanceCost: run.printer.maintenanceCost.toNumber(),
       depreciationHours: run.printer.depreciationHours.toNumber(),
     })
     const filamentPricePerKg = calculateFilamentPricePerKg({
