@@ -14,5 +14,12 @@ export default defineConfig({
     env: {
       DATABASE_URL: process.env.TEST_DATABASE_URL ?? '',
     },
+    // Integration test files each wipe whole tables in their own beforeEach
+    // (e.g. printers.test.ts unconditionally deletes every Printer row) and
+    // now that Product carries real (non-cascading) FKs to Printer/Filament/
+    // PackagingItem/Accessory/Supply, two such files racing in parallel could
+    // try to delete a row the other still depends on and fail with a foreign
+    // key violation. Run test files one at a time against the shared test DB.
+    fileParallelism: false,
   },
 })
