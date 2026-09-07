@@ -27,7 +27,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
 
   const [printers, filaments, packagingItems, accessories, supplies, breakdown] = await Promise.all([
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
-    prisma.filament.findMany({ where: { active: true }, orderBy: { manufacturer: 'asc' } }),
+    prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { manufacturer: 'asc' } }),
     prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.accessory.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.supply.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
@@ -58,7 +58,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               notes: product.notes,
             }}
             printers={printers}
-            filaments={filaments.map((f) => ({ id: f.id, name: f.manufacturer }))}
+            filaments={filaments.map((f) => ({ id: f.id, name: `${f.manufacturer} ${f.colorName} (${f.material}) — Rolo #${String(f.rollNumber).padStart(3, '0')}` }))}
             packagingItems={packagingItems}
             accessories={accessories}
           />

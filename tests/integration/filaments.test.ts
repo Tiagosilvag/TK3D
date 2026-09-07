@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createFilament, updateFilament, deleteFilament, reactivateFilament } from '@/actions/filaments'
+import { createFilament, deleteFilament } from '@/actions/filaments'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -20,68 +20,70 @@ function fd(obj: Record<string, string>): FormData {
   return f
 }
 
+const validInput = {
+  manufacturer: 'Teste 3Dmax',
+  material: 'PLA',
+  colorName: 'Vermelho',
+  colorHex: '#ff0000',
+  spoolWeightKg: '1',
+  spoolPrice: '80',
+}
+
 describe('filaments actions', () => {
-  it('cria um filamento válido', async () => {
-    const result = await createFilament(fd({
-      manufacturer: 'Teste PLA',
-      diameterMm: '1.75',
-      spoolPrice: '80',
-      spoolWeightKg: '1',
-      densityGCm3: '1.24',
-      nozzleTempC: '200',
-      bedTempC: '60',
-    }))
+  it('cria um filamento válido com estoque inicial = estoque atual = peso em gramas e rollNumber 1', async () => {
+    const result = await createFilament(fd(validInput))
     expect(result.success).toBe(true)
-    const filament = await prisma.filament.findFirst({ where: { manufacturer: 'Teste PLA' } })
-    expect(filament).not.toBeNull()
+
+    const filament = await prisma.filament.findFirstOrThrow({ where: { manufacturer: 'Teste 3Dmax' } })
+    expect(filament.rollNumber).toBe(1)
+    expect(filament.initialStockGrams.toNumber()).toBe(1000)
+    expect(filament.currentStockGrams.toNumber()).toBe(1000)
+    expect(filament.material).toBe('PLA')
+    expect(filament.colorName).toBe('Vermelho')
+    expect(filament.colorHex).toBe('#ff0000')
+  })
+
+  it('incrementa rollNumber para um novo rolo do mesmo fabricante+material+cor', async () => {
+    await createFilament(fd(validInput))
+    const second = await createFilament(fd({ ...validInput, spoolPrice: '85' }))
+    expect(second.success).toBe(true)
+
+    const rolls = await prisma.filament.findMany({
+      where: { manufacturer: 'Teste 3Dmax', material: 'PLA', colorName: 'Vermelho' },
+      orderBy: { rollNumber: 'asc' },
+    })
+    expect(rolls).toHaveLength(2)
+    expect(rolls[0].rollNumber).toBe(1)
+    expect(rolls[1].rollNumber).toBe(2)
+  })
+
+  it('reinicia rollNumber em 1 para uma cor diferente do mesmo fabricante+material', async () => {
+    await createFilament(fd(validInput))
+    const result = await createFilament(fd({ ...validInput, colorName: 'Azul', colorHex: '#0000ff' }))
+    expect(result.success).toBe(true)
+
+    const blue = await prisma.filament.findFirstOrThrow({ where: { colorName: 'Azul' } })
+    expect(blue.rollNumber).toBe(1)
   })
 
   it('rejeita fabricante vazio', async () => {
-    const result = await createFilament(fd({
-      manufacturer: '',
-      diameterMm: '1.75',
-      spoolPrice: '80',
-      spoolWeightKg: '1',
-      densityGCm3: '1.24',
-      nozzleTempC: '200',
-      bedTempC: '60',
-    }))
+    const result = await createFilament(fd({ ...validInput, manufacturer: '' }))
     expect(result.success).toBe(false)
   })
 
-  it('atualiza e depois remove (soft-delete)', async () => {
-    const created = await createFilament(fd({
-      manufacturer: 'Teste ABS', diameterMm: '1.75', spoolPrice: '90', spoolWeightKg: '1', densityGCm3: '1.04', nozzleTempC: '230', bedTempC: '90',
-    }))
-    expect(created.success).toBe(true)
-    const filament = await prisma.filament.findFirstOrThrow({ where: { manufacturer: 'Teste ABS' } })
+  it('rejeita cor hexadecimal inválida', async () => {
+    const result = await createFilament(fd({ ...validInput, colorHex: 'vermelho' }))
+    expect(result.success).toBe(false)
+  })
 
-    const updated = await updateFilament(filament.id, fd({
-      manufacturer: 'Teste ABS Atualizado', diameterMm: '1.75', spoolPrice: '95', spoolWeightKg: '1', densityGCm3: '1.04', nozzleTempC: '230', bedTempC: '90',
-    }))
-    expect(updated.success).toBe(true)
+  it('remove um filamento (exclusão física)', async () => {
+    await createFilament(fd(validInput))
+    const filament = await prisma.filament.findFirstOrThrow({ where: { manufacturer: 'Teste 3Dmax' } })
 
     const del = await deleteFilament(filament.id)
     expect(del.success).toBe(true)
-    // Filament is referenced by Product/ProductionRun, so deleteFilament soft-deletes
-    // (active: false) instead of removing the row.
+
     const gone = await prisma.filament.findUnique({ where: { id: filament.id } })
-    expect(gone).not.toBeNull()
-    expect(gone?.active).toBe(false)
-  })
-
-  it('reativa um filamento removido (soft-deleted)', async () => {
-    const created = await createFilament(fd({
-      manufacturer: 'Teste PETG', diameterMm: '1.75', spoolPrice: '100', spoolWeightKg: '1', densityGCm3: '1.27', nozzleTempC: '240', bedTempC: '80',
-    }))
-    expect(created.success).toBe(true)
-    const filament = await prisma.filament.findFirstOrThrow({ where: { manufacturer: 'Teste PETG' } })
-
-    await deleteFilament(filament.id)
-    const reactivated = await reactivateFilament(filament.id)
-    expect(reactivated.success).toBe(true)
-
-    const restored = await prisma.filament.findUnique({ where: { id: filament.id } })
-    expect(restored?.active).toBe(true)
+    expect(gone).toBeNull()
   })
 })

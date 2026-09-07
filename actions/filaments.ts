@@ -1,55 +1,37 @@
 'use server'
-import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { filamentSchema } from '@/lib/validation/filament'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
 
-function parse(formData: FormData) {
-  return filamentSchema.safeParse(Object.fromEntries(formData))
-}
-
-function isUniqueConstraintError(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
-}
-
 export async function createFilament(formData: FormData): Promise<ActionResult> {
-  const parsed = parse(formData)
+  const parsed = filamentSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
-  try {
-    await prisma.filament.create({ data: parsed.data })
-  } catch (err) {
-    if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um filamento com esse fabricante' }
-    throw err
-  }
+
+  const existingCount = await prisma.filament.count({
+    where: { manufacturer: parsed.data.manufacturer, material: parsed.data.material, colorName: parsed.data.colorName },
+  })
+  const initialStockGrams = parsed.data.spoolWeightKg * 1000
+
+  await prisma.filament.create({
+    data: {
+      ...parsed.data,
+      rollNumber: existingCount + 1,
+      initialStockGrams,
+      currentStockGrams: initialStockGrams,
+    },
+  })
   revalidatePath('/filaments')
   return { success: true }
 }
 
-export async function updateFilament(id: string, formData: FormData): Promise<ActionResult> {
-  const parsed = parse(formData)
-  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
-  try {
-    await prisma.filament.update({ where: { id }, data: parsed.data })
-  } catch (err) {
-    if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um filamento com esse fabricante' }
-    throw err
-  }
-  revalidatePath('/filaments')
-  return { success: true }
-}
-
-// Soft-delete: Product and ProductionRun reference Filament, so a filament that
-// has been used in existing products/runs cannot be physically removed.
+// Physical delete — no soft-delete in this model (spec §3.2). If a Product/ProductionRun
+// references this roll, Postgres's FK constraint blocks it and Prisma throws; that
+// propagates as an unhandled error, matching the existing precedent elsewhere in this
+// codebase of not handling FK-constraint deletes specially.
 export async function deleteFilament(id: string): Promise<ActionResult> {
-  await prisma.filament.update({ where: { id }, data: { active: false } })
-  revalidatePath('/filaments')
-  return { success: true }
-}
-
-export async function reactivateFilament(id: string): Promise<ActionResult> {
-  await prisma.filament.update({ where: { id }, data: { active: true } })
+  await prisma.filament.delete({ where: { id } })
   revalidatePath('/filaments')
   return { success: true }
 }

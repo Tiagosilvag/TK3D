@@ -35,7 +35,7 @@ afterAll(async () => {
 
 async function createSupportRecords() {
   const printer = await prisma.printer.create({ data: { name: 'P', purchasePrice: 1, depreciationHours: 1, avgPowerConsumptionKwh: 0.1 } })
-  const filament = await prisma.filament.create({ data: { manufacturer: 'F', diameterMm: 1.75, spoolPrice: 100, spoolWeightKg: 1, densityGCm3: 1.2, nozzleTempC: 200, bedTempC: 60 } })
+  const filament = await prisma.filament.create({ data: { manufacturer: 'F', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 100, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
   const product = await prisma.product.create({ data: { name: 'X', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0 } })
   return { printer, filament, product }
 }

@@ -26,6 +26,24 @@ export function calculateFilamentPricePerKg(input: FilamentPriceInput): number {
   return input.spoolPrice / input.spoolWeightKg
 }
 
+export function calculateFilamentPricePerGram(input: FilamentPriceInput): number {
+  return calculateFilamentPricePerKg(input) / 1000
+}
+
+export interface StockStatus {
+  emoji: string
+  label: string
+}
+
+// Thresholds from the spec (§3.3): >30% em estoque, 10-30% baixo, 0-10% (exclusive
+// of 0) crítico, <=0% esgotado.
+export function getStockStatus(percentRemaining: number): StockStatus {
+  if (percentRemaining <= 0) return { emoji: '⚫', label: 'Esgotado' }
+  if (percentRemaining < 10) return { emoji: '🔴', label: 'Estoque crítico' }
+  if (percentRemaining <= 30) return { emoji: '🟡', label: 'Estoque baixo' }
+  return { emoji: '🟢', label: 'Em estoque' }
+}
+
 export interface Settings {
   energyCostPerKwh: number
   laborCostPerHour: number

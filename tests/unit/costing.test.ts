@@ -3,8 +3,10 @@ import {
   calculatePrinterDepreciationCostPerHour,
   calculatePrinterMaintenanceCostPerHour,
   calculateFilamentPricePerKg,
+  calculateFilamentPricePerGram,
   calculateProductCost,
   calculateWasteCost,
+  getStockStatus,
 } from '@/lib/costing'
 
 describe('calculatePrinterDepreciationCostPerHour (no maintenance folded in)', () => {
@@ -28,6 +30,35 @@ describe('calculatePrinterMaintenanceCostPerHour', () => {
 describe('calculateFilamentPricePerKg', () => {
   it('Outro: 80/1kg', () => {
     expect(calculateFilamentPricePerKg({ spoolPrice: 80, spoolWeightKg: 1 })).toBeCloseTo(80, 4)
+  })
+})
+
+describe('calculateFilamentPricePerGram', () => {
+  it('é o preço por kg dividido por 1000', () => {
+    expect(calculateFilamentPricePerGram({ spoolPrice: 80, spoolWeightKg: 1 })).toBeCloseTo(0.08, 5)
+  })
+  it('rolo de 1kg a R$120: R$0,12/g', () => {
+    expect(calculateFilamentPricePerGram({ spoolPrice: 120, spoolWeightKg: 1 })).toBeCloseTo(0.12, 5)
+  })
+})
+
+describe('getStockStatus', () => {
+  it('acima de 30% -> em estoque', () => {
+    expect(getStockStatus(31)).toEqual({ emoji: '🟢', label: 'Em estoque' })
+    expect(getStockStatus(100)).toEqual({ emoji: '🟢', label: 'Em estoque' })
+  })
+  it('entre 10% e 30% (inclusive) -> estoque baixo', () => {
+    expect(getStockStatus(30)).toEqual({ emoji: '🟡', label: 'Estoque baixo' })
+    expect(getStockStatus(10)).toEqual({ emoji: '🟡', label: 'Estoque baixo' })
+    expect(getStockStatus(20)).toEqual({ emoji: '🟡', label: 'Estoque baixo' })
+  })
+  it('entre 0 e 10% (exclusive) -> estoque crítico', () => {
+    expect(getStockStatus(9.9)).toEqual({ emoji: '🔴', label: 'Estoque crítico' })
+    expect(getStockStatus(0.1)).toEqual({ emoji: '🔴', label: 'Estoque crítico' })
+  })
+  it('0% ou menos -> esgotado', () => {
+    expect(getStockStatus(0)).toEqual({ emoji: '⚫', label: 'Esgotado' })
+    expect(getStockStatus(-5)).toEqual({ emoji: '⚫', label: 'Esgotado' })
   })
 })
 

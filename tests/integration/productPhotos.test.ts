@@ -25,7 +25,7 @@ async function createTestProduct() {
     data: { name: 'Foto Printer', purchasePrice: 1000, depreciationHours: 1000, avgPowerConsumptionKwh: 0.1 },
   })
   const filament = await prisma.filament.create({
-    data: { manufacturer: 'Foto Filament', diameterMm: 1.75, spoolPrice: 100, spoolWeightKg: 1, densityGCm3: 1.24, nozzleTempC: 200, bedTempC: 60 },
+    data: { manufacturer: 'Foto Filament', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 100, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 },
   })
   return prisma.product.create({
     data: { name: 'Chaveiro Foto', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0 },

@@ -15,7 +15,7 @@ export default async function ProductionPage() {
     }),
     prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
-    prisma.filament.findMany({ where: { active: true }, orderBy: { manufacturer: 'asc' } }),
+    prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { manufacturer: 'asc' } }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
   ])
 
@@ -29,7 +29,7 @@ export default async function ProductionPage() {
       <ProductionRunForm
         products={products}
         printers={printers}
-        filaments={filaments.map((f) => ({ id: f.id, name: f.manufacturer }))}
+        filaments={filaments.map((f) => ({ id: f.id, name: `${f.manufacturer} ${f.colorName} (${f.material}) — Rolo #${String(f.rollNumber).padStart(3, '0')} (${f.currentStockGrams.toNumber()}g restantes)` }))}
       />
       <table className="mt-6 w-full text-sm">
         <thead>
@@ -76,7 +76,7 @@ export default async function ProductionPage() {
                 <td className="py-2">{run.date.toLocaleDateString('pt-BR')}</td>
                 <td>{run.product.name}</td>
                 <td>{run.printer.name}</td>
-                <td>{run.filament.manufacturer}</td>
+                <td>{run.filament.manufacturer} {run.filament.colorName} — Rolo #{String(run.filament.rollNumber).padStart(3, '0')}</td>
                 <td>{run.quantityPlanned}</td>
                 <td>{run.quantitySuccess}</td>
                 <td>{run.quantityFailed}</td>
