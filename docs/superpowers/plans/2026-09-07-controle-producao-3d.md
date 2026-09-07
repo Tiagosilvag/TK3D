@@ -992,11 +992,15 @@ describe('printers actions', () => {
 
     const del = await deletePrinter(printer.id)
     expect(del.success).toBe(true)
-    const gone = await prisma.printer.findUnique({ where: { id: printer.id } })
-    expect(gone).toBeNull()
+    const softDeleted = await prisma.printer.findUniqueOrThrow({ where: { id: printer.id } })
+    expect(softDeleted.active).toBe(false)
   })
 })
 ```
+
+Nota: `deletePrinter` faz soft-delete (Step 4 abaixo), então o teste confere
+`active: false`, não a ausência da linha — a linha continua existindo no
+banco.
 
 Configurar no `vitest.config.ts` (Task 1) `test.env = { DATABASE_URL:
 process.env.TEST_DATABASE_URL }` ou usar `dotenv -e .env.test` — usar a
@@ -1134,7 +1138,7 @@ export default async function PrintersPage() {
                 <td>R$ {depCost.toFixed(4)}</td>
                 <td>{p.avgPowerConsumptionKwh.toNumber()}</td>
                 <td>
-                  <form action={deletePrinter.bind(null, p.id)}>
+                  <form action={async () => { 'use server'; await deletePrinter(p.id) }}>
                     <button className="text-red-600 hover:underline">Remover</button>
                   </form>
                 </td>
