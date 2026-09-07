@@ -5,6 +5,8 @@ import { usePathname, useRouter } from 'next/navigation'
 
 const NAV_LINKS: { href: string; label: string }[] = [
   { href: '/dashboard', label: 'Dashboard' },
+  { href: '/printers', label: 'Impressoras' },
+  { href: '/filaments', label: 'Filamentos' },
 ]
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
