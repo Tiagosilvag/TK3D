@@ -1,10 +1,9 @@
+import { redirect } from 'next/navigation'
+
+// Middleware already redirects unauthenticated requests to /login for every
+// route except /login itself, so by the time this page renders the user is
+// authenticated — send them straight to the dashboard, the app's landing
+// screen.
 export default function Home() {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-24">
-      <h1 className="text-4xl font-bold">TK3D - Controle de Produção</h1>
-      <p className="mt-4 text-lg text-gray-600">
-        Sistema de controle de produção para impressão 3D
-      </p>
-    </main>
-  )
+  redirect('/dashboard')
 }
