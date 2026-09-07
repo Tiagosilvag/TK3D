@@ -1,4 +1,4 @@
-import { PrismaClient, AccessoryType, SupplyUnit } from '@prisma/client'
+import { PrismaClient, AccessoryType, SupplyUnit, FilamentMaterial as MaterialType } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
@@ -20,17 +20,14 @@ async function main() {
     await prisma.printer.upsert({ where: { name: p.name }, update: {}, create: p as any })
   }
 
-  const filaments = [
-    { manufacturer: 'Voolt3D PLA', diameterMm: 1.75, spoolPrice: 120, spoolWeightKg: 1, densityGCm3: 1.24, nozzleTempC: 220, bedTempC: 60 },
-    { manufacturer: 'Outro', diameterMm: 1.75, spoolPrice: 80, spoolWeightKg: 1, densityGCm3: 1.24, nozzleTempC: 260, bedTempC: 80 },
-    { manufacturer: '3nmax', diameterMm: 1.75, spoolPrice: 100, spoolWeightKg: 1, densityGCm3: 1.24, nozzleTempC: 220, bedTempC: 115 },
-    { manufacturer: 'Polyterra', diameterMm: 1.75, spoolPrice: 145, spoolWeightKg: 1, densityGCm3: 1.24, nozzleTempC: 220, bedTempC: 100 },
-    { manufacturer: 'Bambu Lite', diameterMm: 1.75, spoolPrice: 130, spoolWeightKg: 1, densityGCm3: 1.24, nozzleTempC: 220, bedTempC: 100 },
-    { manufacturer: 'eSUN Matte', diameterMm: 1.75, spoolPrice: 135, spoolWeightKg: 1, densityGCm3: 1.24, nozzleTempC: 220, bedTempC: 100 },
-    { manufacturer: 'Bambu TPU AMS', diameterMm: 1.75, spoolPrice: 175, spoolWeightKg: 1, densityGCm3: 1.24, nozzleTempC: 220, bedTempC: 100 },
+  const materialDefaults = [
+    { material: MaterialType.PLA, diameterMm: 1.75, densityGCm3: 1.24, nozzleTempC: 210, bedTempC: 60 },
+    { material: MaterialType.PETG, diameterMm: 1.75, densityGCm3: 1.27, nozzleTempC: 240, bedTempC: 80 },
+    { material: MaterialType.TPU, diameterMm: 1.75, densityGCm3: 1.21, nozzleTempC: 220, bedTempC: 50 },
+    { material: MaterialType.OUTRO, diameterMm: 1.75, densityGCm3: 1.24, nozzleTempC: 220, bedTempC: 60 },
   ]
-  for (const f of filaments) {
-    await prisma.filament.upsert({ where: { manufacturer: f.manufacturer }, update: {}, create: f as any })
+  for (const d of materialDefaults) {
+    await prisma.materialDefaults.upsert({ where: { material: d.material }, update: {}, create: d })
   }
 
   const packaging = [

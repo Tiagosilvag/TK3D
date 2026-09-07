@@ -41,20 +41,38 @@ model Printer {
   productionRuns         ProductionRun[]
 }
 
+enum FilamentMaterial {
+  PLA
+  PETG
+  TPU
+  OUTRO
+}
+
+model MaterialDefaults {
+  material    FilamentMaterial @id
+  diameterMm  Decimal          @db.Decimal(4, 2)
+  densityGCm3 Decimal          @db.Decimal(5, 3)
+  nozzleTempC Int
+  bedTempC    Int
+}
+
 model Filament {
-  id            String          @id @default(cuid())
-  manufacturer  String          @unique
-  diameterMm    Decimal         @db.Decimal(4, 2)
-  spoolPrice    Decimal         @db.Decimal(10, 2)
-  spoolWeightKg Decimal         @db.Decimal(6, 3)
-  densityGCm3   Decimal         @db.Decimal(5, 3)
-  nozzleTempC   Int
-  bedTempC      Int
-  active        Boolean         @default(true)
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  products      Product[]
-  productionRuns ProductionRun[]
+  id                String           @id @default(cuid())
+  manufacturer      String
+  material          FilamentMaterial
+  colorName         String
+  colorHex          String
+  rollNumber        Int
+  spoolWeightKg     Decimal          @db.Decimal(6, 3)
+  spoolPrice        Decimal          @db.Decimal(10, 2)
+  initialStockGrams Decimal          @db.Decimal(10, 2)
+  currentStockGrams Decimal          @db.Decimal(10, 2)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  products          Product[]
+  productionRuns    ProductionRun[]
+
+  @@unique([manufacturer, material, colorName, rollNumber])
 }
 
 model PackagingItem {
