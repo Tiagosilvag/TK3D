@@ -1,12 +1,22 @@
 'use client'
 import { useRef, useState } from 'react'
-import { createPrinter } from '@/actions/printers'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { createPrinter, updatePrinter } from '@/actions/printers'
 import { formatCurrency } from '@/lib/format'
 
 type SettingsForPreview = {
   annualMaintenancePercent: number
   annualUsageHours: number
   energyCostPerKwh: number
+}
+
+type EditingPrinter = {
+  id: string
+  name: string
+  purchasePrice: number
+  depreciationHours: number
+  avgPowerConsumptionKwh: number
 }
 
 // Duplicated on purpose: these are one-line pure formulas, and importing the
@@ -26,22 +36,38 @@ function formatOrDash(value: number): string {
   return formatCurrency(value)
 }
 
-export function PrinterForm({ settings }: { settings: SettingsForPreview }) {
+export function PrinterForm({
+  settings,
+  editingPrinter,
+}: {
+  settings: SettingsForPreview
+  editingPrinter?: EditingPrinter
+}) {
+  const router = useRouter()
   const formRef = useRef<HTMLFormElement>(null)
-  const [purchasePrice, setPurchasePrice] = useState('')
-  const [depreciationHours, setDepreciationHours] = useState('')
-  const [avgPowerConsumptionKwh, setAvgPowerConsumptionKwh] = useState('')
+  const [purchasePrice, setPurchasePrice] = useState(editingPrinter ? String(editingPrinter.purchasePrice) : '')
+  const [depreciationHours, setDepreciationHours] = useState(editingPrinter ? String(editingPrinter.depreciationHours) : '')
+  const [avgPowerConsumptionKwh, setAvgPowerConsumptionKwh] = useState(
+    editingPrinter ? String(editingPrinter.avgPowerConsumptionKwh) : '',
+  )
 
   async function action(formData: FormData) {
-    const result = await createPrinter(formData)
-    if (result.success) {
-      formRef.current?.reset()
-      setPurchasePrice('')
-      setDepreciationHours('')
-      setAvgPowerConsumptionKwh('')
-    } else {
+    const result = editingPrinter
+      ? await updatePrinter(editingPrinter.id, formData)
+      : await createPrinter(formData)
+    if (!result.success) {
       alert(result.error)
+      return
     }
+    if (editingPrinter) {
+      // Leave edit mode by dropping the ?editId= query param.
+      router.push('/printers')
+      return
+    }
+    formRef.current?.reset()
+    setPurchasePrice('')
+    setDepreciationHours('')
+    setAvgPowerConsumptionKwh('')
   }
 
   const price = parseFloat(purchasePrice)
@@ -56,7 +82,7 @@ export function PrinterForm({ settings }: { settings: SettingsForPreview }) {
 
   return (
     <form ref={formRef} action={action} className="grid grid-cols-4 gap-2 tk-panel p-4">
-      <input name="name" placeholder="Nome" className="tk-input" required />
+      <input name="name" placeholder="Nome" className="tk-input" required defaultValue={editingPrinter?.name} />
       <input
         name="purchasePrice"
         type="number"
@@ -87,7 +113,14 @@ export function PrinterForm({ settings }: { settings: SettingsForPreview }) {
         onChange={(e) => setAvgPowerConsumptionKwh(e.target.value)}
         required
       />
-      <button className="col-span-4 mt-2 tk-btn-primary">Adicionar</button>
+      <div className="col-span-4 mt-2 flex items-center gap-3">
+        <button className="tk-btn-primary">{editingPrinter ? 'Salvar' : 'Adicionar'}</button>
+        {editingPrinter && (
+          <Link href="/printers" className="text-xs text-slate-500 hover:underline dark:text-slate-400">
+            Cancelar edição
+          </Link>
+        )}
+      </div>
       <p className="col-span-4 text-xs text-slate-500 dark:text-slate-400">
         Depreciação: {formatOrDash(depCost)}/h · Manutenção: {formatOrDash(maintCost)}/h · Energia: {formatOrDash(electricityCost)}/h
       </p>

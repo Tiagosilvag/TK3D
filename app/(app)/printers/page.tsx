@@ -1,27 +1,49 @@
+import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour } from '@/lib/costing'
 import { formatCurrency } from '@/lib/format'
 import { PrinterForm } from './PrinterForm'
-import { deletePrinter, reactivatePrinter } from '@/actions/printers'
+import { deletePrinter, reactivatePrinter, deletePrinterPermanently } from '@/actions/printers'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 
 export const dynamic = 'force-dynamic'
 
-export default async function PrintersPage() {
-  const [printers, inactivePrinters, settings] = await Promise.all([
+export default async function PrintersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ editId?: string }>
+}) {
+  const { editId } = await searchParams
+
+  const [printers, inactivePrinters, settings, editingPrinterRecord] = await Promise.all([
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.printer.findMany({ where: { active: false }, orderBy: { name: 'asc' } }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
+    editId ? prisma.printer.findUnique({ where: { id: editId } }) : null,
   ])
 
   const annualMaintenancePercent = settings.annualMaintenancePercent.toNumber()
   const annualUsageHours = settings.annualUsageHours.toNumber()
   const energyCostPerKwh = settings.energyCostPerKwh.toNumber()
 
+  const editingPrinter = editingPrinterRecord
+    ? {
+        id: editingPrinterRecord.id,
+        name: editingPrinterRecord.name,
+        purchasePrice: editingPrinterRecord.purchasePrice.toNumber(),
+        depreciationHours: editingPrinterRecord.depreciationHours.toNumber(),
+        avgPowerConsumptionKwh: editingPrinterRecord.avgPowerConsumptionKwh.toNumber(),
+      }
+    : undefined
+
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Impressoras</h1>
-      <PrinterForm settings={{ annualMaintenancePercent, annualUsageHours, energyCostPerKwh }} />
+      <PrinterForm
+        key={editingPrinter?.id ?? 'new'}
+        settings={{ annualMaintenancePercent, annualUsageHours, energyCostPerKwh }}
+        editingPrinter={editingPrinter}
+      />
       <table className="mt-6 w-full text-sm">
         <thead>
           <tr className="tk-table-head-row">
@@ -58,7 +80,20 @@ export default async function PrintersPage() {
                 <td>{formatCurrency(maintCost)}</td>
                 <td>{formatCurrency(totalCost)}</td>
                 <td>
-                  <ConfirmDeleteForm action={async () => { 'use server'; await deletePrinter(p.id) }} />
+                  <div className="flex items-center gap-3">
+                    <Link href={`/printers?editId=${p.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                      Editar
+                    </Link>
+                    <ConfirmDeleteForm
+                      action={async () => { 'use server'; await deletePrinter(p.id) }}
+                      label="Desativar"
+                    />
+                    <ConfirmDeleteForm
+                      action={async () => { 'use server'; await deletePrinterPermanently(p.id) }}
+                      label="Excluir permanentemente"
+                      confirmMessage="Excluir esta impressora permanentemente? Essa ação não pode ser desfeita."
+                    />
+                  </div>
                 </td>
               </tr>
             )
@@ -83,9 +118,16 @@ export default async function PrintersPage() {
                   <td className="py-2">{p.name}</td>
                   <td>{formatCurrency(p.purchasePrice.toNumber())}</td>
                   <td>
-                    <form action={async () => { 'use server'; await reactivatePrinter(p.id) }}>
-                      <button className="tk-link-success">Reativar</button>
-                    </form>
+                    <div className="flex items-center gap-3">
+                      <form action={async () => { 'use server'; await reactivatePrinter(p.id) }}>
+                        <button className="tk-link-success">Reativar</button>
+                      </form>
+                      <ConfirmDeleteForm
+                        action={async () => { 'use server'; await deletePrinterPermanently(p.id) }}
+                        label="Excluir permanentemente"
+                        confirmMessage="Excluir esta impressora permanentemente? Essa ação não pode ser desfeita."
+                      />
+                    </div>
                   </td>
                 </tr>
               ))}
