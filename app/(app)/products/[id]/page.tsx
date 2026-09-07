@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { formatCurrency } from '@/lib/format'
 import { ProductForm } from '../ProductForm'
 import { CostBreakdown } from '../CostBreakdown'
-import { getProductCostBreakdown, addProductSupplyUsage, removeProductSupplyUsage } from '@/actions/products'
+import { getProductCostBreakdown, getEditableFilamentOptions, addProductSupplyUsage, removeProductSupplyUsage } from '@/actions/products'
 import { addProductPhoto, removeProductPhoto } from '@/actions/productPhotos'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 
@@ -25,9 +25,9 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
   })
   if (!product) notFound()
 
-  const [printers, filaments, packagingItems, accessories, supplies, breakdown] = await Promise.all([
+  const [printers, filamentOptions, packagingItems, accessories, supplies, breakdown] = await Promise.all([
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
-    prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { manufacturer: 'asc' } }),
+    getEditableFilamentOptions(product.id),
     prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.accessory.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.supply.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
@@ -58,7 +58,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               notes: product.notes,
             }}
             printers={printers}
-            filaments={filaments.map((f) => ({ id: f.id, name: `${f.manufacturer} ${f.colorName} (${f.material}) — Rolo #${String(f.rollNumber).padStart(3, '0')}` }))}
+            filaments={filamentOptions}
             packagingItems={packagingItems}
             accessories={accessories}
           />

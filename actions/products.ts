@@ -102,6 +102,45 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
   )
 }
 
+function filamentOptionLabel(f: {
+  manufacturer: string
+  colorName: string
+  material: string
+  rollNumber: number
+}): string {
+  return `${f.manufacturer} ${f.colorName} (${f.material}) — Rolo #${String(f.rollNumber).padStart(3, '0')}`
+}
+
+// Filament options for the product edit form's dropdown. Filtered to in-stock
+// rolls (currentStockGrams > 0), which is correct for picking a NEW filament
+// -- BUT if the product's *current* filament has since depleted to 0, it
+// won't be in that in-stock list. A plain
+// <select defaultValue={product.filamentId}> whose defaultValue matches no
+// <option> makes the browser silently fall back to selecting the FIRST
+// option, so simply saving the form (with no changes intended) would
+// silently reassign the product to a random filament. To force an explicit,
+// informed choice instead, the depleted current filament (if any) is looked
+// up separately and returned as a clearly-labeled "(esgotado)" option, so
+// defaultValue always matches a real <option> and the user must actively
+// choose to keep it or pick a replacement roll.
+export async function getEditableFilamentOptions(productId: string): Promise<{ id: string; name: string }[]> {
+  const product = await prisma.product.findUniqueOrThrow({ where: { id: productId } })
+  const inStock = await prisma.filament.findMany({
+    where: { currentStockGrams: { gt: 0 } },
+    orderBy: { manufacturer: 'asc' },
+  })
+
+  const currentInStock = inStock.some((f) => f.id === product.filamentId)
+  const depletedCurrent = currentInStock
+    ? null
+    : await prisma.filament.findUnique({ where: { id: product.filamentId } })
+
+  return [
+    ...(depletedCurrent ? [{ id: depletedCurrent.id, name: `${filamentOptionLabel(depletedCurrent)} (esgotado)` }] : []),
+    ...inStock.map((f) => ({ id: f.id, name: filamentOptionLabel(f) })),
+  ]
+}
+
 const supplyUsageSchema = z.object({
   productId: z.string().min(1),
   supplyId: z.string().min(1),

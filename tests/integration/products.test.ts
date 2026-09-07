@@ -5,6 +5,7 @@ import {
   updateProduct,
   deleteProduct,
   getProductCostBreakdown,
+  getEditableFilamentOptions,
   addProductSupplyUsage,
   removeProductSupplyUsage,
 } from '@/actions/products'
@@ -176,5 +177,64 @@ describe('products actions', () => {
 
     const breakdownWithoutSupply = await getProductCostBreakdown(product.id)
     expect(breakdownWithoutSupply.suppliesCost).toBe(0)
+  })
+
+  it('mantém o filamento esgotado do produto como opção selecionável (rotulado) no dropdown de edição', async () => {
+    const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+    const depletedFilament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const replacementFilament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Branco', colorHex: '#FFFFFF', rollNumber: 2, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+
+    const created = await createProduct(fd({
+      name: 'Produto Com Filamento Esgotável',
+      category: 'Chaveiro',
+      printerId: printer.id,
+      filamentId: depletedFilament.id,
+      weightGrams: '30',
+      printTimeHours: '2',
+      laborTimeHours: '0.25',
+      finishingType: 'NENHUM',
+      usesGlue: 'false',
+    }))
+    expect(created.success).toBe(true)
+    const product = await prisma.product.findFirstOrThrow({ where: { name: 'Produto Com Filamento Esgotável' } })
+
+    // Deplete the roll to 0g, simulating stock consumed by production runs
+    // after the product was created on it.
+    await prisma.filament.update({ where: { id: depletedFilament.id }, data: { currentStockGrams: 0 } })
+
+    const options = await getEditableFilamentOptions(product.id)
+
+    // The depleted filament must still appear (clearly labeled), so a
+    // <select defaultValue={product.filamentId}> always matches a real
+    // <option> instead of the browser silently selecting the first option.
+    const depletedOption = options.find((o) => o.id === depletedFilament.id)
+    expect(depletedOption).toBeDefined()
+    expect(depletedOption?.name).toMatch(/esgotado/i)
+
+    // In-stock filaments (including a replacement roll) must also be present.
+    expect(options.some((o) => o.id === replacementFilament.id)).toBe(true)
+  })
+
+  it('não duplica o filamento atual no dropdown de edição quando ele ainda está em estoque', async () => {
+    const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+
+    const created = await createProduct(fd({
+      name: 'Produto Com Filamento Em Estoque',
+      category: 'Chaveiro',
+      printerId: printer.id,
+      filamentId: filament.id,
+      weightGrams: '30',
+      printTimeHours: '2',
+      laborTimeHours: '0.25',
+      finishingType: 'NENHUM',
+      usesGlue: 'false',
+    }))
+    expect(created.success).toBe(true)
+    const product = await prisma.product.findFirstOrThrow({ where: { name: 'Produto Com Filamento Em Estoque' } })
+
+    const options = await getEditableFilamentOptions(product.id)
+    expect(options.filter((o) => o.id === filament.id)).toHaveLength(1)
+    expect(options.find((o) => o.id === filament.id)?.name).not.toMatch(/esgotado/i)
   })
 })

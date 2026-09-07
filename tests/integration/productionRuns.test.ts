@@ -162,4 +162,36 @@ describe('productionRuns actions', () => {
     const unchangedFilament = await prisma.filament.findUniqueOrThrow({ where: { id: filament.id } })
     expect(unchangedFilament.currentStockGrams.toNumber()).toBe(1000)
   })
+
+  it('restaura o estoque do filamento ao remover um registro de produção (corrige um lançamento errado)', async () => {
+    const { printer, filament, product } = await createSupportRecords()
+    // filament.currentStockGrams starts at 1000g.
+
+    const result = await createProductionRun(fd({
+      productId: product.id,
+      printerId: printer.id,
+      filamentId: filament.id,
+      date: '2026-09-01',
+      quantityPlanned: '10',
+      quantitySuccess: '8',
+      quantityFailed: '2',
+      gramsUsed: '240',
+      gramsWasted: '15',
+      timeWastedHours: '0.5',
+    }))
+    expect(result.success).toBe(true)
+
+    const afterCreate = await prisma.filament.findUniqueOrThrow({ where: { id: filament.id } })
+    expect(afterCreate.currentStockGrams.toNumber()).toBe(1000 - (240 + 15))
+
+    const run = await prisma.productionRun.findFirstOrThrow({ where: { productId: product.id } })
+    const del = await deleteProductionRun(run.id)
+    expect(del.success).toBe(true)
+
+    const gone = await prisma.productionRun.findUnique({ where: { id: run.id } })
+    expect(gone).toBeNull()
+
+    const afterDelete = await prisma.filament.findUniqueOrThrow({ where: { id: filament.id } })
+    expect(afterDelete.currentStockGrams.toNumber()).toBe(1000)
+  })
 })

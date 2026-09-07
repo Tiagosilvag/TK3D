@@ -45,8 +45,28 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
 // Physical delete: ProductionRun is a historical log, not a catalog entity,
 // so unlike Printer/Filament/PackagingItem/Accessory/Supply/Product there is
 // no soft-delete flag — removing a row (e.g. to fix a typo) really deletes it.
+//
+// createProductionRun decrements Filament.currentStockGrams by
+// gramsUsed + gramsWasted when the run is recorded. Deleting a run is the
+// documented way to correct a mistake (e.g. wrong data entry), so it must
+// reverse that decrement — otherwise using the documented correction path
+// permanently and silently understates stock, with no way to fix it short of
+// a direct DB edit. Read the run's consumption before deleting it, then
+// delete + restore the stock in the same $transaction (same atomicity
+// pattern as createProductionRun) so a failure never partially applies.
 export async function deleteProductionRun(id: string): Promise<ActionResult> {
-  await prisma.productionRun.delete({ where: { id } })
+  const run = await prisma.productionRun.findUniqueOrThrow({ where: { id } })
+  const totalConsumed = run.gramsUsed.plus(run.gramsWasted)
+
+  await prisma.$transaction([
+    prisma.productionRun.delete({ where: { id } }),
+    prisma.filament.update({
+      where: { id: run.filamentId },
+      data: { currentStockGrams: { increment: totalConsumed } },
+    }),
+  ])
+
   revalidatePath('/production')
+  revalidatePath('/filaments')
   return { success: true }
 }
