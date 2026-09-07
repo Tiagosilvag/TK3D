@@ -1324,7 +1324,7 @@ select), `usesGlue` (checkbox), `notes` (textarea opcional). Uso de insumos
 // tests/integration/products.test.ts
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createProduct, getProductCostBreakdown } from '@/actions/products'
+import { createProduct, getProductCostBreakdown, addProductSupplyUsage } from '@/actions/products'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -1348,6 +1348,7 @@ describe('products actions', () => {
     await prisma.settings.create({ data: { id: 1 } })
     const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, maintenanceCost: 1000, avgPowerConsumptionKwh: 0.27 } })
     const filament = await prisma.filament.create({ data: { manufacturer: 'F1', diameterMm: 1.75, spoolPrice: 80, spoolWeightKg: 1, densityGCm3: 1.24, nozzleTempC: 220, bedTempC: 60 } })
+    const supply = await prisma.supply.create({ data: { name: 'Insumo Teste', unit: 'UN', unitCost: 0.3 } })
 
     const result = await createProduct(fd({
       name: 'Chaveirinho Teste',
@@ -1363,7 +1364,11 @@ describe('products actions', () => {
     expect(result.success).toBe(true)
 
     const product = await prisma.product.findFirstOrThrow({ where: { name: 'Chaveirinho Teste' } })
+    await addProductSupplyUsage(fd({ productId: product.id, supplyId: supply.id, quantity: '1' }))
+
     const breakdown = await getProductCostBreakdown(product.id)
+    // subtotal = filament 2.4 + electricity 0.54 + printer 0.92 + labor 2.5 + supplies 0.3 = 6.66
+    // finalCost = 6.66 * 1.10 = 7.326 -> suggestedPrice = 7.326 * 2 = 14.652 (same fixture as Task 3)
     expect(breakdown.suggestedPrice).toBeCloseTo(14.652, 2)
   })
 })
@@ -1388,7 +1393,13 @@ export const productSchema = z.object({
   packagingItemId: z.string().optional().nullable(),
   accessoryId: z.string().optional().nullable(),
   finishingType: z.enum(['NENHUM', 'CANETA_VERNIZ', 'RESINA_UV', 'OUTRO']),
-  usesGlue: z.coerce.boolean().default(false),
+  usesGlue: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  // `z.coerce.boolean()` would turn the literal string "false" into `true`
+  // (any non-empty string is truthy in JS) — use this enum+transform instead.
+  // The checkbox in the form must render `<input type="checkbox" name="usesGlue" value="true" />`
+  // so a checked box submits "true"; an unchecked box omits the field entirely
+  // (checkboxes never submit when unchecked), which falls through to the
+  // `.default('false')` above.
   notes: z.string().optional().nullable(),
 })
 ```
