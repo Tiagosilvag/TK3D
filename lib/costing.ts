@@ -54,7 +54,24 @@ export interface Settings {
   defaultMarkup: number
 }
 
-export interface ProductCostInput {
+// Configurações §3 — "Composição do custo": one toggle per cost term. Each
+// term is ALWAYS calculated and returned in ProductCostBreakdown (so a
+// breakdown UI can still show the line, just marked visually disabled) —
+// a flag only gates whether that term's value contributes to
+// subtotal/finalCost (multiplied by 1 or 0 before summing).
+export interface ProductCostFlags {
+  includeDepreciation: boolean
+  includeEnergyCost: boolean
+  includeMaintenance: boolean
+  includeLaborCost: boolean
+  includeFailureRate: boolean
+  includeFilamentCost: boolean
+  includeAccessoriesCost: boolean
+  includeSuppliesCost: boolean
+  includePackagingCost: boolean
+}
+
+export interface ProductCostInput extends ProductCostFlags {
   weightGrams: number
   printTimeHours: number
   laborTimeHours: number
@@ -76,10 +93,44 @@ export interface ProductCostBreakdown {
   suppliesCost: number
   packagingCost: number
   accessoryCost: number
+  // Always calculated (subtotal * failureRatePercent) regardless of
+  // includeFailureRate, same transparency rule as every other term.
+  failureRateCost: number
   subtotal: number
   finalCost: number
   suggestedPrice: number
   marketplacePrice: number
+}
+
+// Configurações §3 — modos de arredondamento do preço final.
+export type RoundingMode = 'NONE' | 'R90' | 'R99' | 'R00'
+
+const ROUNDING_FRACTION: Record<Exclude<RoundingMode, 'NONE'>, number> = {
+  R90: 0.9,
+  R99: 0.99,
+  R00: 0,
+}
+
+/**
+ * Applies a fixed-ending rounding rule to a final price (suggested or
+ * marketplace) — NEVER to individual cost breakdown components.
+ *
+ * Rule (chosen because it reproduces the brief's own examples exactly):
+ * truncate the value's integer part (`Math.floor`) and replace whatever
+ * fractional part it had with a FIXED ending — .90, .99 or .00 — regardless
+ * of whether the original fraction was above or below that ending. So
+ * 23.45 -> 23.90 (fraction goes up) and 23.95 -> 23.90 (fraction goes down)
+ * land on the exact same result, matching "R90 (...) ex: 23.45→23.90, mas
+ * 23.95→23.90 também" from the brief. R00 fixes the fraction at .00, which
+ * is equivalent to Math.floor. NONE is a no-op passthrough.
+ */
+export function applyRounding(value: number, mode: RoundingMode): number {
+  if (mode === 'NONE') return value
+  const integerPart = Math.floor(value)
+  const rounded = integerPart + ROUNDING_FRACTION[mode]
+  // Normalize away binary floating-point noise (e.g. 23 + 0.9 !== 23.9 bit
+  // for bit) so callers get a clean 2-decimal currency value.
+  return Math.round(rounded * 100) / 100
 }
 
 export interface WasteCostInput {
@@ -98,17 +149,38 @@ export function calculateWasteCost(input: WasteCostInput): number {
   return filamentWasteCost + timeWasteCost
 }
 
+function on(flag: boolean): number {
+  return flag ? 1 : 0
+}
+
 export function calculateProductCost(input: ProductCostInput, settings: Settings): ProductCostBreakdown {
+  // Every term below is always calculated in full, regardless of its flag —
+  // the breakdown must keep showing the real value (UI marks it visually
+  // disabled instead of hiding it). Only the contribution to subtotal below
+  // is gated by the flag.
   const filamentCost = input.weightGrams * (input.filamentPricePerKg / 1000)
   const electricityCost = input.printerAvgPowerConsumptionKwh * settings.energyCostPerKwh * input.printTimeHours
   const printerCost = input.printerDepreciationCostPerHour * input.printTimeHours
   const maintenanceCost = input.printerMaintenanceCostPerHour * input.printTimeHours
   const laborCost = settings.laborCostPerHour * input.laborTimeHours
 
-  const subtotal = filamentCost + electricityCost + printerCost + maintenanceCost + laborCost
-    + input.suppliesCost + input.packagingCost + input.accessoryCost
+  const subtotal =
+    filamentCost * on(input.includeFilamentCost) +
+    electricityCost * on(input.includeEnergyCost) +
+    printerCost * on(input.includeDepreciation) +
+    maintenanceCost * on(input.includeMaintenance) +
+    laborCost * on(input.includeLaborCost) +
+    input.suppliesCost * on(input.includeSuppliesCost) +
+    input.packagingCost * on(input.includePackagingCost) +
+    input.accessoryCost * on(input.includeAccessoriesCost)
 
-  const finalCost = subtotal * (1 + settings.failureRatePercent)
+  // Failure rate is applied as a markup on top of subtotal (not a flat
+  // additive term), same shape as before the flags existed — always
+  // calculated so the UI can show it, gated by includeFailureRate before
+  // it contributes to finalCost.
+  const failureRateCost = subtotal * settings.failureRatePercent
+  const finalCost = subtotal + failureRateCost * on(input.includeFailureRate)
+
   const suggestedPrice = finalCost * settings.defaultMarkup
   const marketplacePrice = suggestedPrice / (1 - settings.marketplaceFeePercent - settings.taxPercent)
     + settings.marketplaceFixedFee
@@ -122,6 +194,7 @@ export function calculateProductCost(input: ProductCostInput, settings: Settings
     suppliesCost: input.suppliesCost,
     packagingCost: input.packagingCost,
     accessoryCost: input.accessoryCost,
+    failureRateCost,
     subtotal,
     finalCost,
     suggestedPrice,

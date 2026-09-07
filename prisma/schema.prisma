@@ -15,17 +15,46 @@ datasource db {
 }
 
 model Settings {
-  id                       Int      @id @default(1)
-  energyCostPerKwh         Decimal  @default(1.00) @db.Decimal(10, 4)
-  laborCostPerHour         Decimal  @default(10.00) @db.Decimal(10, 2)
-  failureRatePercent       Decimal  @default(0.10) @db.Decimal(5, 4)
-  marketplaceFeePercent    Decimal  @default(0.20) @db.Decimal(5, 4)
-  taxPercent               Decimal  @default(0.055) @db.Decimal(5, 4)
-  marketplaceFixedFee      Decimal  @default(4.00) @db.Decimal(10, 2)
-  defaultMarkup            Decimal  @default(2.00) @db.Decimal(6, 2)
-  annualMaintenancePercent Decimal  @default(0.10) @db.Decimal(5, 4)
-  annualUsageHours         Decimal  @default(2000) @db.Decimal(10, 2)
-  updatedAt                DateTime @updatedAt
+  id                            Int          @id @default(1)
+  energyCostPerKwh              Decimal      @default(1.00) @db.Decimal(10, 4)
+  laborCostPerHour              Decimal      @default(10.00) @db.Decimal(10, 2)
+  failureRatePercent            Decimal      @default(0.10) @db.Decimal(5, 4)
+  marketplaceFeePercent         Decimal      @default(0.20) @db.Decimal(5, 4)
+  taxPercent                    Decimal      @default(0.055) @db.Decimal(5, 4)
+  marketplaceFixedFee           Decimal      @default(4.00) @db.Decimal(10, 2)
+  defaultMarkup                 Decimal      @default(2.00) @db.Decimal(6, 2)
+  annualMaintenancePercent      Decimal      @default(0.10) @db.Decimal(5, 4)
+  annualUsageHours              Decimal      @default(2000) @db.Decimal(10, 2)
+  // Configurações §3 — Precificação
+  desiredMarginPercent          Decimal      @default(0.30) @db.Decimal(5, 4)
+  defaultDiscountPercent        Decimal      @default(0) @db.Decimal(5, 4)
+  // Configurações §3 — Estoque (acessórios/insumos; Filamento continua com
+  // limiares fixos 30%/10%, não muda — ver lib/costing.ts getStockStatus)
+  stockLowThresholdPercent      Decimal      @default(0.30) @db.Decimal(5, 4)
+  stockCriticalThresholdPercent Decimal      @default(0.10) @db.Decimal(5, 4)
+  // Configurações §3 — Composição do custo (cada flag habilita/desabilita a
+  // contribuição do termo correspondente no subtotal/total calculado por
+  // calculateProductCost, ver lib/costing.ts)
+  includeDepreciation           Boolean      @default(true)
+  includeEnergyCost             Boolean      @default(true)
+  includeMaintenance            Boolean      @default(true)
+  includeLaborCost              Boolean      @default(true)
+  includeFailureRate            Boolean      @default(true)
+  includeFilamentCost           Boolean      @default(true)
+  includeAccessoriesCost        Boolean      @default(true)
+  includeSuppliesCost           Boolean      @default(true)
+  includePackagingCost          Boolean      @default(true)
+  // Configurações §3 — Arredondamento (aplicado só ao preço final sugerido/
+  // marketplace via lib/costing.ts#applyRounding, nunca aos componentes)
+  roundingMode                  RoundingMode @default(NONE)
+  updatedAt                     DateTime     @updatedAt
+}
+
+enum RoundingMode {
+  NONE
+  R90 // termina em ,90
+  R99 // termina em ,99
+  R00 // termina em ,00
 }
 
 model Printer {
@@ -129,26 +158,26 @@ enum FinishingType {
 }
 
 model Product {
-  id                    String                  @id @default(cuid())
+  id                    String                @id @default(cuid())
   name                  String
-  category              String                  @default("Chaveiro")
+  category              String                @default("Chaveiro")
   printerId             String
-  printer               Printer                 @relation(fields: [printerId], references: [id])
+  printer               Printer               @relation(fields: [printerId], references: [id])
   filamentId            String
-  filament              Filament                @relation(fields: [filamentId], references: [id])
-  weightGrams           Decimal                 @db.Decimal(10, 2)
-  printTimeHours        Decimal                 @db.Decimal(10, 3)
-  laborTimeHours        Decimal                 @db.Decimal(10, 3)
+  filament              Filament              @relation(fields: [filamentId], references: [id])
+  weightGrams           Decimal               @db.Decimal(10, 2)
+  printTimeHours        Decimal               @db.Decimal(10, 3)
+  laborTimeHours        Decimal               @db.Decimal(10, 3)
   packagingItemId       String?
-  packagingItem         PackagingItem?          @relation(fields: [packagingItemId], references: [id])
+  packagingItem         PackagingItem?        @relation(fields: [packagingItemId], references: [id])
   accessoryId           String?
-  accessory             Accessory?              @relation(fields: [accessoryId], references: [id])
-  finishingType         FinishingType           @default(NENHUM)
-  usesGlue              Boolean                 @default(false)
+  accessory             Accessory?            @relation(fields: [accessoryId], references: [id])
+  finishingType         FinishingType         @default(NENHUM)
+  usesGlue              Boolean               @default(false)
   notes                 String?
-  active                Boolean                 @default(true)
-  createdAt             DateTime                @default(now())
-  updatedAt             DateTime                @updatedAt
+  active                Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
   supplyUsages          ProductSupplyUsage[]
   productionRuns        ProductionRun[]
   sales                 Sale[]
@@ -167,12 +196,12 @@ model ProductPhoto {
 }
 
 model ProductSupplyUsage {
-  id        String   @id @default(cuid())
+  id        String  @id @default(cuid())
   productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   supplyId  String
-  supply    Supply   @relation(fields: [supplyId], references: [id])
-  quantity  Decimal  @db.Decimal(10, 3)
+  supply    Supply  @relation(fields: [supplyId], references: [id])
+  quantity  Decimal @db.Decimal(10, 3)
 
   @@unique([productId, supplyId])
 }

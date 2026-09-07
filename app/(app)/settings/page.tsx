@@ -24,6 +24,20 @@ export default async function SettingsPage() {
           defaultMarkup: settings.defaultMarkup.toNumber(),
           annualMaintenancePercent: settings.annualMaintenancePercent.toNumber(),
           annualUsageHours: settings.annualUsageHours.toNumber(),
+          desiredMarginPercent: settings.desiredMarginPercent.toNumber(),
+          defaultDiscountPercent: settings.defaultDiscountPercent.toNumber(),
+          stockLowThresholdPercent: settings.stockLowThresholdPercent.toNumber(),
+          stockCriticalThresholdPercent: settings.stockCriticalThresholdPercent.toNumber(),
+          includeDepreciation: settings.includeDepreciation,
+          includeEnergyCost: settings.includeEnergyCost,
+          includeMaintenance: settings.includeMaintenance,
+          includeLaborCost: settings.includeLaborCost,
+          includeFailureRate: settings.includeFailureRate,
+          includeFilamentCost: settings.includeFilamentCost,
+          includeAccessoriesCost: settings.includeAccessoriesCost,
+          includeSuppliesCost: settings.includeSuppliesCost,
+          includePackagingCost: settings.includePackagingCost,
+          roundingMode: settings.roundingMode,
         }}
       />
     </div>
