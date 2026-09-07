@@ -5,6 +5,8 @@ import { formatCurrency } from '@/lib/format'
 import { ProductForm } from '../ProductForm'
 import { CostBreakdown } from '../CostBreakdown'
 import { getProductCostBreakdown, addProductSupplyUsage, removeProductSupplyUsage } from '@/actions/products'
+import { addProductPhoto, removeProductPhoto } from '@/actions/productPhotos'
+import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 
 const SUPPLY_UNIT_LABELS: Record<string, string> = {
   UN: 'Unidade',
@@ -16,7 +18,10 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
   const { id } = await params
   const product = await prisma.product.findUnique({
     where: { id },
-    include: { supplyUsages: { include: { supply: true } } },
+    include: {
+      supplyUsages: { include: { supply: true } },
+      photos: { orderBy: { createdAt: 'asc' }, select: { id: true } },
+    },
   })
   if (!product) notFound()
 
@@ -100,6 +105,47 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               <input name="quantity" type="number" step="0.001" placeholder="Quantidade" className="tk-input" required />
               <button className="tk-btn-primary">Adicionar</button>
             </form>
+          </div>
+
+          <div className="mt-6 tk-panel p-4">
+            <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Fotos da peça</h2>
+            {product.photos.length === 0 ? (
+              <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">Nenhuma foto ainda.</p>
+            ) : (
+              <div className="mb-4 grid grid-cols-3 gap-3 sm:grid-cols-4">
+                {product.photos.map((photo) => (
+                  <div key={photo.id} className="group relative overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- served from our own DB-backed route, not a static/optimizable asset */}
+                    <img
+                      src={`/api/photos/${photo.id}`}
+                      alt={`Foto de ${product.name}`}
+                      className="aspect-square w-full object-cover"
+                    />
+                    <ConfirmDeleteForm
+                      action={async () => { 'use server'; await removeProductPhoto(photo.id) }}
+                      confirmMessage="Remover esta foto?"
+                      className="absolute right-1 top-1 rounded-md bg-slate-950/70 px-1.5 py-0.5 text-xs text-white opacity-0 transition-opacity hover:bg-red-600 group-hover:opacity-100"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <form
+              action={async (formData: FormData) => { 'use server'; await addProductPhoto(formData) }}
+              className="flex items-center gap-2"
+            >
+              <input type="hidden" name="productId" value={product.id} />
+              <input
+                type="file"
+                name="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                required
+                className="tk-input flex-1 file:mr-3 file:rounded-md file:border-0 file:bg-amber-600 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white dark:file:bg-amber-500 dark:file:text-slate-950"
+              />
+              <button className="tk-btn-primary shrink-0 px-4">Enviar</button>
+            </form>
+            <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">JPEG, PNG, WEBP ou GIF — até 5MB.</p>
           </div>
         </div>
 

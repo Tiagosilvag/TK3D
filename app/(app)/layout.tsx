@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { Logo } from '@/components/Logo'
 
 type NavLink = { href: string; label: string }
 
@@ -87,9 +88,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950">
       <aside className="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div className="border-b border-slate-200 px-4 py-5 dark:border-slate-800">
-          <h1 className="font-display text-sm font-bold tracking-tight text-slate-900 dark:text-slate-100">
-            Controle de Produção<span className="text-amber-600 dark:text-amber-500"> 3D</span>
-          </h1>
+          <Logo />
+          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Controle de Produção</p>
         </div>
 
         <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-4 font-display">

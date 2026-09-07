@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Logo } from '@/components/Logo'
 
 export default function LoginPage() {
   const [password, setPassword] = useState('')
@@ -30,13 +31,9 @@ export default function LoginPage() {
         onSubmit={handleSubmit}
         className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900"
       >
-        <div className="mb-6 flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-600 text-sm font-bold text-white dark:bg-amber-500 dark:text-slate-950">
-            3D
-          </span>
-          <h1 className="font-display text-lg font-semibold text-slate-900 dark:text-slate-100">
-            Controle de Produção
-          </h1>
+        <div className="mb-6">
+          <Logo />
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Controle de Produção</p>
         </div>
         <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" htmlFor="password">
           Senha
