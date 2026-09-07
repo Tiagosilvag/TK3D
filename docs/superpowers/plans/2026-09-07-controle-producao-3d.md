@@ -167,7 +167,7 @@ model Settings {
 
 model Printer {
   id                     String          @id @default(cuid())
-  name                   String
+  name                   String          @unique
   purchasePrice          Decimal         @db.Decimal(10, 2)
   depreciationHours      Decimal         @db.Decimal(10, 2)
   maintenanceCost        Decimal         @db.Decimal(10, 2)
@@ -181,7 +181,7 @@ model Printer {
 
 model Filament {
   id            String          @id @default(cuid())
-  manufacturer  String
+  manufacturer  String          @unique
   diameterMm    Decimal         @db.Decimal(4, 2)
   spoolPrice    Decimal         @db.Decimal(10, 2)
   spoolWeightKg Decimal         @db.Decimal(6, 3)
@@ -197,7 +197,7 @@ model Filament {
 
 model PackagingItem {
   id        String    @id @default(cuid())
-  name      String
+  name      String    @unique
   unitCost  Decimal   @db.Decimal(10, 4)
   active    Boolean   @default(true)
   createdAt DateTime  @default(now())
@@ -232,7 +232,7 @@ enum SupplyUnit {
 
 model Supply {
   id        String               @id @default(cuid())
-  name      String
+  name      String               @unique
   unit      SupplyUnit
   unitCost  Decimal              @db.Decimal(10, 4)
   active    Boolean              @default(true)
@@ -433,9 +433,8 @@ main().catch((e) => {
 ```
 
 `Printer.name`, `Filament.manufacturer`, `PackagingItem.name` e
-`Supply.name` precisam de `@unique` no schema para o `upsert` por `where`
-funcionar — adicione `@unique` a esses quatro campos no Step 1 antes de
-gerar a migração.
+`Supply.name` já têm `@unique` no schema do Step 1 — é isso que permite o
+`upsert` por `where` abaixo funcionar.
 
 Adicionar em `package.json`:
 ```json
