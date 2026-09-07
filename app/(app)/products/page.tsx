@@ -1,7 +1,9 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
+import { formatCurrency } from '@/lib/format'
 import { ProductForm } from './ProductForm'
 import { deleteProduct, getProductCostBreakdown } from '@/actions/products'
+import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,13 +49,11 @@ export default async function ProductsPage() {
                   </Link>
                 </td>
                 <td>{p.category}</td>
-                <td>R$ {breakdown.finalCost.toFixed(2)}</td>
-                <td>R$ {breakdown.suggestedPrice.toFixed(2)}</td>
-                <td>R$ {breakdown.marketplacePrice.toFixed(2)}</td>
+                <td>{formatCurrency(breakdown.finalCost)}</td>
+                <td>{formatCurrency(breakdown.suggestedPrice)}</td>
+                <td>{formatCurrency(breakdown.marketplacePrice)}</td>
                 <td>
-                  <form action={async () => { 'use server'; await deleteProduct(p.id) }}>
-                    <button className="text-red-600 hover:underline">Remover</button>
-                  </form>
+                  <ConfirmDeleteForm action={async () => { 'use server'; await deleteProduct(p.id) }} />
                 </td>
               </tr>
             )

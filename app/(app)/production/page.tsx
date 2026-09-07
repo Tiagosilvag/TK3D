@@ -1,7 +1,9 @@
 import { prisma } from '@/lib/prisma'
 import { ProductionRunForm } from './ProductionRunForm'
 import { deleteProductionRun } from '@/actions/productionRuns'
-import { calculateWasteCost } from '@/lib/costing'
+import { calculateWasteCost, calculatePrinterDepreciationCostPerHour, calculateFilamentPricePerKg } from '@/lib/costing'
+import { formatCurrency } from '@/lib/format'
+import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,10 +46,15 @@ export default async function ProductionPage() {
         </thead>
         <tbody>
           {runs.map((run) => {
-            const printerDepreciationCostPerHour =
-              (run.printer.purchasePrice.toNumber() + run.printer.maintenanceCost.toNumber()) /
-              run.printer.depreciationHours.toNumber()
-            const filamentPricePerKg = run.filament.spoolPrice.toNumber() / run.filament.spoolWeightKg.toNumber()
+            const printerDepreciationCostPerHour = calculatePrinterDepreciationCostPerHour({
+              purchasePrice: run.printer.purchasePrice.toNumber(),
+              maintenanceCost: run.printer.maintenanceCost.toNumber(),
+              depreciationHours: run.printer.depreciationHours.toNumber(),
+            })
+            const filamentPricePerKg = calculateFilamentPricePerKg({
+              spoolPrice: run.filament.spoolPrice.toNumber(),
+              spoolWeightKg: run.filament.spoolWeightKg.toNumber(),
+            })
             const wasteCost = calculateWasteCost({
               gramsWasted: run.gramsWasted.toNumber(),
               timeWastedHours: run.timeWastedHours.toNumber(),
@@ -67,11 +74,9 @@ export default async function ProductionPage() {
                 <td>{run.quantitySuccess}</td>
                 <td>{run.quantityFailed}</td>
                 <td>{run.gramsWasted.toNumber()}g / {run.timeWastedHours.toNumber()}h</td>
-                <td>R$ {wasteCost.toFixed(2)}</td>
+                <td>{formatCurrency(wasteCost)}</td>
                 <td>
-                  <form action={async () => { 'use server'; await deleteProductionRun(run.id) }}>
-                    <button className="text-red-600 hover:underline">Remover</button>
-                  </form>
+                  <ConfirmDeleteForm action={async () => { 'use server'; await deleteProductionRun(run.id) }} />
                 </td>
               </tr>
             )

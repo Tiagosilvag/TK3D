@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createPackagingItem, updatePackagingItem, deletePackagingItem } from '@/actions/packaging'
+import { createPackagingItem, updatePackagingItem, deletePackagingItem, reactivatePackagingItem } from '@/actions/packaging'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -54,5 +54,18 @@ describe('packaging actions', () => {
     const gone = await prisma.packagingItem.findUnique({ where: { id: item.id } })
     expect(gone).not.toBeNull()
     expect(gone?.active).toBe(false)
+  })
+
+  it('reativa uma embalagem removida (soft-deleted)', async () => {
+    const created = await createPackagingItem(fd({ name: 'Caixa Reativação', unitCost: '2' }))
+    expect(created.success).toBe(true)
+    const item = await prisma.packagingItem.findFirstOrThrow({ where: { name: 'Caixa Reativação' } })
+
+    await deletePackagingItem(item.id)
+    const reactivated = await reactivatePackagingItem(item.id)
+    expect(reactivated.success).toBe(true)
+
+    const restored = await prisma.packagingItem.findUnique({ where: { id: item.id } })
+    expect(restored?.active).toBe(true)
   })
 })

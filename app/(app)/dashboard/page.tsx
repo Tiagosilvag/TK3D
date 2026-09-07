@@ -6,6 +6,7 @@ import {
   getConsignmentStockSummary,
   getConsignmentRevenue,
 } from '@/lib/reports'
+import { formatCurrency } from '@/lib/format'
 
 // This page aggregates data mutated by actions on several other routes
 // (production runs, consignment deliveries/sale reports, and eventually
@@ -14,7 +15,6 @@ import {
 // a stale build-time snapshot.
 export const dynamic = 'force-dynamic'
 
-const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
 const integer = new Intl.NumberFormat('pt-BR')
 
 function EmptyState({ children }: { children: React.ReactNode }) {
@@ -60,7 +60,7 @@ export default async function DashboardPage() {
           <div>
             <p className="text-sm font-medium text-slate-500">Receita total</p>
             <p className="mt-1 text-4xl font-semibold tabular-nums tracking-tight text-slate-900 sm:text-5xl">
-              {currency.format(totalRevenue)}
+              {formatCurrency(totalRevenue)}
             </p>
           </div>
           <dl className="flex gap-8">
@@ -68,19 +68,19 @@ export default async function DashboardPage() {
               <dt className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
                 <span className="h-2 w-2 rounded-full bg-emerald-500" /> Direta
               </dt>
-              <dd className="mt-1 text-lg font-semibold tabular-nums text-slate-900">{currency.format(revenue.DIRETA)}</dd>
+              <dd className="mt-1 text-lg font-semibold tabular-nums text-slate-900">{formatCurrency(revenue.DIRETA)}</dd>
             </div>
             <div>
               <dt className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
                 <span className="h-2 w-2 rounded-full bg-slate-300" /> Marketplace
               </dt>
-              <dd className="mt-1 text-lg font-semibold tabular-nums text-slate-900">{currency.format(revenue.MARKETPLACE)}</dd>
+              <dd className="mt-1 text-lg font-semibold tabular-nums text-slate-900">{formatCurrency(revenue.MARKETPLACE)}</dd>
             </div>
             <div>
               <dt className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
                 <span className="h-2 w-2 rounded-full bg-amber-400" /> Consignação
               </dt>
-              <dd className="mt-1 text-lg font-semibold tabular-nums text-slate-900">{currency.format(consignmentRevenue)}</dd>
+              <dd className="mt-1 text-lg font-semibold tabular-nums text-slate-900">{formatCurrency(consignmentRevenue)}</dd>
             </div>
           </dl>
         </div>
@@ -100,7 +100,7 @@ export default async function DashboardPage() {
         <div className="rounded-2xl border border-slate-200 bg-white p-6">
           <p className="text-sm font-medium text-slate-500">Custo total de desperdício</p>
           <p className="mt-1 text-3xl font-semibold tabular-nums tracking-tight text-amber-600">
-            {currency.format(wasteCost)}
+            {formatCurrency(wasteCost)}
           </p>
           <p className="mt-1 text-xs text-slate-400">Material e tempo de máquina perdidos em falhas de impressão</p>
         </div>

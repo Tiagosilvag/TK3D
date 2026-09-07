@@ -47,3 +47,9 @@ export async function deletePrinter(id: string): Promise<ActionResult> {
   revalidatePath('/printers')
   return { success: true }
 }
+
+export async function reactivatePrinter(id: string): Promise<ActionResult> {
+  await prisma.printer.update({ where: { id }, data: { active: true } })
+  revalidatePath('/printers')
+  return { success: true }
+}

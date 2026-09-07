@@ -1,6 +1,8 @@
 import { prisma } from '@/lib/prisma'
+import { formatCurrency } from '@/lib/format'
 import { DeliveryForm } from './DeliveryForm'
 import { deleteConsignmentDelivery } from '@/actions/consignmentDeliveries'
+import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,11 +45,9 @@ export default async function ConsignmentDeliveriesPage() {
                 <td>{d.quantityDelivered}</td>
                 <td>{sold}</td>
                 <td>{remaining}</td>
-                <td>R$ {d.unitPrice.toNumber().toFixed(2)}</td>
+                <td>{formatCurrency(d.unitPrice.toNumber())}</td>
                 <td>
-                  <form action={async () => { 'use server'; await deleteConsignmentDelivery(d.id) }}>
-                    <button className="text-red-600 hover:underline">Remover</button>
-                  </form>
+                  <ConfirmDeleteForm action={async () => { 'use server'; await deleteConsignmentDelivery(d.id) }} />
                 </td>
               </tr>
             )

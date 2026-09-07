@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { PartnerForm } from './PartnerForm'
 import { deleteConsignmentPartner } from '@/actions/consignmentPartners'
+import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,9 +28,7 @@ export default async function ConsignmentPartnersPage() {
               <td>{(p.defaultCommissionPercent.toNumber() * 100).toFixed(0)}%</td>
               <td>{p.notes ?? '-'}</td>
               <td>
-                <form action={async () => { 'use server'; await deleteConsignmentPartner(p.id) }}>
-                  <button className="text-red-600 hover:underline">Remover</button>
-                </form>
+                <ConfirmDeleteForm action={async () => { 'use server'; await deleteConsignmentPartner(p.id) }} />
               </td>
             </tr>
           ))}

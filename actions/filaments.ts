@@ -47,3 +47,9 @@ export async function deleteFilament(id: string): Promise<ActionResult> {
   revalidatePath('/filaments')
   return { success: true }
 }
+
+export async function reactivateFilament(id: string): Promise<ActionResult> {
+  await prisma.filament.update({ where: { id }, data: { active: true } })
+  revalidatePath('/filaments')
+  return { success: true }
+}

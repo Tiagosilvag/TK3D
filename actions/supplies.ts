@@ -47,3 +47,9 @@ export async function deleteSupply(id: string): Promise<ActionResult> {
   revalidatePath('/supplies')
   return { success: true }
 }
+
+export async function reactivateSupply(id: string): Promise<ActionResult> {
+  await prisma.supply.update({ where: { id }, data: { active: true } })
+  revalidatePath('/supplies')
+  return { success: true }
+}

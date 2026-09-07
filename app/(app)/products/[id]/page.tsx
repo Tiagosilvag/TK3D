@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
+import { formatCurrency } from '@/lib/format'
 import { ProductForm } from '../ProductForm'
 import { CostBreakdown } from '../CostBreakdown'
 import { getProductCostBreakdown, addProductSupplyUsage, removeProductSupplyUsage } from '@/actions/products'
@@ -76,7 +77,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
                     <tr key={usage.id} className="border-b">
                       <td className="py-1">{usage.supply.name}</td>
                       <td>{usage.quantity.toNumber()} {SUPPLY_UNIT_LABELS[usage.supply.unit] ?? usage.supply.unit}</td>
-                      <td>R$ {(usage.quantity.toNumber() * usage.supply.unitCost.toNumber()).toFixed(4)}</td>
+                      <td>{formatCurrency(usage.quantity.toNumber() * usage.supply.unitCost.toNumber())}</td>
                       <td>
                         <form action={async () => { 'use server'; await removeProductSupplyUsage(usage.id) }}>
                           <button className="text-red-600 hover:underline">Remover</button>

@@ -47,3 +47,9 @@ export async function deletePackagingItem(id: string): Promise<ActionResult> {
   revalidatePath('/packaging')
   return { success: true }
 }
+
+export async function reactivatePackagingItem(id: string): Promise<ActionResult> {
+  await prisma.packagingItem.update({ where: { id }, data: { active: true } })
+  revalidatePath('/packaging')
+  return { success: true }
+}

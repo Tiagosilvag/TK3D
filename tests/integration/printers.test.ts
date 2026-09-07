@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createPrinter, updatePrinter, deletePrinter } from '@/actions/printers'
+import { createPrinter, updatePrinter, deletePrinter, reactivatePrinter } from '@/actions/printers'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -64,5 +64,20 @@ describe('printers actions', () => {
     const gone = await prisma.printer.findUnique({ where: { id: printer.id } })
     expect(gone).not.toBeNull()
     expect(gone?.active).toBe(false)
+  })
+
+  it('reativa uma impressora removida (soft-deleted)', async () => {
+    const created = await createPrinter(fd({
+      name: 'Teste Z1', purchasePrice: '1000', depreciationHours: '5000', maintenanceCost: '200', avgPowerConsumptionKwh: '0.2',
+    }))
+    expect(created.success).toBe(true)
+    const printer = await prisma.printer.findFirstOrThrow({ where: { name: 'Teste Z1' } })
+
+    await deletePrinter(printer.id)
+    const reactivated = await reactivatePrinter(printer.id)
+    expect(reactivated.success).toBe(true)
+
+    const restored = await prisma.printer.findUnique({ where: { id: printer.id } })
+    expect(restored?.active).toBe(true)
   })
 })

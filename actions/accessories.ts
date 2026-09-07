@@ -47,3 +47,9 @@ export async function deleteAccessory(id: string): Promise<ActionResult> {
   revalidatePath('/accessories')
   return { success: true }
 }
+
+export async function reactivateAccessory(id: string): Promise<ActionResult> {
+  await prisma.accessory.update({ where: { id }, data: { active: true } })
+  revalidatePath('/accessories')
+  return { success: true }
+}

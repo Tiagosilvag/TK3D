@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createAccessory, updateAccessory, deleteAccessory } from '@/actions/accessories'
+import { createAccessory, updateAccessory, deleteAccessory, reactivateAccessory } from '@/actions/accessories'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -56,5 +56,18 @@ describe('accessories actions', () => {
     const gone = await prisma.accessory.findUnique({ where: { id: item.id } })
     expect(gone).not.toBeNull()
     expect(gone?.active).toBe(false)
+  })
+
+  it('reativa um acessório removido (soft-deleted)', async () => {
+    const created = await createAccessory(fd({ name: 'Mosquetão Reativação', type: 'MOSQUETAO', unitCost: '0.9' }))
+    expect(created.success).toBe(true)
+    const item = await prisma.accessory.findFirstOrThrow({ where: { name: 'Mosquetão Reativação' } })
+
+    await deleteAccessory(item.id)
+    const reactivated = await reactivateAccessory(item.id)
+    expect(reactivated.success).toBe(true)
+
+    const restored = await prisma.accessory.findUnique({ where: { id: item.id } })
+    expect(restored?.active).toBe(true)
   })
 })

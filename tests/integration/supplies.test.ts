@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createSupply, updateSupply, deleteSupply } from '@/actions/supplies'
+import { createSupply, updateSupply, deleteSupply, reactivateSupply } from '@/actions/supplies'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -65,5 +65,18 @@ describe('supplies actions', () => {
     const gone = await prisma.supply.findUnique({ where: { id: item.id } })
     expect(gone).not.toBeNull()
     expect(gone?.active).toBe(false)
+  })
+
+  it('reativa um insumo removido (soft-deleted)', async () => {
+    const created = await createSupply(fd({ name: 'Verniz Reativação', unit: 'ML', unitCost: '0.3' }))
+    expect(created.success).toBe(true)
+    const item = await prisma.supply.findFirstOrThrow({ where: { name: 'Verniz Reativação' } })
+
+    await deleteSupply(item.id)
+    const reactivated = await reactivateSupply(item.id)
+    expect(reactivated.success).toBe(true)
+
+    const restored = await prisma.supply.findUnique({ where: { id: item.id } })
+    expect(restored?.active).toBe(true)
   })
 })

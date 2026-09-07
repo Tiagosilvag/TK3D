@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createFilament, updateFilament, deleteFilament } from '@/actions/filaments'
+import { createFilament, updateFilament, deleteFilament, reactivateFilament } from '@/actions/filaments'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -68,5 +68,20 @@ describe('filaments actions', () => {
     const gone = await prisma.filament.findUnique({ where: { id: filament.id } })
     expect(gone).not.toBeNull()
     expect(gone?.active).toBe(false)
+  })
+
+  it('reativa um filamento removido (soft-deleted)', async () => {
+    const created = await createFilament(fd({
+      manufacturer: 'Teste PETG', diameterMm: '1.75', spoolPrice: '100', spoolWeightKg: '1', densityGCm3: '1.27', nozzleTempC: '240', bedTempC: '80',
+    }))
+    expect(created.success).toBe(true)
+    const filament = await prisma.filament.findFirstOrThrow({ where: { manufacturer: 'Teste PETG' } })
+
+    await deleteFilament(filament.id)
+    const reactivated = await reactivateFilament(filament.id)
+    expect(reactivated.success).toBe(true)
+
+    const restored = await prisma.filament.findUnique({ where: { id: filament.id } })
+    expect(restored?.active).toBe(true)
   })
 })
