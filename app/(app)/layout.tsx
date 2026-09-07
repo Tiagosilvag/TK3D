@@ -7,6 +7,10 @@ const NAV_LINKS: { href: string; label: string }[] = [
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/printers', label: 'Impressoras' },
   { href: '/filaments', label: 'Filamentos' },
+  { href: '/packaging', label: 'Embalagens' },
+  { href: '/accessories', label: 'Acessórios' },
+  { href: '/supplies', label: 'Insumos' },
+  { href: '/settings', label: 'Configurações' },
 ]
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
