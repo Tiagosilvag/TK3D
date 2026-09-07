@@ -73,7 +73,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
   })
 
   const suppliesCost = product.supplyUsages.reduce(
-    (sum, u) => sum + u.quantity.toNumber() * u.supply.unitCost.toNumber(),
+    (sum, u) => sum + u.quantity.toNumber() * u.supply.avgUnitCost.toNumber(),
     0,
   )
 

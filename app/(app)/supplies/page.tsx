@@ -1,70 +1,241 @@
+import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { formatCurrency } from '@/lib/format'
+import { getStockStatusWithThresholds } from '@/lib/costing'
 import { SupplyForm } from './SupplyForm'
-import { deleteSupply, reactivateSupply } from '@/actions/supplies'
+import { RestockForm } from './RestockForm'
+import { deleteSupply } from '@/actions/supplies'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import type { SupplyUnit } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
-const SUPPLY_UNIT_LABELS: Record<string, string> = {
+const SUPPLY_UNIT_LABELS: Record<SupplyUnit, string> = {
   UN: 'Unidade',
   ML: 'Mililitro',
   G: 'Grama',
+  M: 'Metro',
+  OUTRO: 'Outro',
 }
 
-export default async function SuppliesPage() {
-  const [items, inactiveItems] = await Promise.all([
-    prisma.supply.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
-    prisma.supply.findMany({ where: { active: false }, orderBy: { name: 'asc' } }),
+const UNIT_FILTERS: { value: SupplyUnit | undefined; label: string }[] = [
+  { value: undefined, label: 'Todos' },
+  { value: 'UN', label: 'Unidade' },
+  { value: 'ML', label: 'Mililitro' },
+  { value: 'G', label: 'Grama' },
+  { value: 'M', label: 'Metro' },
+  { value: 'OUTRO', label: 'Outro' },
+]
+
+function buildHref(params: { unit?: string; stock?: string }): string {
+  const qs = new URLSearchParams()
+  if (params.unit) qs.set('unit', params.unit)
+  if (params.stock) qs.set('stock', params.stock)
+  const s = qs.toString()
+  return s ? `/supplies?${s}` : '/supplies'
+}
+
+function tabClass(isActive: boolean): string {
+  return `rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+    isActive
+      ? 'bg-amber-600 text-white dark:bg-amber-500 dark:text-slate-950'
+      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
+  }`
+}
+
+function formatDate(d: Date): string {
+  return d.toLocaleDateString('pt-BR')
+}
+
+export default async function SuppliesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ unit?: string; stock?: string }>
+}) {
+  const { unit, stock } = await searchParams
+  const activeUnit = (['UN', 'ML', 'G', 'M', 'OUTRO'] as const).includes(unit as SupplyUnit)
+    ? (unit as SupplyUnit)
+    : undefined
+  const activeStock = stock === 'baixo' ? 'baixo' : undefined
+
+  const [supplies, settings] = await Promise.all([
+    prisma.supply.findMany({
+      include: { purchases: { orderBy: { purchaseDate: 'desc' } } },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
   ])
+
+  const lowThresholdPercent = settings.stockLowThresholdPercent.toNumber()
+  const criticalThresholdPercent = settings.stockCriticalThresholdPercent.toNumber()
+
+  // percentRemaining = quanto do total já comprado (soma de todas as
+  // SupplyPurchase) ainda está em estoque -- não existe um campo "estoque
+  // inicial" fixo pra Supply (diferente do Filament, onde cada rolo tem um
+  // peso inicial único): o estoque de um Supply é reposto ao longo do tempo
+  // por várias compras, então "total já comprado" é a referência de 100%
+  // mais direta pra medir "quanto sobrou" (mesmo cálculo de Accessory).
+  const rows = supplies.map((s) => {
+    const currentStock = s.currentStock.toNumber()
+    const avgUnitCost = s.avgUnitCost.toNumber()
+    const totalPurchased = s.purchases.reduce((sum, p) => sum + p.quantity.toNumber(), 0)
+    const percentRemaining = totalPurchased > 0 ? (currentStock / totalPurchased) * 100 : 0
+    const valueInStock = currentStock * avgUnitCost
+    const status = getStockStatusWithThresholds(percentRemaining, lowThresholdPercent, criticalThresholdPercent)
+    return { supply: s, currentStock, avgUnitCost, percentRemaining, valueInStock, status }
+  })
+
+  const mainRows = rows.filter((r) => r.currentStock > 0)
+  const esgotadosRows = rows.filter((r) => r.currentStock <= 0)
+
+  const filteredMainRows = mainRows
+    .filter((r) => (activeUnit ? r.supply.unit === activeUnit : true))
+    .filter((r) => (activeStock === 'baixo' ? r.percentRemaining > 0 && r.percentRemaining <= lowThresholdPercent * 100 : true))
+
+  // Cards de resumo (mirroring Accessory's task-3 brief): sempre sobre o
+  // conjunto completo, independente dos filtros de unidade/estoque
+  // aplicados na listagem abaixo.
+  const totalValueInStock = rows.reduce((sum, r) => sum + r.valueInStock, 0)
+  const countByStatus = rows.reduce<Record<string, number>>((acc, r) => {
+    acc[r.status.label] = (acc[r.status.label] ?? 0) + 1
+    return acc
+  }, {})
 
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Insumos</h1>
       <SupplyForm />
-      <table className="mt-6 w-full text-sm">
+
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <div className="tk-panel p-4">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Valor total em estoque</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(totalValueInStock)}</p>
+        </div>
+        <div className="tk-panel p-4">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">🟢 Em estoque</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{countByStatus['Em estoque'] ?? 0}</p>
+        </div>
+        <div className="tk-panel p-4">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">🟡 Estoque baixo</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{countByStatus['Estoque baixo'] ?? 0}</p>
+        </div>
+        <div className="tk-panel p-4">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">🔴 Estoque crítico</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{countByStatus['Estoque crítico'] ?? 0}</p>
+        </div>
+        <div className="tk-panel p-4">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">⚫ Esgotados</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{countByStatus['Esgotado'] ?? 0}</p>
+        </div>
+      </div>
+
+      <div className="mb-2 mt-6 flex flex-wrap gap-1">
+        {UNIT_FILTERS.map((f) => (
+          <Link key={f.label} href={buildHref({ unit: f.value, stock: activeStock })} className={tabClass(activeUnit === f.value)}>
+            {f.label}
+          </Link>
+        ))}
+      </div>
+
+      <div className="mb-4 flex flex-wrap gap-1">
+        <Link href={buildHref({ unit: activeUnit })} className={tabClass(!activeStock)}>
+          Todos
+        </Link>
+        <Link href={buildHref({ unit: activeUnit, stock: 'baixo' })} className={tabClass(activeStock === 'baixo')}>
+          Estoque baixo
+        </Link>
+      </div>
+
+      <table className="mt-2 w-full text-sm">
         <thead>
           <tr className="tk-table-head-row">
             <th className="py-2">Nome</th>
             <th>Unidade</th>
-            <th>Custo unitário</th>
+            <th>Estoque</th>
+            <th>Custo médio</th>
+            <th>Valor em estoque</th>
+            <th>% restante</th>
+            <th>Status</th>
+            <th>Repor estoque</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {items.map((item) => (
-            <tr key={item.id} className="tk-row">
-              <td className="py-2">{item.name}</td>
-              <td>{SUPPLY_UNIT_LABELS[item.unit] ?? item.unit}</td>
-              <td>{formatCurrency(item.unitCost.toNumber())}</td>
+          {filteredMainRows.map(({ supply: s, currentStock, avgUnitCost, valueInStock, percentRemaining, status }) => (
+            <tr key={s.id} className="tk-row align-top">
+              <td className="py-2">{s.name}</td>
+              <td>{SUPPLY_UNIT_LABELS[s.unit] ?? s.unit}</td>
+              <td>{currentStock}</td>
+              <td>{formatCurrency(avgUnitCost)}</td>
+              <td>{formatCurrency(valueInStock)}</td>
+              <td>{percentRemaining.toFixed(1)}%</td>
+              <td>{status.emoji} {status.label}</td>
               <td>
-                <ConfirmDeleteForm action={async () => { 'use server'; await deleteSupply(item.id) }} />
+                <RestockForm supplyId={s.id} />
+              </td>
+              <td>
+                <div className="flex flex-col items-start gap-1">
+                  <details>
+                    <summary className="tk-summary">Histórico ({s.purchases.length})</summary>
+                    <table className="mt-2 text-xs">
+                      <thead>
+                        <tr className="tk-table-head-row">
+                          <th className="pr-2">Data</th>
+                          <th className="pr-2">Qtd</th>
+                          <th className="pr-2">Valor total</th>
+                          <th>R$/un</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {s.purchases.map((p) => (
+                          <tr key={p.id} className="tk-row">
+                            <td className="pr-2">{formatDate(p.purchaseDate)}</td>
+                            <td className="pr-2">{p.quantity.toNumber()}</td>
+                            <td className="pr-2">{formatCurrency(p.totalCost.toNumber())}</td>
+                            <td>{formatCurrency(p.totalCost.toNumber() / p.quantity.toNumber())}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </details>
+                  <ConfirmDeleteForm action={async () => { 'use server'; await deleteSupply(s.id) }} />
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
 
-      {inactiveItems.length > 0 && (
+      {filteredMainRows.length === 0 && (
+        <div className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400 dark:border-slate-700 dark:text-slate-500">
+          Nenhum insumo encontrado com esses filtros.
+        </div>
+      )}
+
+      {esgotadosRows.length > 0 && (
         <details className="mt-8">
-          <summary className="tk-summary">Mostrar inativos ({inactiveItems.length})</summary>
+          <summary className="tk-summary">Insumos esgotados ({esgotadosRows.length})</summary>
           <table className="mt-3 w-full text-sm">
             <thead>
               <tr className="tk-table-head-row">
                 <th className="py-2">Nome</th>
                 <th>Unidade</th>
+                <th>Custo médio</th>
+                <th>Repor estoque</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {inactiveItems.map((item) => (
-                <tr key={item.id} className="tk-row-inactive">
-                  <td className="py-2">{item.name}</td>
-                  <td>{SUPPLY_UNIT_LABELS[item.unit] ?? item.unit}</td>
+              {esgotadosRows.map(({ supply: s, avgUnitCost }) => (
+                <tr key={s.id} className="tk-row-inactive">
+                  <td className="py-2">{s.name}</td>
+                  <td>{SUPPLY_UNIT_LABELS[s.unit] ?? s.unit}</td>
+                  <td>{formatCurrency(avgUnitCost)}</td>
                   <td>
-                    <form action={async () => { 'use server'; await reactivateSupply(item.id) }}>
-                      <button className="tk-link-success">Reativar</button>
-                    </form>
+                    <RestockForm supplyId={s.id} />
+                  </td>
+                  <td>
+                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteSupply(s.id) }} />
                   </td>
                 </tr>
               ))}

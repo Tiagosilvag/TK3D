@@ -158,17 +158,37 @@ enum SupplyUnit {
   UN
   ML
   G
+  M // metro
+  OUTRO
 }
 
 model Supply {
-  id        String               @id @default(cuid())
-  name      String               @unique
-  unit      SupplyUnit
-  unitCost  Decimal              @db.Decimal(10, 4)
-  active    Boolean              @default(true)
-  createdAt DateTime             @default(now())
-  updatedAt DateTime             @updatedAt
-  usages    ProductSupplyUsage[]
+  id           String               @id @default(cuid())
+  name         String               @unique
+  unit         SupplyUnit
+  currentStock Decimal              @db.Decimal(10, 3)
+  avgUnitCost  Decimal              @db.Decimal(10, 4) // custo médio por unidade de medida cadastrada, recalculado a cada compra
+  active       Boolean              @default(true)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  purchases    SupplyPurchase[]
+  usages       ProductSupplyUsage[]
+}
+
+model SupplyPurchase {
+  id           String   @id @default(cuid())
+  supplyId     String
+  // onDelete: Cascade — purchase history is owned by its Supply (it only
+  // exists to explain how that supply's stock/avgUnitCost got where they
+  // are); ProductSupplyUsage's own supplyId FK (ON DELETE RESTRICT already,
+  // from the original schema) is the reference that actually blocks a
+  // physical deleteSupply (task-4 brief, mirroring task-3's Accessory).
+  supply       Supply   @relation(fields: [supplyId], references: [id], onDelete: Cascade)
+  quantity     Decimal  @db.Decimal(10, 3)
+  totalCost    Decimal  @db.Decimal(10, 2)
+  purchaseDate DateTime
+  notes        String?
+  createdAt    DateTime @default(now())
 }
 
 enum FinishingType {

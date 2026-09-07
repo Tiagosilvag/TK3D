@@ -42,10 +42,10 @@ async function main() {
   }
 
   const supplies = [
-    { name: 'Caneta acrílica', unit: SupplyUnit.UN, unitCost: 0 },
-    { name: 'Spray verniz', unit: SupplyUnit.ML, unitCost: 0 },
-    { name: 'Resina UV', unit: SupplyUnit.ML, unitCost: 0 },
-    { name: 'Cola Tekbond 200', unit: SupplyUnit.ML, unitCost: 0 },
+    { name: 'Caneta acrílica', unit: SupplyUnit.UN, currentStock: 0, avgUnitCost: 0 },
+    { name: 'Spray verniz', unit: SupplyUnit.ML, currentStock: 0, avgUnitCost: 0 },
+    { name: 'Resina UV', unit: SupplyUnit.ML, currentStock: 0, avgUnitCost: 0 },
+    { name: 'Cola Tekbond 200', unit: SupplyUnit.ML, currentStock: 0, avgUnitCost: 0 },
   ]
   for (const s of supplies) {
     await prisma.supply.upsert({ where: { name: s.name }, update: {}, create: s })

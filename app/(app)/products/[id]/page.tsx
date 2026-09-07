@@ -82,7 +82,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
                     <tr key={usage.id} className="tk-row">
                       <td className="py-1">{usage.supply.name}</td>
                       <td>{usage.quantity.toNumber()} {SUPPLY_UNIT_LABELS[usage.supply.unit] ?? usage.supply.unit}</td>
-                      <td>{formatCurrency(usage.quantity.toNumber() * usage.supply.unitCost.toNumber())}</td>
+                      <td>{formatCurrency(usage.quantity.toNumber() * usage.supply.avgUnitCost.toNumber())}</td>
                       <td>
                         <form action={async () => { 'use server'; await removeProductSupplyUsage(usage.id) }}>
                           <button className="tk-link-danger">Remover</button>

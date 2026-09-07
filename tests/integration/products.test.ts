@@ -54,7 +54,7 @@ describe('products actions', () => {
     // (annualMaintenancePercent 0.10, annualUsageHours 2000): depreciation
     // 3600/10000=0.36 R$/h, maintenance 3600*0.10/2000=0.18 R$/h. suggestedPrice
     // (15.004) is reproduced here end-to-end through real DB records.
-    const supply = await prisma.supply.create({ data: { name: 'Cola Teste', unit: 'ML', unitCost: 0.3 } })
+    const supply = await prisma.supply.create({ data: { name: 'Cola Teste', unit: 'ML', currentStock: 10, avgUnitCost: 0.3 } })
 
     const result = await createProduct(fd({
       name: 'Chaveirinho Teste',
@@ -141,7 +141,7 @@ describe('products actions', () => {
     const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
     const packagingItem = await prisma.packagingItem.create({ data: { name: 'Saquinho', unitCost: 0.1 } })
     const accessory = await prisma.accessory.create({ data: { name: 'Mosquetão', type: 'MOSQUETAO', colorName: '', currentStock: 10, avgUnitCost: 0.3 } })
-    const supply = await prisma.supply.create({ data: { name: 'Cola', unit: 'ML', unitCost: 0.05 } })
+    const supply = await prisma.supply.create({ data: { name: 'Cola', unit: 'ML', currentStock: 10, avgUnitCost: 0.05 } })
 
     const result = await createProduct(fd({
       name: 'Chaveiro Completo',
