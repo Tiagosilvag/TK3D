@@ -15,6 +15,12 @@ const NAV_LINKS: { href: string; label: string }[] = [
   { href: '/settings', label: 'Configurações' },
 ]
 
+const CONSIGNMENT_NAV_LINKS: { href: string; label: string }[] = [
+  { href: '/consignment/partners', label: 'Parceiros' },
+  { href: '/consignment/deliveries', label: 'Entregas' },
+  { href: '/consignment/reports', label: 'Relatórios de venda' },
+]
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -33,6 +39,25 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="flex-1 space-y-1 px-2 py-4">
           {NAV_LINKS.map((link) => {
+            const active = pathname === link.href || pathname.startsWith(`${link.href}/`)
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`block rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                  active
+                    ? 'bg-slate-900 text-white'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                {link.label}
+              </Link>
+            )
+          })}
+          <p className="mt-4 px-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Consignado
+          </p>
+          {CONSIGNMENT_NAV_LINKS.map((link) => {
             const active = pathname === link.href || pathname.startsWith(`${link.href}/`)
             return (
               <Link
