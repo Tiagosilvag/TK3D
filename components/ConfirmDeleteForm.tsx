@@ -10,7 +10,7 @@ export function ConfirmDeleteForm({
   action,
   label = 'Remover',
   confirmMessage = 'Tem certeza?',
-  className = 'text-red-600 hover:underline',
+  className = 'text-red-600 hover:underline dark:text-red-400',
 }: {
   action: () => Promise<void>
   label?: string

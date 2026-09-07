@@ -19,8 +19,8 @@ export default async function ProductsPage() {
   const breakdowns = await Promise.all(products.map((p) => getProductCostBreakdown(p.id)))
 
   return (
-    <div className="p-6">
-      <h1 className="mb-4 text-lg font-semibold">Produtos</h1>
+    <div className="tk-page">
+      <h1 className="tk-page-title">Produtos</h1>
       <ProductForm
         printers={printers}
         filaments={filaments.map((f) => ({ id: f.id, name: f.manufacturer }))}
@@ -29,7 +29,7 @@ export default async function ProductsPage() {
       />
       <table className="mt-6 w-full text-sm">
         <thead>
-          <tr className="border-b text-left text-slate-500">
+          <tr className="tk-table-head-row">
             <th className="py-2">Nome</th>
             <th>Categoria</th>
             <th>Custo Final</th>
@@ -42,9 +42,9 @@ export default async function ProductsPage() {
           {products.map((p, i) => {
             const breakdown = breakdowns[i]
             return (
-              <tr key={p.id} className="border-b">
+              <tr key={p.id} className="tk-row">
                 <td className="py-2">
-                  <Link href={`/products/${p.id}`} className="text-slate-900 hover:underline">
+                  <Link href={`/products/${p.id}`} className="font-medium text-amber-700 hover:underline dark:text-amber-400">
                     {p.name}
                   </Link>
                 </td>

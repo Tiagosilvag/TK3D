@@ -9,12 +9,12 @@ export default async function ConsignmentPartnersPage() {
   const partners = await prisma.consignmentPartner.findMany({ where: { active: true }, orderBy: { name: 'asc' } })
 
   return (
-    <div className="p-6">
-      <h1 className="mb-4 text-lg font-semibold">Parceiros de consignação</h1>
+    <div className="tk-page">
+      <h1 className="tk-page-title">Parceiros de consignação</h1>
       <PartnerForm />
       <table className="mt-6 w-full text-sm">
         <thead>
-          <tr className="border-b text-left text-slate-500">
+          <tr className="tk-table-head-row">
             <th className="py-2">Nome</th>
             <th>Comissão padrão</th>
             <th>Observações</th>
@@ -23,7 +23,7 @@ export default async function ConsignmentPartnersPage() {
         </thead>
         <tbody>
           {partners.map((p) => (
-            <tr key={p.id} className="border-b">
+            <tr key={p.id} className="tk-row">
               <td className="py-2">{p.name}</td>
               <td>{(p.defaultCommissionPercent.toNumber() * 100).toFixed(0)}%</td>
               <td>{p.notes ?? '-'}</td>

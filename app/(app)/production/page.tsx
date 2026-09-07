@@ -22,8 +22,8 @@ export default async function ProductionPage() {
   const energyCostPerKwh = settings.energyCostPerKwh.toNumber()
 
   return (
-    <div className="p-6">
-      <h1 className="mb-4 text-lg font-semibold">Produção e desperdício</h1>
+    <div className="tk-page">
+      <h1 className="tk-page-title">Produção e desperdício</h1>
       <ProductionRunForm
         products={products}
         printers={printers}
@@ -31,7 +31,7 @@ export default async function ProductionPage() {
       />
       <table className="mt-6 w-full text-sm">
         <thead>
-          <tr className="border-b text-left text-slate-500">
+          <tr className="tk-table-head-row">
             <th className="py-2">Data</th>
             <th>Produto</th>
             <th>Impressora</th>
@@ -65,7 +65,7 @@ export default async function ProductionPage() {
             })
 
             return (
-              <tr key={run.id} className="border-b">
+              <tr key={run.id} className="tk-row">
                 <td className="py-2">{run.date.toLocaleDateString('pt-BR')}</td>
                 <td>{run.product.name}</td>
                 <td>{run.printer.name}</td>

@@ -30,9 +30,9 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
   ])
 
   return (
-    <div className="p-6">
-      <Link href="/products" className="text-sm text-slate-500 hover:underline">&larr; Produtos</Link>
-      <h1 className="mb-4 mt-1 text-lg font-semibold">{product.name}</h1>
+    <div className="tk-page">
+      <Link href="/products" className="text-sm text-slate-500 hover:underline dark:text-slate-400">&larr; Produtos</Link>
+      <h1 className="mb-4 mt-1 font-display text-lg font-semibold text-slate-900 dark:text-slate-100">{product.name}</h1>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
@@ -58,14 +58,14 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
             accessories={accessories}
           />
 
-          <div className="mt-6 rounded-lg border border-slate-200 p-4">
-            <h2 className="mb-3 text-sm font-semibold text-slate-900">Insumos usados</h2>
+          <div className="mt-6 tk-panel p-4">
+            <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Insumos usados</h2>
             {product.supplyUsages.length === 0 ? (
-              <p className="text-sm text-slate-500">Nenhum insumo cadastrado.</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Nenhum insumo cadastrado.</p>
             ) : (
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b text-left text-slate-500">
+                  <tr className="tk-table-head-row">
                     <th className="py-1">Insumo</th>
                     <th>Quantidade</th>
                     <th>Custo</th>
@@ -74,13 +74,13 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
                 </thead>
                 <tbody>
                   {product.supplyUsages.map((usage) => (
-                    <tr key={usage.id} className="border-b">
+                    <tr key={usage.id} className="tk-row">
                       <td className="py-1">{usage.supply.name}</td>
                       <td>{usage.quantity.toNumber()} {SUPPLY_UNIT_LABELS[usage.supply.unit] ?? usage.supply.unit}</td>
                       <td>{formatCurrency(usage.quantity.toNumber() * usage.supply.unitCost.toNumber())}</td>
                       <td>
                         <form action={async () => { 'use server'; await removeProductSupplyUsage(usage.id) }}>
-                          <button className="text-red-600 hover:underline">Remover</button>
+                          <button className="tk-link-danger">Remover</button>
                         </form>
                       </td>
                     </tr>
@@ -91,14 +91,14 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
 
             <form action={async (formData: FormData) => { 'use server'; await addProductSupplyUsage(formData) }} className="mt-4 grid grid-cols-3 gap-2">
               <input type="hidden" name="productId" value={product.id} />
-              <select name="supplyId" className="rounded border px-2 py-1 text-sm" required defaultValue="">
+              <select name="supplyId" className="tk-input" required defaultValue="">
                 <option value="" disabled>Selecione um insumo</option>
                 {supplies.map((s) => (
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
-              <input name="quantity" type="number" step="0.001" placeholder="Quantidade" className="rounded border px-2 py-1 text-sm" required />
-              <button className="rounded bg-slate-900 py-1.5 text-sm text-white hover:bg-slate-700">Adicionar</button>
+              <input name="quantity" type="number" step="0.001" placeholder="Quantidade" className="tk-input" required />
+              <button className="tk-btn-primary">Adicionar</button>
             </form>
           </div>
         </div>

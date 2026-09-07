@@ -11,8 +11,8 @@ export default async function SettingsPage() {
   })
 
   return (
-    <div className="p-6">
-      <h1 className="mb-4 text-lg font-semibold">Configurações</h1>
+    <div className="tk-page">
+      <h1 className="tk-page-title">Configurações</h1>
       <SettingsForm
         settings={{
           energyCostPerKwh: settings.energyCostPerKwh.toNumber(),

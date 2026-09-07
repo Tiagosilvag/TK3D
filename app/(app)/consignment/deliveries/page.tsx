@@ -17,12 +17,12 @@ export default async function ConsignmentDeliveriesPage() {
   ])
 
   return (
-    <div className="p-6">
-      <h1 className="mb-4 text-lg font-semibold">Entregas em consignação</h1>
+    <div className="tk-page">
+      <h1 className="tk-page-title">Entregas em consignação</h1>
       <DeliveryForm partners={partners} products={products} />
       <table className="mt-6 w-full text-sm">
         <thead>
-          <tr className="border-b text-left text-slate-500">
+          <tr className="tk-table-head-row">
             <th className="py-2">Data</th>
             <th>Parceiro</th>
             <th>Produto</th>
@@ -38,7 +38,7 @@ export default async function ConsignmentDeliveriesPage() {
             const sold = d.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
             const remaining = d.quantityDelivered - sold
             return (
-              <tr key={d.id} className="border-b">
+              <tr key={d.id} className="tk-row">
                 <td className="py-2">{d.deliveryDate.toLocaleDateString('pt-BR')}</td>
                 <td>{d.partner.name}</td>
                 <td>{d.product.name}</td>

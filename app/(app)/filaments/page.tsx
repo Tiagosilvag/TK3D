@@ -14,12 +14,12 @@ export default async function FilamentsPage() {
   ])
 
   return (
-    <div className="p-6">
-      <h1 className="mb-4 text-lg font-semibold">Filamentos</h1>
+    <div className="tk-page">
+      <h1 className="tk-page-title">Filamentos</h1>
       <FilamentForm />
       <table className="mt-6 w-full text-sm">
         <thead>
-          <tr className="border-b text-left text-slate-500">
+          <tr className="tk-table-head-row">
             <th className="py-2">Fabricante</th>
             <th>Preço/kg</th>
             <th>Peso do rolo (kg)</th>
@@ -35,7 +35,7 @@ export default async function FilamentsPage() {
               spoolWeightKg: f.spoolWeightKg.toNumber(),
             })
             return (
-              <tr key={f.id} className="border-b">
+              <tr key={f.id} className="tk-row">
                 <td className="py-2">{f.manufacturer}</td>
                 <td>{formatCurrency(pricePerKg)}</td>
                 <td>{f.spoolWeightKg.toNumber()}</td>
@@ -52,21 +52,21 @@ export default async function FilamentsPage() {
 
       {inactiveFilaments.length > 0 && (
         <details className="mt-8">
-          <summary className="cursor-pointer text-sm font-medium text-slate-500">Mostrar inativos ({inactiveFilaments.length})</summary>
+          <summary className="tk-summary">Mostrar inativos ({inactiveFilaments.length})</summary>
           <table className="mt-3 w-full text-sm">
             <thead>
-              <tr className="border-b text-left text-slate-500">
+              <tr className="tk-table-head-row">
                 <th className="py-2">Fabricante</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {inactiveFilaments.map((f) => (
-                <tr key={f.id} className="border-b text-slate-400">
+                <tr key={f.id} className="tk-row-inactive">
                   <td className="py-2">{f.manufacturer}</td>
                   <td>
                     <form action={async () => { 'use server'; await reactivateFilament(f.id) }}>
-                      <button className="text-emerald-600 hover:underline">Reativar</button>
+                      <button className="tk-link-success">Reativar</button>
                     </form>
                   </td>
                 </tr>

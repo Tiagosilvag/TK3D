@@ -34,12 +34,12 @@ export default async function ConsignmentSaleReportsPage() {
     .filter((d) => d.remaining > 0)
 
   return (
-    <div className="p-6">
-      <h1 className="mb-4 text-lg font-semibold">Relatórios de venda (consignação)</h1>
+    <div className="tk-page">
+      <h1 className="tk-page-title">Relatórios de venda (consignação)</h1>
       <SaleReportForm deliveries={deliveryOptions} />
       <table className="mt-6 w-full text-sm">
         <thead>
-          <tr className="border-b text-left text-slate-500">
+          <tr className="tk-table-head-row">
             <th className="py-2">Data</th>
             <th>Parceiro</th>
             <th>Produto</th>
@@ -56,7 +56,7 @@ export default async function ConsignmentSaleReportsPage() {
             const gross = r.quantitySold * unitPrice
             const payout = gross * (1 - commission)
             return (
-              <tr key={r.id} className="border-b">
+              <tr key={r.id} className="tk-row">
                 <td className="py-2">{r.reportDate.toLocaleDateString('pt-BR')}</td>
                 <td>{r.delivery.partner.name}</td>
                 <td>{r.delivery.product.name}</td>

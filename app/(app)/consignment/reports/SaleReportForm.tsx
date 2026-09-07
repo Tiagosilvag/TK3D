@@ -35,14 +35,14 @@ export function SaleReportForm({ deliveries }: { deliveries: DeliveryOption[] })
   }
 
   return (
-    <form ref={formRef} action={action} className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 p-4 md:grid-cols-4">
+    <form ref={formRef} action={action} className="grid grid-cols-2 gap-3 tk-panel p-4 md:grid-cols-4">
       <label className="text-sm">
         Entrega
         <select
           name="deliveryId"
           value={deliveryId}
           onChange={(e) => handleDeliveryChange(e.target.value)}
-          className="mt-1 w-full rounded border px-2 py-1 text-sm"
+          className="tk-input-full"
           required
         >
           <option value="" disabled>Selecione</option>
@@ -53,7 +53,7 @@ export function SaleReportForm({ deliveries }: { deliveries: DeliveryOption[] })
           ))}
         </select>
         {selected && (
-          <span className="mt-1 block text-xs text-slate-500">Saldo restante: {selected.remaining}</span>
+          <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">Saldo restante: {selected.remaining}</span>
         )}
       </label>
       <label className="text-sm">
@@ -64,13 +64,13 @@ export function SaleReportForm({ deliveries }: { deliveries: DeliveryOption[] })
           step="1"
           min="1"
           max={selected?.remaining}
-          className="mt-1 w-full rounded border px-2 py-1 text-sm"
+          className="tk-input-full"
           required
         />
       </label>
       <label className="text-sm">
         Data do relatório
-        <input name="reportDate" type="date" className="mt-1 w-full rounded border px-2 py-1 text-sm" required />
+        <input name="reportDate" type="date" className="tk-input-full" required />
       </label>
       <label className="text-sm">
         Comissão (0-1)
@@ -82,15 +82,15 @@ export function SaleReportForm({ deliveries }: { deliveries: DeliveryOption[] })
           max="1"
           value={commissionPercent}
           onChange={(e) => setCommissionPercent(e.target.value)}
-          className="mt-1 w-full rounded border px-2 py-1 text-sm"
+          className="tk-input-full"
           required
         />
       </label>
       <label className="col-span-full text-sm md:col-span-3">
         Observações (opcional)
-        <textarea name="notes" className="mt-1 w-full rounded border px-2 py-1 text-sm" rows={1} />
+        <textarea name="notes" className="tk-input-full" rows={1} />
       </label>
-      <button className="col-span-full mt-2 rounded bg-slate-900 py-1.5 text-sm text-white hover:bg-slate-700">
+      <button className="col-span-full mt-2 tk-btn-primary">
         Registrar venda
       </button>
     </form>

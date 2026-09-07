@@ -55,18 +55,18 @@ export function ProductForm({
   }
 
   return (
-    <form ref={formRef} action={action} className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 p-4 md:grid-cols-3">
+    <form ref={formRef} action={action} className="grid grid-cols-2 gap-3 tk-panel p-4 md:grid-cols-3">
       <label className="text-sm">
         Nome
-        <input name="name" defaultValue={product?.name} className="mt-1 w-full rounded border px-2 py-1 text-sm" required />
+        <input name="name" defaultValue={product?.name} className="tk-input-full" required />
       </label>
       <label className="text-sm">
         Categoria
-        <input name="category" defaultValue={product?.category ?? 'Chaveiro'} className="mt-1 w-full rounded border px-2 py-1 text-sm" required />
+        <input name="category" defaultValue={product?.category ?? 'Chaveiro'} className="tk-input-full" required />
       </label>
       <label className="text-sm">
         Impressora
-        <select name="printerId" defaultValue={product?.printerId ?? ''} className="mt-1 w-full rounded border px-2 py-1 text-sm" required>
+        <select name="printerId" defaultValue={product?.printerId ?? ''} className="tk-input-full" required>
           <option value="" disabled>Selecione</option>
           {printers.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
@@ -75,7 +75,7 @@ export function ProductForm({
       </label>
       <label className="text-sm">
         Filamento
-        <select name="filamentId" defaultValue={product?.filamentId ?? ''} className="mt-1 w-full rounded border px-2 py-1 text-sm" required>
+        <select name="filamentId" defaultValue={product?.filamentId ?? ''} className="tk-input-full" required>
           <option value="" disabled>Selecione</option>
           {filaments.map((f) => (
             <option key={f.id} value={f.id}>{f.name}</option>
@@ -84,19 +84,19 @@ export function ProductForm({
       </label>
       <label className="text-sm">
         Peso (g)
-        <input name="weightGrams" type="number" step="0.01" defaultValue={product?.weightGrams} className="mt-1 w-full rounded border px-2 py-1 text-sm" required />
+        <input name="weightGrams" type="number" step="0.01" defaultValue={product?.weightGrams} className="tk-input-full" required />
       </label>
       <label className="text-sm">
         Tempo de impressão (h)
-        <input name="printTimeHours" type="number" step="0.001" defaultValue={product?.printTimeHours} className="mt-1 w-full rounded border px-2 py-1 text-sm" required />
+        <input name="printTimeHours" type="number" step="0.001" defaultValue={product?.printTimeHours} className="tk-input-full" required />
       </label>
       <label className="text-sm">
         Tempo de mão de obra (h)
-        <input name="laborTimeHours" type="number" step="0.001" defaultValue={product?.laborTimeHours} className="mt-1 w-full rounded border px-2 py-1 text-sm" required />
+        <input name="laborTimeHours" type="number" step="0.001" defaultValue={product?.laborTimeHours} className="tk-input-full" required />
       </label>
       <label className="text-sm">
         Embalagem (opcional)
-        <select name="packagingItemId" defaultValue={product?.packagingItemId ?? ''} className="mt-1 w-full rounded border px-2 py-1 text-sm">
+        <select name="packagingItemId" defaultValue={product?.packagingItemId ?? ''} className="tk-input-full">
           <option value="">Nenhuma</option>
           {packagingItems.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
@@ -105,7 +105,7 @@ export function ProductForm({
       </label>
       <label className="text-sm">
         Acessório (opcional)
-        <select name="accessoryId" defaultValue={product?.accessoryId ?? ''} className="mt-1 w-full rounded border px-2 py-1 text-sm">
+        <select name="accessoryId" defaultValue={product?.accessoryId ?? ''} className="tk-input-full">
           <option value="">Nenhum</option>
           {accessories.map((a) => (
             <option key={a.id} value={a.id}>{a.name}</option>
@@ -114,7 +114,7 @@ export function ProductForm({
       </label>
       <label className="text-sm">
         Acabamento
-        <select name="finishingType" defaultValue={product?.finishingType ?? 'NENHUM'} className="mt-1 w-full rounded border px-2 py-1 text-sm" required>
+        <select name="finishingType" defaultValue={product?.finishingType ?? 'NENHUM'} className="tk-input-full" required>
           {FINISHING_TYPES.map((f) => (
             <option key={f.value} value={f.value}>{f.label}</option>
           ))}
@@ -126,9 +126,9 @@ export function ProductForm({
       </label>
       <label className="col-span-full text-sm md:col-span-3">
         Observações (opcional)
-        <textarea name="notes" defaultValue={product?.notes ?? ''} className="mt-1 w-full rounded border px-2 py-1 text-sm" rows={2} />
+        <textarea name="notes" defaultValue={product?.notes ?? ''} className="tk-input-full" rows={2} />
       </label>
-      <button className="col-span-full mt-2 rounded bg-slate-900 py-1.5 text-sm text-white hover:bg-slate-700">
+      <button className="col-span-full mt-2 tk-btn-primary">
         {product ? 'Salvar alterações' : 'Adicionar'}
       </button>
     </form>

@@ -14,12 +14,12 @@ export default async function PrintersPage() {
   ])
 
   return (
-    <div className="p-6">
-      <h1 className="mb-4 text-lg font-semibold">Impressoras</h1>
+    <div className="tk-page">
+      <h1 className="tk-page-title">Impressoras</h1>
       <PrinterForm />
       <table className="mt-6 w-full text-sm">
         <thead>
-          <tr className="border-b text-left text-slate-500">
+          <tr className="tk-table-head-row">
             <th className="py-2">Nome</th>
             <th>Preço</th>
             <th>Depreciação R$/h</th>
@@ -35,7 +35,7 @@ export default async function PrintersPage() {
               depreciationHours: p.depreciationHours.toNumber(),
             })
             return (
-              <tr key={p.id} className="border-b">
+              <tr key={p.id} className="tk-row">
                 <td className="py-2">{p.name}</td>
                 <td>{formatCurrency(p.purchasePrice.toNumber())}</td>
                 <td>{formatCurrency(depCost)}</td>
@@ -51,10 +51,10 @@ export default async function PrintersPage() {
 
       {inactivePrinters.length > 0 && (
         <details className="mt-8">
-          <summary className="cursor-pointer text-sm font-medium text-slate-500">Mostrar inativos ({inactivePrinters.length})</summary>
+          <summary className="tk-summary">Mostrar inativos ({inactivePrinters.length})</summary>
           <table className="mt-3 w-full text-sm">
             <thead>
-              <tr className="border-b text-left text-slate-500">
+              <tr className="tk-table-head-row">
                 <th className="py-2">Nome</th>
                 <th>Preço</th>
                 <th></th>
@@ -62,12 +62,12 @@ export default async function PrintersPage() {
             </thead>
             <tbody>
               {inactivePrinters.map((p) => (
-                <tr key={p.id} className="border-b text-slate-400">
+                <tr key={p.id} className="tk-row-inactive">
                   <td className="py-2">{p.name}</td>
                   <td>{formatCurrency(p.purchasePrice.toNumber())}</td>
                   <td>
                     <form action={async () => { 'use server'; await reactivatePrinter(p.id) }}>
-                      <button className="text-emerald-600 hover:underline">Reativar</button>
+                      <button className="tk-link-success">Reativar</button>
                     </form>
                   </td>
                 </tr>
