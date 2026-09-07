@@ -25,11 +25,10 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
   })
   if (!product) notFound()
 
-  const [printers, filamentOptions, packagingItems, accessories, supplies, breakdown] = await Promise.all([
+  const [printers, filamentOptions, packagingItems, supplies, breakdown] = await Promise.all([
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getEditableFilamentOptions(product.id),
     prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
-    prisma.accessory.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.supply.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getProductCostBreakdown(product.id),
   ])
@@ -52,7 +51,6 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               printTimeHours: product.printTimeHours.toNumber(),
               laborTimeHours: product.laborTimeHours.toNumber(),
               packagingItemId: product.packagingItemId,
-              accessoryId: product.accessoryId,
               finishingType: product.finishingType,
               usesGlue: product.usesGlue,
               notes: product.notes,
@@ -60,7 +58,6 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
             printers={printers}
             filaments={filamentOptions}
             packagingItems={packagingItems}
-            accessories={accessories}
           />
 
           <div className="mt-6 tk-panel p-4">

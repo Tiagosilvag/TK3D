@@ -192,6 +192,22 @@ function on(flag: boolean): number {
   return flag ? 1 : 0
 }
 
+// Ficha técnica §2 (task-5 brief): both ProductAccessoryUsage and
+// ProductSupplyUsage are "list of {quantity, avgUnitCost}" rows that need
+// the exact same reduction (sum of quantity * avgUnitCost) to turn into the
+// single accessoryCost/suppliesCost number calculateProductCost expects.
+// Extracted once so both call sites (getProductCostBreakdown and
+// buildProductionCostSnapshot below) share one tested implementation
+// instead of two ad-hoc reduce()s that could drift apart.
+export interface UsageCostInput {
+  quantity: number
+  avgUnitCost: number
+}
+
+export function sumUsageCost(usages: UsageCostInput[]): number {
+  return usages.reduce((sum, u) => sum + u.quantity * u.avgUnitCost, 0)
+}
+
 export function calculateProductCost(input: ProductCostInput, settings: Settings): ProductCostBreakdown {
   // Every term below is always calculated in full, regardless of its flag —
   // the breakdown must keep showing the real value (UI marks it visually
@@ -238,5 +254,187 @@ export function calculateProductCost(input: ProductCostInput, settings: Settings
     finalCost,
     suggestedPrice,
     marketplacePrice,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Production cost snapshot (spec §4/§5, task-5 brief)
+//
+// Historical-cost architecture: a ProductionRun freezes its entire cost
+// picture at creation time into a `costSnapshot Json` column that is never
+// recalculated or rewritten afterwards — later Settings/Printer/Filament/
+// Accessory/Supply changes must never alter an already-recorded run's cost
+// (spec §4). buildProductionCostSnapshot is the ONE place that shape gets
+// built, so its return type here IS the exact contract stored in that
+// column and read back by every later screen (production history, cost
+// column, dashboard aggregation) and by cancelProductionRun's reversal
+// logic (Task 6+ of this plan) — those consumers exist to be built on top
+// of this shape, not the other way around, so changing field names/shapes
+// here later is a breaking migration of every already-stored JSON row.
+//
+// Deliberately built from plain-number inputs (like every other function in
+// this file) rather than Prisma models, so it's callable from a pure unit
+// test with zero DB/Decimal setup — the caller (an actions/ file) is
+// responsible for `.toNumber()`-ing Decimals and shaping ProductAccessoryUsage/
+// ProductSupplyUsage rows into the plain {id, quantity, avgUnitCost} shape
+// below before calling this.
+// ---------------------------------------------------------------------------
+
+export interface ProductionAccessoryUsageInput {
+  accessoryId: string
+  quantity: number // per single unit of product, i.e. the ficha técnica quantity
+  avgUnitCost: number // Accessory.avgUnitCost at production time
+}
+
+export interface ProductionSupplyUsageInput {
+  supplyId: string
+  quantity: number // per single unit of product
+  avgUnitCost: number // Supply.avgUnitCost at production time
+}
+
+export interface ProductionCostSnapshotInput extends ProductCostFlags {
+  // Ficha técnica (per single unit) — same fields calculateProductCost takes,
+  // minus the already-summed suppliesCost/accessoryCost (computed internally
+  // below via sumUsageCost from the lists instead).
+  weightGrams: number
+  printTimeHours: number
+  laborTimeHours: number
+  filamentPricePerKg: number
+  printerAvgPowerConsumptionKwh: number
+  printerDepreciationCostPerHour: number
+  printerMaintenanceCostPerHour: number
+  packagingCost: number
+  accessoryUsages: ProductionAccessoryUsageInput[]
+  supplyUsages: ProductionSupplyUsageInput[]
+
+  // Resource identities needed to record (and later reverse) consumption —
+  // not used in any cost formula, only copied into consumedResources below.
+  filamentId: string
+  packagingItemId: string | null
+
+  // This specific production run.
+  quantityPlanned: number
+  quantitySuccess: number // only these consume accessories/insumos/embalagem (spec §5.1)
+  quantityFailed: number
+  gramsUsed: number
+  gramsWasted: number
+  timeWastedHours: number
+}
+
+// Everything Task 7's cancelProductionRun needs to reverse stock WITHOUT
+// re-querying the product's current ficha técnica (which may have changed
+// since this run was created) — every resource actually touched, by id,
+// with the exact quantity consumed and the unit cost that was in effect at
+// the time (spec §5.1/§5.5, task-5 brief).
+export interface ProductionResourceConsumption {
+  filament: { filamentId: string; gramsUsed: number; gramsWasted: number }
+  accessories: { accessoryId: string; quantityPerUnit: number; quantityConsumed: number; unitCost: number }[]
+  supplies: { supplyId: string; quantityPerUnit: number; quantityConsumed: number; unitCost: number }[]
+  packaging: { packagingItemId: string; quantityConsumed: number; unitCost: number } | null
+}
+
+export interface ProductionCostSnapshot {
+  quantityPlanned: number
+  quantitySuccess: number
+  quantityFailed: number
+  // Per-unit cost breakdown, identical shape to calculateProductCost's
+  // output, computed once here from Printer/Filament/Settings/Product as
+  // they stood at production time (spec §4).
+  unitCost: ProductCostBreakdown
+  // Cost of the grams/time lost to failed units (calculateWasteCost), kept
+  // as a separate additive term rather than folded into unitCost.finalCost
+  // — it belongs to the run as a whole, not to any single successful unit.
+  wasteCost: number
+  // The number every later screen reads instead of recalculating (spec §4/
+  // Task 8-9: "coluna Custo lê costSnapshot.total", dashboard sums it):
+  // cost of every successful unit produced, plus whatever was wasted on the
+  // failed ones.
+  total: number
+  consumedResources: ProductionResourceConsumption
+}
+
+export function buildProductionCostSnapshot(
+  input: ProductionCostSnapshotInput,
+  settings: Settings,
+): ProductionCostSnapshot {
+  const suppliesCost = sumUsageCost(input.supplyUsages)
+  const accessoryCost = sumUsageCost(input.accessoryUsages)
+
+  const unitCost = calculateProductCost(
+    {
+      weightGrams: input.weightGrams,
+      printTimeHours: input.printTimeHours,
+      laborTimeHours: input.laborTimeHours,
+      filamentPricePerKg: input.filamentPricePerKg,
+      printerAvgPowerConsumptionKwh: input.printerAvgPowerConsumptionKwh,
+      printerDepreciationCostPerHour: input.printerDepreciationCostPerHour,
+      printerMaintenanceCostPerHour: input.printerMaintenanceCostPerHour,
+      suppliesCost,
+      packagingCost: input.packagingCost,
+      accessoryCost,
+      includeDepreciation: input.includeDepreciation,
+      includeEnergyCost: input.includeEnergyCost,
+      includeMaintenance: input.includeMaintenance,
+      includeLaborCost: input.includeLaborCost,
+      includeFailureRate: input.includeFailureRate,
+      includeFilamentCost: input.includeFilamentCost,
+      includeAccessoriesCost: input.includeAccessoriesCost,
+      includeSuppliesCost: input.includeSuppliesCost,
+      includePackagingCost: input.includePackagingCost,
+    },
+    settings,
+  )
+
+  const wasteCost = calculateWasteCost({
+    gramsWasted: input.gramsWasted,
+    timeWastedHours: input.timeWastedHours,
+    filamentPricePerKg: input.filamentPricePerKg,
+    printerDepreciationCostPerHour: input.printerDepreciationCostPerHour,
+    printerMaintenanceCostPerHour: input.printerMaintenanceCostPerHour,
+    printerAvgPowerConsumptionKwh: input.printerAvgPowerConsumptionKwh,
+    energyCostPerKwh: settings.energyCostPerKwh,
+  })
+
+  const total = unitCost.finalCost * input.quantitySuccess + wasteCost
+
+  // Physical consumption is NEVER gated by the include* cost flags — those
+  // only control whether a term counts toward the displayed subtotal/total,
+  // they say nothing about whether the piece physically used the resource.
+  // A produced unit always consumes its full ficha técnica.
+  const consumedResources: ProductionResourceConsumption = {
+    filament: {
+      filamentId: input.filamentId,
+      gramsUsed: input.gramsUsed,
+      gramsWasted: input.gramsWasted,
+    },
+    accessories: input.accessoryUsages.map((u) => ({
+      accessoryId: u.accessoryId,
+      quantityPerUnit: u.quantity,
+      quantityConsumed: u.quantity * input.quantitySuccess,
+      unitCost: u.avgUnitCost,
+    })),
+    supplies: input.supplyUsages.map((u) => ({
+      supplyId: u.supplyId,
+      quantityPerUnit: u.quantity,
+      quantityConsumed: u.quantity * input.quantitySuccess,
+      unitCost: u.avgUnitCost,
+    })),
+    packaging: input.packagingItemId
+      ? {
+          packagingItemId: input.packagingItemId,
+          quantityConsumed: input.quantitySuccess,
+          unitCost: input.packagingCost,
+        }
+      : null,
+  }
+
+  return {
+    quantityPlanned: input.quantityPlanned,
+    quantitySuccess: input.quantitySuccess,
+    quantityFailed: input.quantityFailed,
+    unitCost,
+    wasteCost,
+    total,
+    consumedResources,
   }
 }

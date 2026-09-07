@@ -10,6 +10,9 @@ import {
   getStockStatusWithThresholds,
   calculateWeightedAverageCost,
   applyRounding,
+  sumUsageCost,
+  buildProductionCostSnapshot,
+  type ProductionCostSnapshotInput,
 } from '@/lib/costing'
 
 describe('calculatePrinterDepreciationCostPerHour (no maintenance folded in)', () => {
@@ -444,5 +447,203 @@ describe('calculateWasteCost', () => {
       energyCostPerKwh: 1,
     })
     expect(result).toBe(0)
+  })
+})
+
+describe('sumUsageCost (spec §2, task-5 brief — soma quantity * avgUnitCost por linha de uso)', () => {
+  it('soma quantity * avgUnitCost em várias linhas', () => {
+    const result = sumUsageCost([
+      { quantity: 2, avgUnitCost: 0.05 },
+      { quantity: 1, avgUnitCost: 0.3 },
+      { quantity: 3, avgUnitCost: 0.1 },
+    ])
+    // 0.10 + 0.30 + 0.30 = 0.70
+    expect(result).toBeCloseTo(0.70, 4)
+  })
+
+  it('retorna 0 pra lista vazia (produto sem esse recurso)', () => {
+    expect(sumUsageCost([])).toBe(0)
+  })
+
+  it('funciona com uma única linha', () => {
+    expect(sumUsageCost([{ quantity: 4, avgUnitCost: 0.25 }])).toBeCloseTo(1, 4)
+  })
+})
+
+describe('buildProductionCostSnapshot (spec §4/§5, task-5 brief)', () => {
+  const settings = {
+    energyCostPerKwh: 1,
+    laborCostPerHour: 10,
+    failureRatePercent: 0.10,
+    marketplaceFeePercent: 0.20,
+    taxPercent: 0.055,
+    marketplaceFixedFee: 4,
+    defaultMarkup: 2,
+  }
+
+  const allTrue = {
+    includeDepreciation: true,
+    includeEnergyCost: true,
+    includeMaintenance: true,
+    includeLaborCost: true,
+    includeFailureRate: true,
+    includeFilamentCost: true,
+    includeAccessoriesCost: true,
+    includeSuppliesCost: true,
+    includePackagingCost: true,
+  }
+
+  // Same per-unit fixture as the "flags include*" describe block above
+  // (filamentCost 2.4, electricityCost 0.54, printerCost 0.72,
+  // maintenanceCost 0.36, laborCost 0.5, suppliesCost 0.3, packagingCost
+  // 0.2, accessoryCost 0.15 -> subtotal 5.17 -> finalCost 5.687), so the
+  // per-unit portion of the snapshot can be cross-checked directly against
+  // calculateProductCost's own output for the exact same numbers.
+  const baseInput: ProductionCostSnapshotInput = {
+    ...allTrue,
+    filamentId: 'fil1',
+    weightGrams: 30,
+    printTimeHours: 2,
+    laborTimeHours: 0.05,
+    filamentPricePerKg: 80,
+    printerAvgPowerConsumptionKwh: 0.27,
+    printerDepreciationCostPerHour: 0.36,
+    printerMaintenanceCostPerHour: 0.18,
+    packagingItemId: 'pkg1',
+    packagingCost: 0.2,
+    accessoryUsages: [
+      { accessoryId: 'acc1', quantity: 1, avgUnitCost: 0.10 },
+      { accessoryId: 'acc2', quantity: 1, avgUnitCost: 0.05 },
+    ],
+    supplyUsages: [{ supplyId: 'sup1', quantity: 2, avgUnitCost: 0.15 }],
+    quantityPlanned: 10,
+    quantitySuccess: 8,
+    quantityFailed: 2,
+    gramsUsed: 300,
+    gramsWasted: 20,
+    timeWastedHours: 0.5,
+  }
+
+  it('unitCost bate exatamente com calculateProductCost pros mesmos insumos', () => {
+    const snapshot = buildProductionCostSnapshot(baseInput, settings)
+    // sumUsageCost(accessoryUsages) instead of the literal 0.15 -- both sides
+    // must add the two accessory rows in the exact same order, otherwise
+    // this comparison is just observing binary floating-point noise
+    // (0.10+0.05 vs 0.15 differ in the last bit) rather than a real bug.
+    const expectedUnitCost = calculateProductCost(
+      {
+        ...allTrue,
+        weightGrams: 30,
+        printTimeHours: 2,
+        laborTimeHours: 0.05,
+        filamentPricePerKg: 80,
+        printerAvgPowerConsumptionKwh: 0.27,
+        printerDepreciationCostPerHour: 0.36,
+        printerMaintenanceCostPerHour: 0.18,
+        suppliesCost: sumUsageCost(baseInput.supplyUsages),
+        packagingCost: 0.2,
+        accessoryCost: sumUsageCost(baseInput.accessoryUsages),
+      },
+      settings,
+    )
+    expect(snapshot.unitCost).toEqual(expectedUnitCost)
+  })
+
+  it('wasteCost bate com calculateWasteCost pros mesmos parâmetros de desperdício', () => {
+    const snapshot = buildProductionCostSnapshot(baseInput, settings)
+    const expectedWasteCost = calculateWasteCost({
+      gramsWasted: 20,
+      timeWastedHours: 0.5,
+      filamentPricePerKg: 80,
+      printerDepreciationCostPerHour: 0.36,
+      printerMaintenanceCostPerHour: 0.18,
+      printerAvgPowerConsumptionKwh: 0.27,
+      energyCostPerKwh: 1,
+    })
+    expect(snapshot.wasteCost).toBeCloseTo(expectedWasteCost, 6)
+    expect(snapshot.wasteCost).toBeCloseTo(2.005, 3)
+  })
+
+  it('total = unitCost.finalCost * quantitySuccess + wasteCost (custo real incorrido pela produção inteira)', () => {
+    const snapshot = buildProductionCostSnapshot(baseInput, settings)
+    // finalCost 5.687 * 8 sucesso = 45.496; + wasteCost 2.005 = 47.501
+    expect(snapshot.total).toBeCloseTo(45.496 + 2.005, 3)
+    expect(snapshot.total).toBeCloseTo(snapshot.unitCost.finalCost * 8 + snapshot.wasteCost, 6)
+  })
+
+  it('preserva quantityPlanned/quantitySuccess/quantityFailed no snapshot', () => {
+    const snapshot = buildProductionCostSnapshot(baseInput, settings)
+    expect(snapshot.quantityPlanned).toBe(10)
+    expect(snapshot.quantitySuccess).toBe(8)
+    expect(snapshot.quantityFailed).toBe(2)
+  })
+
+  it('consumedResources.filament registra id + gramas usadas/desperdiçadas', () => {
+    const snapshot = buildProductionCostSnapshot(baseInput, settings)
+    expect(snapshot.consumedResources.filament).toEqual({
+      filamentId: 'fil1',
+      gramsUsed: 300,
+      gramsWasted: 20,
+    })
+  })
+
+  it('consumedResources.accessories multiplica quantity por quantitySuccess (só unidades com sucesso consomem acessório, spec §5.1) e preserva o custo unitário vigente', () => {
+    const snapshot = buildProductionCostSnapshot(baseInput, settings)
+    expect(snapshot.consumedResources.accessories).toEqual([
+      { accessoryId: 'acc1', quantityPerUnit: 1, quantityConsumed: 8, unitCost: 0.10 },
+      { accessoryId: 'acc2', quantityPerUnit: 1, quantityConsumed: 8, unitCost: 0.05 },
+    ])
+  })
+
+  it('consumedResources.supplies multiplica quantity por quantitySuccess', () => {
+    const snapshot = buildProductionCostSnapshot(baseInput, settings)
+    expect(snapshot.consumedResources.supplies).toEqual([
+      { supplyId: 'sup1', quantityPerUnit: 2, quantityConsumed: 16, unitCost: 0.15 },
+    ])
+  })
+
+  it('consumedResources.packaging registra 1 unidade de embalagem por peça bem-sucedida', () => {
+    const snapshot = buildProductionCostSnapshot(baseInput, settings)
+    expect(snapshot.consumedResources.packaging).toEqual({
+      packagingItemId: 'pkg1',
+      quantityConsumed: 8,
+      unitCost: 0.2,
+    })
+  })
+
+  it('consumedResources.packaging é null quando o produto não usa embalagem', () => {
+    const snapshot = buildProductionCostSnapshot(
+      { ...baseInput, packagingItemId: null, packagingCost: 0 },
+      settings,
+    )
+    expect(snapshot.consumedResources.packaging).toBeNull()
+  })
+
+  it('consumedResources.accessories/supplies ficam vazios quando o produto não usa nenhum', () => {
+    const snapshot = buildProductionCostSnapshot(
+      { ...baseInput, accessoryUsages: [], supplyUsages: [] },
+      settings,
+    )
+    expect(snapshot.consumedResources.accessories).toEqual([])
+    expect(snapshot.consumedResources.supplies).toEqual([])
+  })
+
+  it('desligar includeAccessoriesCost muda o total (via unitCost.finalCost) mas NÃO reduz a quantidade fisicamente consumida — a peça continua gastando o acessório mesmo que seu custo esteja marcado como não contabilizado', () => {
+    const snapshot = buildProductionCostSnapshot(
+      { ...baseInput, includeAccessoriesCost: false },
+      settings,
+    )
+    expect(snapshot.unitCost.subtotal).toBeCloseTo(5.17 - 0.15, 4)
+    expect(snapshot.consumedResources.accessories).toEqual([
+      { accessoryId: 'acc1', quantityPerUnit: 1, quantityConsumed: 8, unitCost: 0.10 },
+      { accessoryId: 'acc2', quantityPerUnit: 1, quantityConsumed: 8, unitCost: 0.05 },
+    ])
+  })
+
+  it('é uma função pura: mesma entrada sempre produz o mesmo snapshot (serializável em JSON, sem instâncias/timestamps escondidos)', () => {
+    const a = buildProductionCostSnapshot(baseInput, settings)
+    const b = buildProductionCostSnapshot(baseInput, settings)
+    expect(a).toEqual(b)
+    expect(JSON.parse(JSON.stringify(a))).toEqual(a)
   })
 })

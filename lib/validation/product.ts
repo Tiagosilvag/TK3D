@@ -11,7 +11,6 @@ export const productSchema = z.object({
   printTimeHours: z.coerce.number().positive('Tempo de impressão deve ser maior que zero'),
   laborTimeHours: z.coerce.number().nonnegative('Tempo de mão de obra não pode ser negativo'),
   packagingItemId: z.string().optional().nullable(),
-  accessoryId: z.string().optional().nullable(),
   finishingType: finishingTypeEnum,
   // z.coerce.boolean() would turn the string "false" into `true` (any
   // non-empty string is truthy), which breaks both the literal "false" value

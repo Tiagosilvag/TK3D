@@ -8,12 +8,15 @@ import {
   getEditableFilamentOptions,
   addProductSupplyUsage,
   removeProductSupplyUsage,
+  addProductAccessoryUsage,
+  removeProductAccessoryUsage,
 } from '@/actions/products'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
 async function cleanup() {
   await prisma.productSupplyUsage.deleteMany()
+  await prisma.productAccessoryUsage.deleteMany()
   await prisma.product.deleteMany()
   await prisma.printer.deleteMany()
   await prisma.filament.deleteMany()
@@ -135,12 +138,16 @@ describe('products actions', () => {
     expect(gone?.active).toBe(false)
   })
 
-  it('inclui custo de insumos, embalagem e acessório no breakdown', async () => {
+  it('inclui custo de insumos, embalagem e acessórios (lista) no breakdown', async () => {
     await prisma.settings.create({ data: { id: 1 } })
     const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
     const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
     const packagingItem = await prisma.packagingItem.create({ data: { name: 'Saquinho', unitCost: 0.1 } })
-    const accessory = await prisma.accessory.create({ data: { name: 'Mosquetão', type: 'MOSQUETAO', colorName: '', currentStock: 10, avgUnitCost: 0.3 } })
+    // 2 accessories (spec §2, task-5 brief: accessoryId single-FK generalized
+    // into a ProductAccessoryUsage list) -- proves the new summing logic
+    // through the real DB path, not just calculateProductCost in isolation.
+    const accessory1 = await prisma.accessory.create({ data: { name: 'Mosquetão', type: 'MOSQUETAO', colorName: '', currentStock: 10, avgUnitCost: 0.3 } })
+    const accessory2 = await prisma.accessory.create({ data: { name: 'Correntinha', type: 'CORRENTE_BOLINHA', colorName: 'Dourada', currentStock: 10, avgUnitCost: 0.2 } })
     const supply = await prisma.supply.create({ data: { name: 'Cola', unit: 'ML', currentStock: 10, avgUnitCost: 0.05 } })
 
     const result = await createProduct(fd({
@@ -152,7 +159,6 @@ describe('products actions', () => {
       printTimeHours: '2',
       laborTimeHours: '0.25',
       packagingItemId: packagingItem.id,
-      accessoryId: accessory.id,
       finishingType: 'NENHUM',
       usesGlue: 'true',
     }))
@@ -166,10 +172,24 @@ describe('products actions', () => {
     }))
     expect(usageResult.success).toBe(true)
 
+    const accessoryUsage1 = await addProductAccessoryUsage(fd({
+      productId: product.id,
+      accessoryId: accessory1.id,
+      quantity: '1',
+    }))
+    expect(accessoryUsage1.success).toBe(true)
+    const accessoryUsage2 = await addProductAccessoryUsage(fd({
+      productId: product.id,
+      accessoryId: accessory2.id,
+      quantity: '2',
+    }))
+    expect(accessoryUsage2.success).toBe(true)
+
     const breakdownWithSupply = await getProductCostBreakdown(product.id)
     expect(breakdownWithSupply.suppliesCost).toBeCloseTo(0.1, 4)
     expect(breakdownWithSupply.packagingCost).toBeCloseTo(0.1, 4)
-    expect(breakdownWithSupply.accessoryCost).toBeCloseTo(0.3, 4)
+    // 1*0.3 (accessory1) + 2*0.2 (accessory2) = 0.7
+    expect(breakdownWithSupply.accessoryCost).toBeCloseTo(0.7, 4)
 
     const usage = await prisma.productSupplyUsage.findFirstOrThrow({ where: { productId: product.id } })
     const removeResult = await removeProductSupplyUsage(usage.id)
@@ -177,6 +197,48 @@ describe('products actions', () => {
 
     const breakdownWithoutSupply = await getProductCostBreakdown(product.id)
     expect(breakdownWithoutSupply.suppliesCost).toBe(0)
+    // Removing a supply usage must not touch the untouched accessory usages.
+    expect(breakdownWithoutSupply.accessoryCost).toBeCloseTo(0.7, 4)
+
+    const accUsageRow = await prisma.productAccessoryUsage.findFirstOrThrow({ where: { productId: product.id, accessoryId: accessory1.id } })
+    const removeAccResult = await removeProductAccessoryUsage(accUsageRow.id)
+    expect(removeAccResult.success).toBe(true)
+
+    const breakdownAfterRemovingOneAccessory = await getProductCostBreakdown(product.id)
+    expect(breakdownAfterRemovingOneAccessory.accessoryCost).toBeCloseTo(0.4, 4)
+  })
+
+  it('rejeita quantidade não positiva ao adicionar acessório e upsert atualiza a quantidade da mesma linha', async () => {
+    await prisma.settings.create({ data: { id: 1 } })
+    const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const accessory = await prisma.accessory.create({ data: { name: 'Mosquetão', type: 'MOSQUETAO', colorName: '', currentStock: 10, avgUnitCost: 0.3 } })
+
+    const created = await createProduct(fd({
+      name: 'Chaveiro Upsert',
+      category: 'Chaveiro',
+      printerId: printer.id,
+      filamentId: filament.id,
+      weightGrams: '30',
+      printTimeHours: '2',
+      laborTimeHours: '0.25',
+      finishingType: 'NENHUM',
+      usesGlue: 'false',
+    }))
+    expect(created.success).toBe(true)
+    const product = await prisma.product.findFirstOrThrow({ where: { name: 'Chaveiro Upsert' } })
+
+    const rejected = await addProductAccessoryUsage(fd({ productId: product.id, accessoryId: accessory.id, quantity: '0' }))
+    expect(rejected.success).toBe(false)
+
+    const first = await addProductAccessoryUsage(fd({ productId: product.id, accessoryId: accessory.id, quantity: '1' }))
+    expect(first.success).toBe(true)
+    const second = await addProductAccessoryUsage(fd({ productId: product.id, accessoryId: accessory.id, quantity: '5' }))
+    expect(second.success).toBe(true)
+
+    const rows = await prisma.productAccessoryUsage.findMany({ where: { productId: product.id, accessoryId: accessory.id } })
+    expect(rows).toHaveLength(1)
+    expect(rows[0].quantity.toNumber()).toBe(5)
   })
 
   it('mantém o filamento esgotado do produto como opção selecionável (rotulado) no dropdown de edição', async () => {

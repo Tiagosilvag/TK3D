@@ -13,7 +13,7 @@ const ROWS: { key: keyof ProductCostBreakdown; label: string }[] = [
   { key: 'laborCost', label: 'Mão de obra' },
   { key: 'suppliesCost', label: 'Insumos' },
   { key: 'packagingCost', label: 'Embalagem' },
-  { key: 'accessoryCost', label: 'Acessório' },
+  { key: 'accessoryCost', label: 'Acessórios' },
 ]
 
 export function CostBreakdown({ breakdown }: { breakdown: ProductCostBreakdown }) {

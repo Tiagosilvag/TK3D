@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { productSchema } from '@/lib/validation/product'
-import { calculateProductCost, calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour, calculateFilamentPricePerKg, type ProductCostBreakdown } from '@/lib/costing'
+import { calculateProductCost, calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour, calculateFilamentPricePerKg, sumUsageCost, type ProductCostBreakdown } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
@@ -12,7 +12,6 @@ function parse(formData: FormData) {
   return productSchema.safeParse({
     ...raw,
     packagingItemId: raw.packagingItemId || null,
-    accessoryId: raw.accessoryId || null,
   })
 }
 
@@ -49,7 +48,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
         printer: true,
         filament: true,
         packagingItem: true,
-        accessory: true,
+        accessoryUsages: { include: { accessory: true } },
         supplyUsages: { include: { supply: true } },
       },
     }),
@@ -72,9 +71,14 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
     spoolWeightKg: product.filament.spoolWeightKg.toNumber(),
   })
 
-  const suppliesCost = product.supplyUsages.reduce(
-    (sum, u) => sum + u.quantity.toNumber() * u.supply.avgUnitCost.toNumber(),
-    0,
+  const suppliesCost = sumUsageCost(
+    product.supplyUsages.map((u) => ({ quantity: u.quantity.toNumber(), avgUnitCost: u.supply.avgUnitCost.toNumber() })),
+  )
+  // Ficha técnica §2 (task-5 brief): accessoryId's single-FK is now a list
+  // (ProductAccessoryUsage), same shape/reduction as suppliesCost above —
+  // sum quantity * avgUnitCost across every accessory row on this product.
+  const accessoriesCost = sumUsageCost(
+    product.accessoryUsages.map((u) => ({ quantity: u.quantity.toNumber(), avgUnitCost: u.accessory.avgUnitCost.toNumber() })),
   )
 
   return calculateProductCost(
@@ -88,7 +92,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
       printerMaintenanceCostPerHour,
       suppliesCost,
       packagingCost: product.packagingItem?.unitCost.toNumber() ?? 0,
-      accessoryCost: product.accessory?.avgUnitCost.toNumber() ?? 0,
+      accessoryCost: accessoriesCost,
       includeDepreciation: settings.includeDepreciation,
       includeEnergyCost: settings.includeEnergyCost,
       includeMaintenance: settings.includeMaintenance,
@@ -170,6 +174,36 @@ export async function addProductSupplyUsage(formData: FormData): Promise<ActionR
 
 export async function removeProductSupplyUsage(usageId: string): Promise<ActionResult> {
   await prisma.productSupplyUsage.delete({ where: { id: usageId } })
+  revalidatePath('/products')
+  return { success: true }
+}
+
+// Ficha técnica §2 (task-5 brief): mirrors addProductSupplyUsage/
+// removeProductSupplyUsage above exactly -- ProductAccessoryUsage is the
+// same "list of product<->resource with quantity" shape that used to be a
+// single Product.accessoryId FK. UI for managing this list is Task 6's
+// scope; these two actions are the write path the schema change needs to
+// be exercisable/testable now.
+const accessoryUsageSchema = z.object({
+  productId: z.string().min(1),
+  accessoryId: z.string().min(1),
+  quantity: z.coerce.number().positive('Quantidade deve ser maior que zero'),
+})
+
+export async function addProductAccessoryUsage(formData: FormData): Promise<ActionResult> {
+  const parsed = accessoryUsageSchema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  await prisma.productAccessoryUsage.upsert({
+    where: { productId_accessoryId: { productId: parsed.data.productId, accessoryId: parsed.data.accessoryId } },
+    update: { quantity: parsed.data.quantity },
+    create: parsed.data,
+  })
+  revalidatePath('/products')
+  return { success: true }
+}
+
+export async function removeProductAccessoryUsage(usageId: string): Promise<ActionResult> {
+  await prisma.productAccessoryUsage.delete({ where: { id: usageId } })
   revalidatePath('/products')
   return { success: true }
 }

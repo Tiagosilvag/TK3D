@@ -215,13 +215,17 @@ describe('deleteAccessory', () => {
     expect(gone).toBeNull()
   })
 
-  it('propaga o erro de FK quando o acessório está referenciado por um Product', async () => {
+  it('propaga o erro de FK quando o acessório está referenciado por um Product (via ProductAccessoryUsage)', async () => {
     await createAccessory(fd({ name: 'Clicker Referenciado', type: 'CLICKER', quantity: '10', totalCost: '5', purchaseDate: '2026-01-01' }))
     const item = await prisma.accessory.findFirstOrThrow({ where: { name: 'Clicker Referenciado' } })
 
     const printer = await prisma.printer.create({ data: { name: 'Impressora Teste Acessório', purchasePrice: 1000, depreciationHours: 5000, avgPowerConsumptionKwh: 0.2 } })
     const filament = await prisma.filament.create({ data: { manufacturer: 'F', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
-    await prisma.product.create({ data: { name: 'Produto Teste', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0.1, accessoryId: item.id } })
+    const product = await prisma.product.create({ data: { name: 'Produto Teste', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0.1 } })
+    // Product.accessoryId (single FK) was generalized into ProductAccessoryUsage
+    // (spec §2, task-5 brief) -- the FK that must block deleteAccessory now
+    // lives on this join table instead of directly on Product.
+    await prisma.productAccessoryUsage.create({ data: { productId: product.id, accessoryId: item.id, quantity: 1 } })
 
     await expect(deleteAccessory(item.id)).rejects.toThrow()
 

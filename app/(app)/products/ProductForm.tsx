@@ -22,7 +22,6 @@ type ProductValues = {
   printTimeHours: number
   laborTimeHours: number
   packagingItemId: string | null
-  accessoryId: string | null
   finishingType: string
   usesGlue: boolean
   notes: string | null
@@ -33,13 +32,11 @@ export function ProductForm({
   printers,
   filaments,
   packagingItems,
-  accessories,
 }: {
   product?: ProductValues
   printers: Option[]
   filaments: Option[]
   packagingItems: Option[]
-  accessories: Option[]
 }) {
   const formRef = useRef<HTMLFormElement>(null)
   const router = useRouter()
@@ -100,15 +97,6 @@ export function ProductForm({
           <option value="">Nenhuma</option>
           {packagingItems.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-      </label>
-      <label className="text-sm">
-        Acessório (opcional)
-        <select name="accessoryId" defaultValue={product?.accessoryId ?? ''} className="tk-input-full">
-          <option value="">Nenhum</option>
-          {accessories.map((a) => (
-            <option key={a.id} value={a.id}>{a.name}</option>
           ))}
         </select>
       </label>
