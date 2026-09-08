@@ -15,7 +15,10 @@ const PROTAGONIST_LINKS: NavLink[] = [
   { href: '/products', label: 'Produtos' },
 ]
 
-const SECONDARY_LINKS: NavLink[] = [{ href: '/production', label: 'Produção' }]
+const SECONDARY_LINKS: NavLink[] = [
+  { href: '/production', label: 'Produção' },
+  { href: '/stock', label: 'Meu Estoque' },
+]
 
 const CONSIGNMENT_NAV_LINKS: NavLink[] = [
   { href: '/consignment/partners', label: 'Parceiros' },

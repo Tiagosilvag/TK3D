@@ -24,7 +24,17 @@ type EditingSale = {
   notes: string | null
 }
 
-export function SaleForm({ products, editingSale }: { products: Option[]; editingSale?: EditingSale }) {
+export function SaleForm({
+  products,
+  editingSale,
+  defaultProductId,
+}: {
+  products: Option[]
+  editingSale?: EditingSale
+  // 2.2: link de ação rápida "Registrar venda direta" em /stock chega aqui
+  // com ?productId=... pra pré-selecionar o produto.
+  defaultProductId?: string
+}) {
   const router = useRouter()
   const formRef = useRef<HTMLFormElement>(null)
   const [unitPrice, setUnitPrice] = useState(editingSale ? String(editingSale.unitPrice) : '')
@@ -96,7 +106,7 @@ export function SaleForm({ products, editingSale }: { products: Option[]; editin
       </label>
       <label className="text-sm">
         Produto *
-        <select name="productId" defaultValue={editingSale?.productId ?? ''} onChange={handleSelectChange} className="tk-input-full" required>
+        <select name="productId" defaultValue={editingSale?.productId ?? defaultProductId ?? ''} onChange={handleSelectChange} className="tk-input-full" required>
           <option value="" disabled>Selecione</option>
           {products.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>

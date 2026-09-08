@@ -6,7 +6,12 @@ import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 
 export const dynamic = 'force-dynamic'
 
-export default async function ConsignmentDeliveriesPage() {
+export default async function ConsignmentDeliveriesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ productId?: string }>
+}) {
+  const { productId } = await searchParams
   const [deliveries, partners, products] = await Promise.all([
     prisma.consignmentDelivery.findMany({
       orderBy: { deliveryDate: 'desc' },
@@ -19,7 +24,7 @@ export default async function ConsignmentDeliveriesPage() {
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Entregas em consignação</h1>
-      <DeliveryForm partners={partners} products={products} />
+      <DeliveryForm partners={partners} products={products} defaultProductId={productId} />
       <table className="mt-6 w-full text-sm">
         <thead>
           <tr className="tk-table-head-row">

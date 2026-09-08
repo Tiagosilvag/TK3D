@@ -226,6 +226,74 @@ export async function getPrinterUsage(filters: ProductionReportFilters = {}): Pr
   return [...byPrinter.values()].sort((a, b) => b.runsCount - a.runsCount)
 }
 
+// 2.2 Estoque próprio de produtos acabados: tudo derivado das tabelas que já
+// existem (ProductionRun/Sale/ConsignmentDelivery) -- sem ledger novo,
+// então não há segunda fonte de verdade pra divergir do que as outras
+// telas já mostram. Fórmula do módulo: disponível = produzido - vendido
+// diretamente - entregue a parceiros.
+//
+// "Produzido" só conta ProductionRun de produto SIMPLES (productPartId
+// null) com status != CANCELADA -- uma produção de PEÇA de produto
+// composto (productPartId setado) não é estoque de produto acabado até
+// passar pela montagem (spec 2.3, ainda não implementada), então produto
+// composto aparece com 0 disponível até lá.
+//
+// "Em produção" fica 0: o schema atual não tem noção de "pedido de
+// produção aberto/pendente" (ProductionRun já nasce com resultado
+// conhecido, spec 2.4 ainda não existe) -- 0 é o valor correto pra "não há
+// nenhuma ordem em aberto rastreada", não um placeholder inventado.
+export interface OwnStockRow {
+  productId: string
+  productName: string
+  isComposite: boolean
+  produced: number
+  soldDirect: number
+  deliveredToPartners: number
+  consignmentRemaining: number
+  inProduction: number
+  available: number
+}
+
+export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
+  const [products, producedByProduct, soldByProduct, deliveries] = await Promise.all([
+    prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+    prisma.productionRun.groupBy({
+      by: ['productId'],
+      where: { productPartId: null, status: { not: 'CANCELADA' } },
+      _sum: { quantitySuccess: true },
+    }),
+    prisma.sale.groupBy({ by: ['productId'], _sum: { quantity: true } }),
+    prisma.consignmentDelivery.findMany({ include: { saleReports: true } }),
+  ])
+
+  const producedMap = new Map(producedByProduct.map((p) => [p.productId, p._sum.quantitySuccess ?? 0]))
+  const soldMap = new Map(soldByProduct.map((s) => [s.productId, s._sum.quantity ?? 0]))
+  const deliveredMap = new Map<string, { delivered: number; consignmentSold: number }>()
+  for (const d of deliveries) {
+    const entry = deliveredMap.get(d.productId) ?? { delivered: 0, consignmentSold: 0 }
+    entry.delivered += d.quantityDelivered
+    entry.consignmentSold += d.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
+    deliveredMap.set(d.productId, entry)
+  }
+
+  return products.map((p) => {
+    const produced = producedMap.get(p.id) ?? 0
+    const soldDirect = soldMap.get(p.id) ?? 0
+    const delivery = deliveredMap.get(p.id) ?? { delivered: 0, consignmentSold: 0 }
+    return {
+      productId: p.id,
+      productName: p.name,
+      isComposite: p.isComposite,
+      produced,
+      soldDirect,
+      deliveredToPartners: delivery.delivered,
+      consignmentRemaining: delivery.delivered - delivery.consignmentSold,
+      inProduction: 0,
+      available: produced - soldDirect - delivery.delivered,
+    }
+  })
+}
+
 export async function getConsignmentStockSummary() {
   const deliveries = await prisma.consignmentDelivery.findMany({
     include: { partner: true, product: true, saleReports: true },

@@ -22,9 +22,9 @@ const CHANNEL_FILTERS: { value: SaleChannel | undefined; label: string }[] = [
 export default async function SalesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ channel?: string; editId?: string }>
+  searchParams: Promise<{ channel?: string; editId?: string; productId?: string }>
 }) {
-  const { channel, editId } = await searchParams
+  const { channel, editId, productId } = await searchParams
   const activeChannel = channel === 'DIRETA' || channel === 'MARKETPLACE' ? channel : undefined
 
   const [sales, products, editingSaleRecord] = await Promise.all([
@@ -62,7 +62,7 @@ export default async function SalesPage({
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Vendas</h1>
-      <SaleForm key={editingSale?.id ?? 'new'} products={products} editingSale={editingSale} />
+      <SaleForm key={editingSale?.id ?? 'new'} products={products} editingSale={editingSale} defaultProductId={productId} />
 
       <div className="mb-3 mt-6 flex gap-1">
         {CHANNEL_FILTERS.map((f) => {
