@@ -68,6 +68,7 @@ model Printer {
   updatedAt              DateTime        @updatedAt
   products               Product[]
   productionRuns         ProductionRun[]
+  productParts           ProductPart[]
 }
 
 enum FilamentMaterial {
@@ -100,6 +101,7 @@ model Filament {
   updatedAt         DateTime         @updatedAt
   products          Product[]
   productionRuns    ProductionRun[]
+  productParts      ProductPart[]
 
   @@unique([manufacturer, material, colorName, rollNumber])
 }
@@ -216,6 +218,19 @@ model Product {
   id                    String                  @id @default(cuid())
   name                  String
   category              String                  @default("Chaveiro")
+  // 2.1 Produto composto (BOM): quando isComposite=true, estes 4 campos
+  // deixam de ser "a" impressora/filamento/peso/tempo do produto (que não
+  // fazem mais sentido — cada ProductPart tem os seus) e passam a guardar
+  // um resumo derivado (impressora/filamento da 1ª parte, soma de
+  // peso/tempo entre partes), escrito automaticamente por
+  // createProduct/updateProduct (actions/products.ts). Mantidos NOT NULL
+  // de propósito -- tornar esses 4 campos opcionais tocaria toda leitura
+  // não-nula existente (getProductCostBreakdown, createProductionRun,
+  // autofill de produção, etc.); o resumo derivado é inofensivo e ainda
+  // útil (ex.: "peso total" numa listagem), e getProductCostBreakdown já
+  // ignora esses 4 campos por completo quando isComposite=true, somando o
+  // custo de cada ProductPart em vez deles.
+  isComposite           Boolean                 @default(false)
   printerId             String
   printer               Printer                 @relation(fields: [printerId], references: [id])
   filamentId            String
@@ -223,6 +238,7 @@ model Product {
   weightGrams           Decimal                 @db.Decimal(10, 2)
   printTimeHours        Decimal                 @db.Decimal(10, 3)
   laborTimeHours        Decimal                 @db.Decimal(10, 3)
+  parts                 ProductPart[]
   packagingItemId       String?
   packagingItem         PackagingItem?          @relation(fields: [packagingItemId], references: [id])
   finishingType         FinishingType           @default(NENHUM)
@@ -246,6 +262,34 @@ model Product {
   sales                 Sale[]
   consignmentDeliveries ConsignmentDelivery[]
   photos                ProductPhoto[]
+}
+
+// 2.1 Produto composto (BOM): uma peça que precisa ser impressa
+// separadamente e depois montada (2.3, ainda não implementado) pra formar
+// 1 unidade do Product pai. onDelete Cascade no lado do produto (a peça só
+// existe pra descrever a ficha técnica desse produto composto, some com
+// ele); ProductionRun.productPartId aponta pra cá sem cascade -- uma peça
+// com histórico de produção não pode ser removida da lista sem antes lidar
+// com esse histórico (mesma guarda de FK-restrict já usada em
+// Accessory/Supply nesta base).
+model ProductPart {
+  id              String          @id @default(cuid())
+  productId       String
+  product         Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name            String
+  printerId       String
+  printer         Printer         @relation(fields: [printerId], references: [id])
+  filamentId      String
+  filament        Filament        @relation(fields: [filamentId], references: [id])
+  weightGrams     Decimal         @db.Decimal(10, 2)
+  printTimeHours  Decimal         @db.Decimal(10, 3)
+  // Quantidade dessa peça necessária pra montar 1 unidade do produto final.
+  quantityPerUnit Int             @default(1)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  productionRuns  ProductionRun[]
+
+  @@unique([productId, name])
 }
 
 model ProductPhoto {
@@ -291,6 +335,13 @@ model ProductionRun {
   id              String           @id @default(cuid())
   productId       String
   product         Product          @relation(fields: [productId], references: [id])
+  // 2.1 Produto composto: quando presente, esta produção é de UMA peça
+  // específica de um produto composto (não do produto pronto) -- o custo
+  // do snapshot então reflete só filamento+impressora+energia dessa peça
+  // (embalagem/insumos/acessórios/mão de obra entram na montagem, 2.3,
+  // ainda não implementada). Nunca preenchido pra produto simples.
+  productPartId   String?
+  productPart     ProductPart?     @relation(fields: [productPartId], references: [id], onDelete: Restrict)
   printerId       String
   printer         Printer          @relation(fields: [printerId], references: [id])
   filamentId      String

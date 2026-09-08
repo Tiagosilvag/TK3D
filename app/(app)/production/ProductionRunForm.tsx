@@ -3,7 +3,7 @@ import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createProductionRun, updateProductionRun } from '@/actions/productionRuns'
-import { getProductProductionDefaults } from '@/actions/products'
+import { getProductProductionDefaults, type ProductProductionPartDefault } from '@/actions/products'
 import { WASTE_REASON_LABELS } from '@/lib/format'
 import { SubmitButton } from '@/components/SubmitButton'
 import type { WasteReason } from '@prisma/client'
@@ -49,7 +49,9 @@ export function ProductionRunForm({
 
   // Bug 3: selecionar um produto busca sua ficha técnica e pré-preenche
   // impressora/filamento/"Filamento usado (g)" — tudo continua editável,
-  // é só um ponto de partida.
+  // é só um ponto de partida. 2.1: produto composto não tem UM
+  // filamento/peso — em vez disso pede pra escolher qual peça está sendo
+  // produzida, e autopreenche a partir da peça escolhida.
   const [productId, setProductId] = useState('')
   const [printerId, setPrinterId] = useState('')
   const [filamentId, setFilamentId] = useState('')
@@ -57,25 +59,55 @@ export function ProductionRunForm({
   const [gramsUsed, setGramsUsed] = useState('')
   const [expectedPrintTimeHours, setExpectedPrintTimeHours] = useState<number | null>(null)
   const [productWeightGrams, setProductWeightGrams] = useState<number | null>(null)
+  const [isCompositeProduct, setIsCompositeProduct] = useState(false)
+  const [productParts, setProductParts] = useState<ProductProductionPartDefault[]>([])
+  const [productPartId, setProductPartId] = useState('')
+
+  function applyWeightAndTime(weightGrams: number, printTimeHours: number) {
+    setExpectedPrintTimeHours(printTimeHours)
+    setProductWeightGrams(weightGrams)
+    const qty = parseFloat(quantityPlanned) || 1
+    setGramsUsed(String(weightGrams * qty))
+  }
 
   async function handleProductChange(newProductId: string) {
     setProductId(newProductId)
+    setProductPartId('')
+    setPrinterId('')
+    setFilamentId('')
     if (!newProductId) {
+      setIsCompositeProduct(false)
+      setProductParts([])
       setExpectedPrintTimeHours(null)
       setProductWeightGrams(null)
       return
     }
     try {
       const defaults = await getProductProductionDefaults(newProductId)
-      setPrinterId(defaults.printerId)
-      setFilamentId(defaults.filamentId)
-      setExpectedPrintTimeHours(defaults.printTimeHours)
-      setProductWeightGrams(defaults.weightGrams)
-      const qty = parseFloat(quantityPlanned) || 1
-      setGramsUsed(String(defaults.weightGrams * qty))
+      if (defaults.isComposite) {
+        setIsCompositeProduct(true)
+        setProductParts(defaults.parts ?? [])
+        setExpectedPrintTimeHours(null)
+        setProductWeightGrams(null)
+      } else {
+        setIsCompositeProduct(false)
+        setProductParts([])
+        setPrinterId(defaults.printerId ?? '')
+        setFilamentId(defaults.filamentId ?? '')
+        applyWeightAndTime(defaults.weightGrams ?? 0, defaults.printTimeHours ?? 0)
+      }
     } catch {
       // Produto sem dados carregáveis não deve travar o preenchimento manual.
     }
+  }
+
+  function handlePartChange(newPartId: string) {
+    setProductPartId(newPartId)
+    const part = productParts.find((p) => p.id === newPartId)
+    if (!part) return
+    setPrinterId(part.printerId)
+    setFilamentId(part.filamentId)
+    applyWeightAndTime(part.weightGrams, part.printTimeHours)
   }
 
   function handleQuantityPlannedChange(value: string) {
@@ -107,6 +139,9 @@ export function ProductionRunForm({
       setGramsUsed('')
       setExpectedPrintTimeHours(null)
       setProductWeightGrams(null)
+      setIsCompositeProduct(false)
+      setProductParts([])
+      setProductPartId('')
     } else {
       alert(result.error)
     }
@@ -194,6 +229,23 @@ export function ProductionRunForm({
           ))}
         </select>
       </label>
+      {isCompositeProduct && (
+        <label className="text-sm">
+          Peça *
+          <select
+            name="productPartId"
+            value={productPartId}
+            onChange={(e) => handlePartChange(e.target.value)}
+            className="tk-input-full"
+            required
+          >
+            <option value="" disabled>Selecione a peça</option>
+            {productParts.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
       <label className="text-sm">
         Impressora *
         <select name="printerId" value={printerId} onChange={(e) => setPrinterId(e.target.value)} className="tk-input-full" required>

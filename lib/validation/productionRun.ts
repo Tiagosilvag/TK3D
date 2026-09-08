@@ -15,6 +15,9 @@ export const wasteReasonEnum = z.enum([
 
 export const productionRunSchema = z.object({
   productId: z.string().min(1),
+  // 2.1 Produto composto: presente quando esta produção é de uma peça
+  // específica (não do produto pronto) -- ausente/vazio pra produto simples.
+  productPartId: z.string().optional().nullable(),
   printerId: z.string().min(1),
   filamentId: z.string().min(1),
   date: z.coerce.date(),

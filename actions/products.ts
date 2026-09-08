@@ -1,24 +1,98 @@
 'use server'
 import { z } from 'zod'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { productSchema } from '@/lib/validation/product'
-import { calculateProductCost, calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour, calculateFilamentPricePerKg, sumUsageCost, applyRounding, type ProductCostBreakdown } from '@/lib/costing'
+import { productSchema, type ProductPartInput } from '@/lib/validation/product'
+import {
+  calculateProductCost,
+  calculateCompositeProductCost,
+  calculatePrinterDepreciationCostPerHour,
+  calculatePrinterMaintenanceCostPerHour,
+  calculateFilamentPricePerKg,
+  sumUsageCost,
+  applyRounding,
+  type ProductCostBreakdown,
+  type ProductPartCostInput,
+} from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
 
+function isForeignKeyRestrictError(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && (err.code === 'P2003' || err.code === 'P2014')
+}
+
 function parse(formData: FormData) {
   const raw = Object.fromEntries(formData)
+  let parts: unknown = []
+  try {
+    parts = JSON.parse(String(raw.partsJson ?? '[]'))
+  } catch {
+    parts = []
+  }
   return productSchema.safeParse({
     ...raw,
     packagingItemId: raw.packagingItemId || null,
+    printerId: raw.printerId || null,
+    filamentId: raw.filamentId || null,
+    parts,
   })
+}
+
+// 2.1 Produto composto: printerId/filamentId/weightGrams/printTimeHours no
+// Product continuam NOT NULL (ver comentário no schema) -- pra um composto
+// eles viram um resumo derivado: impressora/filamento da 1ª peça, peso e
+// tempo somados entre todas as peças (cada uma já multiplicada pela sua
+// quantityPerUnit). Nunca usados no cálculo de custo de um composto (isso
+// é feito por peça, ver getProductCostBreakdown abaixo) -- servem só pra
+// manter a coluna preenchida e dar uma noção agregada em listagens futuras.
+function deriveCompositeAggregate(parts: ProductPartInput[]) {
+  const [first] = parts
+  const weightGrams = parts.reduce((sum, p) => sum + p.weightGrams * p.quantityPerUnit, 0)
+  const printTimeHours = parts.reduce((sum, p) => sum + p.printTimeHours * p.quantityPerUnit, 0)
+  return { printerId: first.printerId, filamentId: first.filamentId, weightGrams, printTimeHours }
 }
 
 export async function createProduct(formData: FormData): Promise<ActionResult> {
   const parsed = parse(formData)
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
-  await prisma.product.create({ data: parsed.data })
+  const data = parsed.data
+
+  const baseData = {
+    name: data.name,
+    category: data.category,
+    isComposite: data.isComposite,
+    laborTimeHours: data.laborTimeHours,
+    packagingItemId: data.packagingItemId,
+    finishingType: data.finishingType,
+    usesGlue: data.usesGlue,
+    notes: data.notes,
+  }
+
+  if (data.isComposite) {
+    const parts = data.parts!
+    const derived = deriveCompositeAggregate(parts)
+    await prisma.$transaction(async (tx) => {
+      const product = await tx.product.create({
+        data: { ...baseData, ...derived },
+      })
+      await tx.productPart.createMany({
+        data: parts.map((p) => ({
+          productId: product.id,
+          name: p.name,
+          printerId: p.printerId,
+          filamentId: p.filamentId,
+          weightGrams: p.weightGrams,
+          printTimeHours: p.printTimeHours,
+          quantityPerUnit: p.quantityPerUnit,
+        })),
+      })
+    })
+  } else {
+    await prisma.product.create({
+      data: { ...baseData, printerId: data.printerId!, filamentId: data.filamentId!, weightGrams: data.weightGrams!, printTimeHours: data.printTimeHours! },
+    })
+  }
   revalidatePath('/products')
   return { success: true }
 }
@@ -26,8 +100,75 @@ export async function createProduct(formData: FormData): Promise<ActionResult> {
 export async function updateProduct(id: string, formData: FormData): Promise<ActionResult> {
   const parsed = parse(formData)
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
-  await prisma.product.update({ where: { id }, data: parsed.data })
+  const data = parsed.data
+
+  const baseData = {
+    name: data.name,
+    category: data.category,
+    isComposite: data.isComposite,
+    laborTimeHours: data.laborTimeHours,
+    packagingItemId: data.packagingItemId,
+    finishingType: data.finishingType,
+    usesGlue: data.usesGlue,
+    notes: data.notes,
+  }
+
+  try {
+    if (data.isComposite) {
+      const parts = data.parts!
+      const derived = deriveCompositeAggregate(parts)
+      await prisma.$transaction(async (tx) => {
+        await tx.product.update({ where: { id }, data: { ...baseData, ...derived } })
+
+        // Reconcilia a lista de peças: atualiza as que já tinham id, cria
+        // as novas, remove as que sumiram da lista submetida -- nunca
+        // apaga-tudo-e-recria (uma peça já usada em ProductionRun.
+        // productPartId quebraria a FK RESTRICT se recriada com id novo).
+        const existingParts = await tx.productPart.findMany({ where: { productId: id } })
+        const submittedIds = new Set(parts.filter((p) => p.id).map((p) => p.id))
+        for (const existing of existingParts) {
+          if (!submittedIds.has(existing.id)) {
+            await tx.productPart.delete({ where: { id: existing.id } })
+          }
+        }
+        for (const part of parts) {
+          const partData = {
+            productId: id,
+            name: part.name,
+            printerId: part.printerId,
+            filamentId: part.filamentId,
+            weightGrams: part.weightGrams,
+            printTimeHours: part.printTimeHours,
+            quantityPerUnit: part.quantityPerUnit,
+          }
+          if (part.id) {
+            await tx.productPart.update({ where: { id: part.id }, data: partData })
+          } else {
+            await tx.productPart.create({ data: partData })
+          }
+        }
+      })
+    } else {
+      // Alternando de composto pra simples: as peças deixam de fazer
+      // sentido e são removidas -- bloqueado (RESTRICT) se alguma tiver
+      // produção vinculada, igual qualquer outra remoção nesta base.
+      await prisma.$transaction(async (tx) => {
+        await tx.productPart.deleteMany({ where: { productId: id } })
+        await tx.product.update({
+          where: { id },
+          data: { ...baseData, printerId: data.printerId!, filamentId: data.filamentId!, weightGrams: data.weightGrams!, printTimeHours: data.printTimeHours! },
+        })
+      })
+    }
+  } catch (err) {
+    if (isForeignKeyRestrictError(err)) {
+      return { success: false, error: 'Não é possível remover uma peça com histórico de produção vinculado.' }
+    }
+    throw err
+  }
+
   revalidatePath('/products')
+  revalidatePath(`/products/${id}`)
   return { success: true }
 }
 
@@ -50,10 +191,77 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
         packagingItem: true,
         accessoryUsages: { include: { accessory: true } },
         supplyUsages: { include: { supply: true } },
+        parts: { include: { printer: true, filament: true } },
       },
     }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
   ])
+
+  const suppliesCost = sumUsageCost(
+    product.supplyUsages.map((u) => ({ quantity: u.quantity.toNumber(), avgUnitCost: u.supply.avgUnitCost.toNumber() })),
+  )
+  // Ficha técnica §2 (task-5 brief): accessoryId's single-FK is now a list
+  // (ProductAccessoryUsage), same shape/reduction as suppliesCost above —
+  // sum quantity * avgUnitCost across every accessory row on this product.
+  const accessoriesCost = sumUsageCost(
+    product.accessoryUsages.map((u) => ({ quantity: u.quantity.toNumber(), avgUnitCost: u.accessory.avgUnitCost.toNumber() })),
+  )
+  const packagingCost = product.packagingItem?.unitCost.toNumber() ?? 0
+
+  const flags = {
+    includeDepreciation: settings.includeDepreciation,
+    includeEnergyCost: settings.includeEnergyCost,
+    includeMaintenance: settings.includeMaintenance,
+    includeLaborCost: settings.includeLaborCost,
+    includeFailureRate: settings.includeFailureRate,
+    includeFilamentCost: settings.includeFilamentCost,
+    includeAccessoriesCost: settings.includeAccessoriesCost,
+    includeSuppliesCost: settings.includeSuppliesCost,
+    includePackagingCost: settings.includePackagingCost,
+  }
+  const settingsInput = {
+    energyCostPerKwh: settings.energyCostPerKwh.toNumber(),
+    laborCostPerHour: settings.laborCostPerHour.toNumber(),
+    failureRatePercent: settings.failureRatePercent.toNumber(),
+    marketplaceFeePercent: settings.marketplaceFeePercent.toNumber(),
+    taxPercent: settings.taxPercent.toNumber(),
+    marketplaceFixedFee: settings.marketplaceFixedFee.toNumber(),
+    defaultMarkup: settings.defaultMarkup.toNumber(),
+  }
+
+  if (product.isComposite) {
+    const parts: ProductPartCostInput[] = product.parts.map((part) => ({
+      quantityPerUnit: part.quantityPerUnit,
+      weightGrams: part.weightGrams.toNumber(),
+      printTimeHours: part.printTimeHours.toNumber(),
+      filamentPricePerKg: calculateFilamentPricePerKg({
+        spoolPrice: part.filament.spoolPrice.toNumber(),
+        spoolWeightKg: part.filament.spoolWeightKg.toNumber(),
+      }),
+      printerAvgPowerConsumptionKwh: part.printer.avgPowerConsumptionKwh.toNumber(),
+      printerDepreciationCostPerHour: calculatePrinterDepreciationCostPerHour({
+        purchasePrice: part.printer.purchasePrice.toNumber(),
+        depreciationHours: part.printer.depreciationHours.toNumber(),
+      }),
+      printerMaintenanceCostPerHour: calculatePrinterMaintenanceCostPerHour({
+        purchasePrice: part.printer.purchasePrice.toNumber(),
+        annualMaintenancePercent: settings.annualMaintenancePercent.toNumber(),
+        annualUsageHours: settings.annualUsageHours.toNumber(),
+      }),
+    }))
+
+    return calculateCompositeProductCost(
+      {
+        parts,
+        laborTimeHours: product.laborTimeHours.toNumber(),
+        suppliesCost,
+        packagingCost,
+        accessoryCost: accessoriesCost,
+        ...flags,
+      },
+      settingsInput,
+    )
+  }
 
   const printerDepreciationCostPerHour = calculatePrinterDepreciationCostPerHour({
     purchasePrice: product.printer.purchasePrice.toNumber(),
@@ -71,16 +279,6 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
     spoolWeightKg: product.filament.spoolWeightKg.toNumber(),
   })
 
-  const suppliesCost = sumUsageCost(
-    product.supplyUsages.map((u) => ({ quantity: u.quantity.toNumber(), avgUnitCost: u.supply.avgUnitCost.toNumber() })),
-  )
-  // Ficha técnica §2 (task-5 brief): accessoryId's single-FK is now a list
-  // (ProductAccessoryUsage), same shape/reduction as suppliesCost above —
-  // sum quantity * avgUnitCost across every accessory row on this product.
-  const accessoriesCost = sumUsageCost(
-    product.accessoryUsages.map((u) => ({ quantity: u.quantity.toNumber(), avgUnitCost: u.accessory.avgUnitCost.toNumber() })),
-  )
-
   return calculateProductCost(
     {
       weightGrams: product.weightGrams.toNumber(),
@@ -91,48 +289,55 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
       printerDepreciationCostPerHour,
       printerMaintenanceCostPerHour,
       suppliesCost,
-      packagingCost: product.packagingItem?.unitCost.toNumber() ?? 0,
+      packagingCost,
       accessoryCost: accessoriesCost,
-      includeDepreciation: settings.includeDepreciation,
-      includeEnergyCost: settings.includeEnergyCost,
-      includeMaintenance: settings.includeMaintenance,
-      includeLaborCost: settings.includeLaborCost,
-      includeFailureRate: settings.includeFailureRate,
-      includeFilamentCost: settings.includeFilamentCost,
-      includeAccessoriesCost: settings.includeAccessoriesCost,
-      includeSuppliesCost: settings.includeSuppliesCost,
-      includePackagingCost: settings.includePackagingCost,
+      ...flags,
     },
-    {
-      energyCostPerKwh: settings.energyCostPerKwh.toNumber(),
-      laborCostPerHour: settings.laborCostPerHour.toNumber(),
-      failureRatePercent: settings.failureRatePercent.toNumber(),
-      marketplaceFeePercent: settings.marketplaceFeePercent.toNumber(),
-      taxPercent: settings.taxPercent.toNumber(),
-      marketplaceFixedFee: settings.marketplaceFixedFee.toNumber(),
-      defaultMarkup: settings.defaultMarkup.toNumber(),
-    },
+    settingsInput,
   )
 }
 
-// Bug 3: auto-preenchimento do formulário de Produção ao selecionar um
-// produto -- devolve os dados da ficha técnica que o form de produção
-// consegue mapear (impressora/filamento, e peso×qtd como sugestão de
-// "Filamento usado (g)"). printTimeHours vai junto só como referência
-// informativa: ProductionRun não tem um campo de tempo de impressão
-// próprio (só timeWastedHours, que é sobre desperdício), então a tela usa
-// esse valor pra mostrar "tempo esperado" ao lado da quantidade planejada,
-// sem inventar uma coluna nova no schema pra isso.
-export interface ProductProductionDefaults {
+// Bug 3 / 2.1: auto-preenchimento do formulário de Produção ao selecionar
+// um produto. Produto simples devolve a ficha técnica direto (impressora/
+// filamento/peso/tempo); produto composto não tem UM filamento/peso -- ao
+// invés disso devolve a lista de peças, e a tela pede pra escolher qual
+// peça está sendo produzida antes de autopreencher impressora/filamento
+// (a partir da peça, não do produto).
+export interface ProductProductionPartDefault {
+  id: string
+  name: string
   printerId: string
   filamentId: string
   weightGrams: number
   printTimeHours: number
 }
 
+export interface ProductProductionDefaults {
+  isComposite: boolean
+  printerId?: string
+  filamentId?: string
+  weightGrams?: number
+  printTimeHours?: number
+  parts?: ProductProductionPartDefault[]
+}
+
 export async function getProductProductionDefaults(productId: string): Promise<ProductProductionDefaults> {
-  const product = await prisma.product.findUniqueOrThrow({ where: { id: productId } })
+  const product = await prisma.product.findUniqueOrThrow({ where: { id: productId }, include: { parts: true } })
+  if (product.isComposite) {
+    return {
+      isComposite: true,
+      parts: product.parts.map((p) => ({
+        id: p.id,
+        name: p.name,
+        printerId: p.printerId,
+        filamentId: p.filamentId,
+        weightGrams: p.weightGrams.toNumber(),
+        printTimeHours: p.printTimeHours.toNumber(),
+      })),
+    }
+  }
   return {
+    isComposite: false,
     printerId: product.printerId,
     filamentId: product.filamentId,
     weightGrams: product.weightGrams.toNumber(),
@@ -173,7 +378,7 @@ export async function getEditableFilamentOptions(productId: string): Promise<{ i
     ? null
     : await prisma.filament.findUnique({ where: { id: product.filamentId } })
 
-  const priceOf = (f: { spoolPrice: import('@prisma/client').Prisma.Decimal; spoolWeightKg: import('@prisma/client').Prisma.Decimal }) =>
+  const priceOf = (f: { spoolPrice: Prisma.Decimal; spoolWeightKg: Prisma.Decimal }) =>
     calculateFilamentPricePerKg({ spoolPrice: f.spoolPrice.toNumber(), spoolWeightKg: f.spoolWeightKg.toNumber() }) / 1000
 
   return [
