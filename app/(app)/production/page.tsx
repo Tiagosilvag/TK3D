@@ -11,20 +11,32 @@ import { resolveDateRange } from '@/lib/dateRange'
 
 export const dynamic = 'force-dynamic'
 
+const PAGE_SIZE = 25
+
 export default async function ProductionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ editId?: string; from?: string; to?: string }>
+  searchParams: Promise<{ editId?: string; from?: string; to?: string; page?: string; productId?: string; printerId?: string }>
 }) {
-  const { editId, from, to } = await searchParams
+  const { editId, from, to, page, productId, printerId } = await searchParams
   const range = resolveDateRange({ from, to })
+  const currentPage = Math.max(1, parseInt(page ?? '1', 10) || 1)
 
-  const [runs, products, printers, filaments, editingRunRecord] = await Promise.all([
+  const runsWhere = {
+    date: { gte: range.gte, lte: range.lte },
+    ...(productId ? { productId } : {}),
+    ...(printerId ? { printerId } : {}),
+  }
+
+  const [runs, totalRuns, products, printers, filaments, editingRunRecord] = await Promise.all([
     prisma.productionRun.findMany({
-      where: { date: { gte: range.gte, lte: range.lte } },
+      where: runsWhere,
       orderBy: { date: 'desc' },
       include: { product: true, printer: true, filament: true },
+      skip: (currentPage - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
     }),
+    prisma.productionRun.count({ where: runsWhere }),
     prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { manufacturer: 'asc' } }),
@@ -32,6 +44,29 @@ export default async function ProductionPage({
       ? prisma.productionRun.findUnique({ where: { id: editId }, include: { product: true, printer: true, filament: true } })
       : null,
   ])
+
+  const totalPages = Math.max(1, Math.ceil(totalRuns / PAGE_SIZE))
+
+  function pageHref(targetPage: number): string {
+    const qs = new URLSearchParams()
+    qs.set('from', range.from)
+    qs.set('to', range.to)
+    if (productId) qs.set('productId', productId)
+    if (printerId) qs.set('printerId', printerId)
+    qs.set('page', String(targetPage))
+    return `/production?${qs.toString()}`
+  }
+
+  function filterHref(params: { productId?: string; printerId?: string }): string {
+    const qs = new URLSearchParams()
+    qs.set('from', range.from)
+    qs.set('to', range.to)
+    const nextProductId = 'productId' in params ? params.productId : productId
+    const nextPrinterId = 'printerId' in params ? params.printerId : printerId
+    if (nextProductId) qs.set('productId', nextProductId)
+    if (nextPrinterId) qs.set('printerId', nextPrinterId)
+    return `/production?${qs.toString()}`
+  }
 
   const editingRun = editingRunRecord
     ? {
@@ -54,7 +89,38 @@ export default async function ProductionPage({
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Produção e desperdício</h1>
-      <DateRangeFilter action="/production" from={range.from} to={range.to} />
+      <DateRangeFilter action="/production" from={range.from} to={range.to} hiddenParams={{ productId, printerId }} />
+
+      <form method="get" action="/production" className="mb-4 flex flex-wrap items-end gap-3 tk-panel p-3">
+        <input type="hidden" name="from" value={range.from} />
+        <input type="hidden" name="to" value={range.to} />
+        <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+          Produto
+          <select name="productId" defaultValue={productId ?? ''} className="tk-input-full mt-1">
+            <option value="">Todos</option>
+            {products.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+          Impressora
+          <select name="printerId" defaultValue={printerId ?? ''} className="tk-input-full mt-1">
+            <option value="">Todas</option>
+            {printers.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white dark:bg-amber-500 dark:text-slate-950">
+          Filtrar
+        </button>
+        {(productId || printerId) && (
+          <Link href={filterHref({ productId: undefined, printerId: undefined })} className="text-sm font-medium text-slate-500 underline-offset-2 hover:underline dark:text-slate-400">
+            Limpar
+          </Link>
+        )}
+      </form>
       <ProductionRunForm
         key={editingRun?.id ?? 'new'}
         products={products}
@@ -121,6 +187,30 @@ export default async function ProductionPage({
           })}
         </tbody>
       </table>
+
+      {runs.length === 0 && (
+        <div className="mt-6 rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400 dark:border-slate-700 dark:text-slate-500">
+          Nenhuma produção encontrada com esses filtros.
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between text-sm text-slate-500 dark:text-slate-400">
+          <span>Página {currentPage} de {totalPages} ({totalRuns} registros)</span>
+          <div className="flex gap-2">
+            {currentPage > 1 && (
+              <Link href={pageHref(currentPage - 1)} className="rounded-lg px-3 py-1.5 font-medium text-amber-600 hover:underline dark:text-amber-400">
+                Anterior
+              </Link>
+            )}
+            {currentPage < totalPages && (
+              <Link href={pageHref(currentPage + 1)} className="rounded-lg px-3 py-1.5 font-medium text-amber-600 hover:underline dark:text-amber-400">
+                Próxima
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
