@@ -189,7 +189,7 @@ export default async function AccessoriesPage({
               <td>{percentRemaining.toFixed(1)}%</td>
               <td>{status.emoji} {status.label}</td>
               <td>
-                <RestockForm accessoryId={a.id} />
+                <RestockForm accessoryId={a.id} accessoryName={a.name} />
               </td>
               <td>
                 <div className="flex flex-col items-start gap-1">
@@ -286,7 +286,7 @@ export default async function AccessoriesPage({
                   <td>{a.colorName || '—'}</td>
                   <td>{formatCurrency(avgUnitCost)}</td>
                   <td>
-                    <RestockForm accessoryId={a.id} />
+                    <RestockForm accessoryId={a.id} accessoryName={a.name} />
                   </td>
                 </tr>
               ))}

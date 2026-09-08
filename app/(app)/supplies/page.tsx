@@ -191,7 +191,7 @@ export default async function SuppliesPage({
               <td>{percentRemaining.toFixed(1)}%</td>
               <td>{status.emoji} {status.label}</td>
               <td>
-                <RestockForm supplyId={s.id} />
+                <RestockForm supplyId={s.id} supplyName={s.name} />
               </td>
               <td>
                 <div className="flex flex-col items-start gap-1">
@@ -282,7 +282,7 @@ export default async function SuppliesPage({
                   <td>{SUPPLY_UNIT_LABELS[s.unit] ?? s.unit}</td>
                   <td>{formatUnitCost(s.unit, avgUnitCost)}</td>
                   <td>
-                    <RestockForm supplyId={s.id} />
+                    <RestockForm supplyId={s.id} supplyName={s.name} />
                   </td>
                 </tr>
               ))}
