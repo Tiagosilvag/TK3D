@@ -1,11 +1,12 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { calculateFilamentPricePerGram, getStockStatus } from '@/lib/costing'
-import { formatCurrency } from '@/lib/format'
+import { formatCurrency, getStockStatusBadge } from '@/lib/format'
 import { FilamentForm } from './FilamentForm'
 import { AdjustStockButton } from '@/components/AdjustStockButton'
 import { deleteFilament } from '@/actions/filaments'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { StatusBadge } from '@/components/StatusBadge'
 import type { FilamentMaterial } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -170,7 +171,7 @@ export default async function FilamentsPage({
                     <>R$ {pricePerGram.toFixed(4)}</>
                   )}
                 </td>
-                <td>{status.emoji} {status.label}</td>
+                <td><StatusBadge badge={getStockStatusBadge(status)} /></td>
                 <td>
                   <div className="flex items-center gap-3">
                     <Link href={`/filaments?editId=${f.id}`} className="text-amber-600 hover:underline dark:text-amber-400">

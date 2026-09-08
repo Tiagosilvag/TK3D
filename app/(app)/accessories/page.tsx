@@ -1,13 +1,13 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
-import { formatCurrency } from '@/lib/format'
+import { formatCurrency, getStockStatusBadge, STOCK_ADJUSTMENT_REASON_LABELS } from '@/lib/format'
 import { getStockStatusWithThresholds, calculateStockReferenceQuantity, calculateStockPercentRemaining } from '@/lib/costing'
 import { AccessoryForm } from './AccessoryForm'
 import { RestockForm } from './RestockForm'
 import { deleteAccessory } from '@/actions/accessories'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { AdjustStockButton } from '@/components/AdjustStockButton'
-import { STOCK_ADJUSTMENT_REASON_LABELS } from '@/lib/format'
+import { StatusBadge } from '@/components/StatusBadge'
 
 export const dynamic = 'force-dynamic'
 
@@ -187,7 +187,7 @@ export default async function AccessoriesPage({
               <td>{formatCurrency(avgUnitCost)}</td>
               <td>{formatCurrency(valueInStock)}</td>
               <td>{percentRemaining.toFixed(1)}%</td>
-              <td>{status.emoji} {status.label}</td>
+              <td><StatusBadge badge={getStockStatusBadge(status)} /></td>
               <td>
                 <RestockForm accessoryId={a.id} accessoryName={a.name} />
               </td>

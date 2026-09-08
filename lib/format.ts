@@ -1,4 +1,5 @@
-import type { ProductionStatus, WasteReason, SupplyUnit, OrderStatus, OrderChannel, StockAdjustmentReason } from '@prisma/client'
+import type { ProductionStatus, WasteReason, SupplyUnit, OrderStatus, OrderChannel, StockAdjustmentReason, SaleChannel } from '@prisma/client'
+import type { StockStatus } from '@/lib/costing'
 
 export function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
@@ -60,6 +61,36 @@ export const ORDER_CHANNEL_LABELS: Record<OrderChannel, string> = {
   DIRETA: 'Direta',
   SHOPEE: 'Shopee',
   MERCADO_LIVRE: 'Mercado Livre',
+}
+
+// 5.3: badge de canal de venda (Vendas), mesmo padrão {label, className}
+// de getProductionStatusBadge/getOrderStatusBadge -- antes era montado
+// inline em app/(app)/sales/page.tsx com só 2 cores (Direta/Marketplace).
+const SALE_CHANNEL_BADGES: Record<SaleChannel, StatusBadge> = {
+  DIRETA: { label: 'Direta', className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' },
+  SHOPEE: { label: 'Shopee', className: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400' },
+  MERCADO_LIVRE: { label: 'Mercado Livre', className: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400' },
+  MARKETPLACE: { label: 'Marketplace (antigo)', className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' },
+}
+
+export function getSaleChannelBadge(channel: SaleChannel): StatusBadge {
+  return SALE_CHANNEL_BADGES[channel]
+}
+
+// 5.3: status de estoque (Filamentos/Acessórios/Insumos) virava só
+// "emoji + texto", sem o mesmo pill colorido usado em Produção/Pedidos/
+// Vendas -- essa função gera o badge equivalente a partir do
+// {emoji, label} que getStockStatus/getStockStatusWithThresholds retornam,
+// reaproveitando a mesma paleta verde/amarelo/vermelho/cinza.
+const STOCK_STATUS_BADGE_CLASSNAMES: Record<string, string> = {
+  'Em estoque': 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400',
+  'Estoque baixo': 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
+  'Estoque crítico': 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400',
+  Esgotado: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+}
+
+export function getStockStatusBadge(status: StockStatus): StatusBadge {
+  return { label: `${status.emoji} ${status.label}`, className: STOCK_STATUS_BADGE_CLASSNAMES[status.label] ?? STOCK_STATUS_BADGE_CLASSNAMES.Esgotado }
 }
 
 // 2.6 Ajuste de estoque: labels do motivo obrigatório.

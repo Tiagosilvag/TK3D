@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
+import { StatusBadge } from '@/components/StatusBadge'
 import {
   calculatePrinterDepreciationCostPerHour,
   calculatePrinterMaintenanceCostPerHour,
@@ -172,7 +173,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
                         <td>{latestRun ? latestRun.date.toLocaleDateString('pt-BR') : '—'}</td>
                         <td>
                           {badge ? (
-                            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}>{badge.label}</span>
+                            <StatusBadge badge={badge} />
                           ) : (
                             <span className="text-slate-400 dark:text-slate-500">Sem produção ainda</span>
                           )}

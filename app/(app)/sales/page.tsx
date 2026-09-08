@@ -1,23 +1,15 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
-import { formatCurrency } from '@/lib/format'
+import { formatCurrency, getSaleChannelBadge } from '@/lib/format'
 import { SaleForm } from './SaleForm'
 import { deleteSale, getSaleProfit } from '@/actions/sales'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { DateRangeFilter } from '@/components/DateRangeFilter'
+import { StatusBadge } from '@/components/StatusBadge'
 import { resolveDateRange } from '@/lib/dateRange'
 import type { SaleChannel } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
-
-// 3.6: MARKETPLACE segue mapeado (só pra exibir vendas antigas registradas
-// antes dessa mudança) mas não aparece mais como opção nova em SaleForm.
-const CHANNEL_LABELS: Record<SaleChannel, string> = {
-  DIRETA: 'Direta',
-  MARKETPLACE: 'Marketplace (antigo)',
-  SHOPEE: 'Shopee',
-  MERCADO_LIVRE: 'Mercado Livre',
-}
 
 const CHANNEL_FILTERS: { value: SaleChannel | undefined; label: string }[] = [
   { value: undefined, label: 'Todas' },
@@ -122,15 +114,7 @@ export default async function SalesPage({
               <tr key={s.id} className="tk-row align-top">
                 <td className="py-2">{s.saleDate.toLocaleDateString('pt-BR')}</td>
                 <td>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                      s.channel === 'DIRETA'
-                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
-                        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-                    }`}
-                  >
-                    {CHANNEL_LABELS[s.channel]}
-                  </span>
+                  <StatusBadge badge={getSaleChannelBadge(s.channel)} />
                 </td>
                 <td>{s.product.name}</td>
                 <td>{s.quantity}</td>

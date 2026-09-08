@@ -6,6 +6,7 @@ import { deleteProductionRun } from '@/actions/productionRuns'
 import type { ProductionCostSnapshot } from '@/lib/costing'
 import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { StatusBadge } from '@/components/StatusBadge'
 import { DateRangeFilter } from '@/components/DateRangeFilter'
 import { resolveDateRange } from '@/lib/dateRange'
 
@@ -164,12 +165,7 @@ export default async function ProductionPage({
                 <td>{run.quantitySuccess}</td>
                 <td>{run.quantityFailed}</td>
                 <td>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}
-                    title={run.status === 'CANCELADA' && run.cancelReason ? `Motivo: ${run.cancelReason}` : undefined}
-                  >
-                    {badge.label}
-                  </span>
+                  <StatusBadge badge={badge} title={run.status === 'CANCELADA' && run.cancelReason ? `Motivo: ${run.cancelReason}` : undefined} />
                 </td>
                 <td>{run.gramsWasted.toNumber()}g / {run.timeWastedHours.toNumber()}h</td>
                 <td>{snapshot ? formatCurrency(snapshot.total) : '—'}</td>

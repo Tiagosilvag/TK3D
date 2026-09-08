@@ -4,6 +4,7 @@ import { OrderForm } from './OrderForm'
 import { OrderStatusForm } from './OrderStatusForm'
 import { deleteOrder } from '@/actions/orders'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { StatusBadge } from '@/components/StatusBadge'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,7 +45,7 @@ export default async function OrdersPage() {
                 <td className="text-slate-500 dark:text-slate-400">{o.orderNumber ?? '—'}</td>
                 <td>
                   <div className="flex items-center gap-2">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}>{badge.label}</span>
+                    <StatusBadge badge={badge} />
                     <OrderStatusForm orderId={o.id} status={o.status} locked={o.status === 'CONCLUIDO'} />
                   </div>
                 </td>
