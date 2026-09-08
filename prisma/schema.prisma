@@ -263,6 +263,7 @@ model Product {
   sales                 Sale[]
   consignmentDeliveries ConsignmentDelivery[]
   photos                ProductPhoto[]
+  orders                Order[]
 }
 
 // 2.1 Produto composto (BOM): uma peça que precisa ser impressa
@@ -446,6 +447,45 @@ model Sale {
   // to a live recompute only for such legacy rows.
   costSnapshot    Json?
   createdAt       DateTime    @default(now())
+  order           Order?
+}
+
+// 2.4 Sistema de pedidos: registra um pedido recebido (de qualquer canal)
+// antes de ele ser produzido/despachado. Ao marcar Concluído
+// (actions/orders.ts#updateOrderStatus), cria automaticamente 1 Sale
+// vinculada (saleId) e nunca mais recria -- "dar baixa no estoque" é só a
+// Sale entrando na conta de getOwnStockSummary (2.2), sem contador
+// separado. unitPrice fica no pedido (não só na Sale resultante) porque
+// precisa existir ANTES da conclusão pra poder criar a Sale com ele.
+enum OrderChannel {
+  DIRETA
+  SHOPEE
+  MERCADO_LIVRE
+}
+
+enum OrderStatus {
+  RECEBIDO
+  EM_PRODUCAO
+  PRONTO
+  DESPACHADO
+  CONCLUIDO
+}
+
+model Order {
+  id          String       @id @default(cuid())
+  channel     OrderChannel
+  productId   String
+  product     Product      @relation(fields: [productId], references: [id])
+  quantity    Int
+  unitPrice   Decimal      @db.Decimal(10, 2)
+  orderDate   DateTime
+  status      OrderStatus  @default(RECEBIDO)
+  orderNumber String?
+  notes       String?
+  saleId      String?      @unique
+  sale        Sale?        @relation(fields: [saleId], references: [id])
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 }
 
 model ConsignmentPartner {

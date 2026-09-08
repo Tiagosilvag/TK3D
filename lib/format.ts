@@ -1,4 +1,4 @@
-import type { ProductionStatus, WasteReason, SupplyUnit } from '@prisma/client'
+import type { ProductionStatus, WasteReason, SupplyUnit, OrderStatus, OrderChannel } from '@prisma/client'
 
 export function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
@@ -32,6 +32,34 @@ const PRODUCTION_STATUS_BADGES: Record<ProductionStatus, StatusBadge> = {
 
 export function getProductionStatusBadge(status: ProductionStatus): StatusBadge {
   return PRODUCTION_STATUS_BADGES[status]
+}
+
+// 2.4 Sistema de pedidos: badge de status (mesmo padrão de
+// getProductionStatusBadge) e labels de canal.
+const ORDER_STATUS_BADGES: Record<OrderStatus, StatusBadge> = {
+  RECEBIDO: { label: 'Recebido', className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' },
+  EM_PRODUCAO: { label: 'Em produção', className: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' },
+  PRONTO: { label: 'Pronto', className: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400' },
+  DESPACHADO: { label: 'Despachado', className: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400' },
+  CONCLUIDO: { label: 'Concluído', className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' },
+}
+
+export function getOrderStatusBadge(status: OrderStatus): StatusBadge {
+  return ORDER_STATUS_BADGES[status]
+}
+
+export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  RECEBIDO: 'Recebido',
+  EM_PRODUCAO: 'Em produção',
+  PRONTO: 'Pronto',
+  DESPACHADO: 'Despachado',
+  CONCLUIDO: 'Concluído',
+}
+
+export const ORDER_CHANNEL_LABELS: Record<OrderChannel, string> = {
+  DIRETA: 'Direta',
+  SHOPEE: 'Shopee',
+  MERCADO_LIVRE: 'Mercado Livre',
 }
 
 // Human-readable Portuguese labels for WasteReason (prisma/schema.prisma
