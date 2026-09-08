@@ -332,3 +332,96 @@ migration em produção não-vazia, fluxo ponta-a-ponta, spec completo) —
 mesmo padrão da revisão final já feita no plano anterior. Se a revisão
 final achar Critical/Important, resolva num único fix round consolidado
 (não um round por achado) antes de considerar o plano pronto pra deploy.
+
+---
+
+## Task 10 (pós-revisão) — Fix round + snapshot histórico em Vendas
+
+Adicionada depois da revisão final única, que achou 4 Important + aprovou
+uma extensão de escopo pedida pelo usuário (snapshot em Sale). Uma única
+task consolidando tudo — sem revisão à parte, mas o usuário vai validar
+no deploy.
+
+**Fix 1 — Acessórios/Insumos esgotados podem ser excluídos (viola regra
+explícita do prompt original e do spec).** `deleteAccessory`/`deleteSupply`
+em `actions/accessories.ts`/`actions/supplies.ts` não checam
+`currentStock` antes de deletar — só a FK protege (e só quando há
+`Product` referenciando). Adicionar guarda: recusar exclusão
+(`{success:false, error:'Itens esgotados não podem ser excluídos — o
+histórico é mantido automaticamente.'}`) quando `currentStock <= 0`.
+Remover/desabilitar o botão de excluir na seção "esgotados" das duas
+telas.
+
+**Fix 2 — `percentRemaining` usa "total já comprado" como denominador,
+produz status sem sentido pra item de giro rápido.** Em
+`app/(app)/accessories/page.tsx` e `supplies/page.tsx`. Trocar para: soma
+das últimas... — na verdade, mais simples e correto: usar a ÚLTIMA
+compra como referência de "cheio" não funciona bem também com múltiplas
+reposições incrementais. Decisão: `percentRemaining` deixa de existir
+como "% do total histórico" — status passa a ser baseado apenas no valor
+absoluto de `currentStock` comparado a um limiar mínimo configurável, OU
+(mais fiel ao pedido original) manter percentual mas usar como base a
+MÉDIA das últimas N compras como "estoque de referência". Avalie as duas
+opções e escolha a que fica mais simples de implementar e explicar ao
+usuário; documente a decisão claramente no commit e no report — isso é
+um problema real sem solução óbvia no schema atual (Accessory/Supply não
+tem um "tamanho de lote padrão" como Filament tem `initialStockGrams`
+por rolo). Cubra com teste unitário mostrando que um item de giro rápido
+não cai artificialmente pra "crítico".
+
+**Fix 3 — Dashboard mostra dois números de "custo de desperdício"
+contraditórios.** O card antigo "Custo total de desperdício"
+(`lib/reports.ts` `getTotalWasteCost()`, usado em `dashboard/page.tsx`)
+ainda recalcula ao vivo a partir de Printer/Filament/Settings atuais —
+exatamente o que o snapshot (spec §4) devia ter eliminado. O card novo
+da Task 9 ("Desperdício total") já lê `costSnapshot.wasteCost`
+corretamente. Remover o card antigo (`getTotalWasteCost` e seu uso no
+dashboard) — o card novo da Task 9 é a fonte de verdade única daqui pra
+frente. Se `getTotalWasteCost` for usado em outro lugar além do
+dashboard, avalie caso a caso.
+
+**Fix 4 — Arredondamento configurado em Settings mas nunca aplicado.**
+`applyRounding`/`Settings.roundingMode` (`lib/costing.ts`) não é chamado
+em lugar nenhum. Aplicar em `actions/products.ts`'s `applyProductPrice` e
+em `PriceSimulation.tsx`: o preço sugerido/marketplace final (tanto na
+prévia calculada quanto no valor efetivamente aplicado) passa por
+`applyRounding(valor, settings.roundingMode)` antes de ser exibido/
+persistido. Teste: produto com preço bruto calculado tipo R$23,45 e
+`roundingMode=R90` deve mostrar/gravar R$23,90.
+
+**Fix 5 — Produções canceladas inflam "Custo total"/"Desperdício total"
+no dashboard sem filtro.** `getProductionSummary` (`lib/reports.ts`) soma
+`costSnapshot.total`/`.wasteCost` de TODAS as runs por padrão, incluindo
+`CANCELADA` — mas uma produção cancelada teve todo o estoque estornado,
+não representa custo real incorrido. Excluir `status=CANCELADA` das
+agregações de custo/desperdício por padrão (o filtro de status já
+existente continua permitindo o usuário ver canceladas explicitamente se
+quiser). Ajustar/adicionar teste cobrindo isso.
+
+**Nova feature — Sale ganha snapshot de custo histórico (decisão
+explícita do usuário após a revisão final, mesma garantia que
+ProductionRun já tem).**
+
+- `prisma/schema.prisma`: `Sale` ganha `costSnapshot Json?` — calculado
+  e gravado uma única vez na criação da venda (`createSale`), usando
+  `getProductCostBreakdown`/`calculateProductCost` com os valores
+  vigentes de Printer/Filament/Accessory/Supply/Settings NAQUELE
+  momento. Migration aditiva (campo nullable, vendas antigas ficam sem
+  snapshot).
+- `actions/sales.ts`: `getSaleProfit()` (ou equivalente) passa a ler
+  `sale.costSnapshot.total` em vez de recalcular via
+  `getProductCostBreakdown()` ao vivo, quando o snapshot existir; para
+  vendas antigas sem snapshot (pré-migration), manter o fallback de
+  recálculo ao vivo com um indicador visual de "custo estimado
+  retroativamente" (não trave a tela).
+- `app/(app)/sales/page.tsx`: nenhuma mudança visual além do que já
+  exibe lucro — só a fonte do dado muda de recalculado pra congelado
+  pra vendas novas.
+- Teste: criar uma venda, mudar um preço de acessório/insumo/Settings
+  depois, confirmar que o lucro daquela venda já registrada NÃO muda
+  (mesma garantia que já existe pra `ProductionRun` desde a Task 7).
+
+**Verificação:** `npm run build`, `npm test`, `npm run lint` limpos.
+Commit único (ou múltiplos lógicos, à sua escolha) cobrindo os 5 fixes +
+a feature nova. Escreva um report cobrindo cada um dos 6 itens
+separadamente, já que isso fecha a pendência da revisão final.
