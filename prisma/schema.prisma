@@ -239,6 +239,7 @@ model Product {
   printTimeHours        Decimal                 @db.Decimal(10, 3)
   laborTimeHours        Decimal                 @db.Decimal(10, 3)
   parts                 ProductPart[]
+  assemblies            ProductAssembly[]
   packagingItemId       String?
   packagingItem         PackagingItem?          @relation(fields: [packagingItemId], references: [id])
   finishingType         FinishingType           @default(NENHUM)
@@ -290,6 +291,25 @@ model ProductPart {
   productionRuns  ProductionRun[]
 
   @@unique([productId, name])
+}
+
+// 2.3 Montagem: cada confirmação de montagem vira UMA linha aqui --
+// `quantity` unidades do produto composto foram montadas, consumindo
+// quantity × ProductPart.quantityPerUnit de CADA peça (todas as peças de
+// um produto são sempre consumidas na mesma proporção da ficha técnica,
+// então não precisa uma tabela de consumo por peça: dá pra derivar quanto
+// cada peça já foi consumida a partir só desta soma × quantityPerUnit).
+// "Estoque disponível de uma peça" e "produzido" de um produto composto
+// (getOwnStockSummary, lib/reports.ts) leem esta tabela -- não existe
+// decremento físico de um contador em outro lugar, tudo é derivado.
+model ProductAssembly {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  quantity    Int
+  assembledAt DateTime @default(now())
+  notes       String?
+  createdAt   DateTime @default(now())
 }
 
 model ProductPhoto {

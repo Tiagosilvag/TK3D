@@ -232,11 +232,11 @@ export async function getPrinterUsage(filters: ProductionReportFilters = {}): Pr
 // telas já mostram. Fórmula do módulo: disponível = produzido - vendido
 // diretamente - entregue a parceiros.
 //
-// "Produzido" só conta ProductionRun de produto SIMPLES (productPartId
-// null) com status != CANCELADA -- uma produção de PEÇA de produto
-// composto (productPartId setado) não é estoque de produto acabado até
-// passar pela montagem (spec 2.3, ainda não implementada), então produto
-// composto aparece com 0 disponível até lá.
+// "Produzido" de um produto SIMPLES soma ProductionRun.quantitySuccess
+// (productPartId null, status != CANCELADA) direto. De um produto
+// COMPOSTO soma ProductAssembly.quantity (2.3) -- uma produção de PEÇA
+// isolada (productPartId setado) não vira estoque de produto acabado até
+// passar pela montagem; só a montagem confirmada conta como "produzido".
 //
 // "Em produção" fica 0: o schema atual não tem noção de "pedido de
 // produção aberto/pendente" (ProductionRun já nasce com resultado
@@ -255,18 +255,20 @@ export interface OwnStockRow {
 }
 
 export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
-  const [products, producedByProduct, soldByProduct, deliveries] = await Promise.all([
+  const [products, producedByProduct, assembledByProduct, soldByProduct, deliveries] = await Promise.all([
     prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.productionRun.groupBy({
       by: ['productId'],
       where: { productPartId: null, status: { not: 'CANCELADA' } },
       _sum: { quantitySuccess: true },
     }),
+    prisma.productAssembly.groupBy({ by: ['productId'], _sum: { quantity: true } }),
     prisma.sale.groupBy({ by: ['productId'], _sum: { quantity: true } }),
     prisma.consignmentDelivery.findMany({ include: { saleReports: true } }),
   ])
 
   const producedMap = new Map(producedByProduct.map((p) => [p.productId, p._sum.quantitySuccess ?? 0]))
+  const assembledMap = new Map(assembledByProduct.map((a) => [a.productId, a._sum.quantity ?? 0]))
   const soldMap = new Map(soldByProduct.map((s) => [s.productId, s._sum.quantity ?? 0]))
   const deliveredMap = new Map<string, { delivered: number; consignmentSold: number }>()
   for (const d of deliveries) {
@@ -277,7 +279,7 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
   }
 
   return products.map((p) => {
-    const produced = producedMap.get(p.id) ?? 0
+    const produced = p.isComposite ? (assembledMap.get(p.id) ?? 0) : (producedMap.get(p.id) ?? 0)
     const soldDirect = soldMap.get(p.id) ?? 0
     const delivery = deliveredMap.get(p.id) ?? { delivered: 0, consignmentSold: 0 }
     return {
