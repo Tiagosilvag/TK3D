@@ -1,14 +1,15 @@
 import { prisma } from '@/lib/prisma'
 import { ProductionRunForm } from './ProductionRunForm'
+import { CancelProductionRunForm } from './CancelProductionRunForm'
 import { deleteProductionRun } from '@/actions/productionRuns'
-import { calculateWasteCost, calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour, calculateFilamentPricePerKg, calculateFilamentPricePerGram } from '@/lib/costing'
-import { formatCurrency } from '@/lib/format'
+import type { ProductionCostSnapshot } from '@/lib/costing'
+import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ProductionPage() {
-  const [runs, products, printers, filaments, settings] = await Promise.all([
+  const [runs, products, printers, filaments] = await Promise.all([
     prisma.productionRun.findMany({
       orderBy: { date: 'desc' },
       include: { product: true, printer: true, filament: true },
@@ -16,12 +17,7 @@ export default async function ProductionPage() {
     prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { manufacturer: 'asc' } }),
-    prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
   ])
-
-  const energyCostPerKwh = settings.energyCostPerKwh.toNumber()
-  const annualMaintenancePercent = settings.annualMaintenancePercent.toNumber()
-  const annualUsageHours = settings.annualUsageHours.toNumber()
 
   return (
     <div className="tk-page">
@@ -41,40 +37,21 @@ export default async function ProductionPage() {
             <th>Plan.</th>
             <th>Sucesso</th>
             <th>Falhas</th>
-            <th>Custo do filamento</th>
+            <th>Status</th>
             <th>Desperdício</th>
-            <th>Custo desperdício</th>
+            <th>Custo</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           {runs.map((run) => {
-            const printerDepreciationCostPerHour = calculatePrinterDepreciationCostPerHour({
-              purchasePrice: run.printer.purchasePrice.toNumber(),
-              depreciationHours: run.printer.depreciationHours.toNumber(),
-            })
-            const printerMaintenanceCostPerHour = calculatePrinterMaintenanceCostPerHour({
-              purchasePrice: run.printer.purchasePrice.toNumber(),
-              annualMaintenancePercent,
-              annualUsageHours,
-            })
-            const filamentPricePerKg = calculateFilamentPricePerKg({
-              spoolPrice: run.filament.spoolPrice.toNumber(),
-              spoolWeightKg: run.filament.spoolWeightKg.toNumber(),
-            })
-            const filamentCost = run.gramsUsed.toNumber() * calculateFilamentPricePerGram({
-              spoolPrice: run.filament.spoolPrice.toNumber(),
-              spoolWeightKg: run.filament.spoolWeightKg.toNumber(),
-            })
-            const wasteCost = calculateWasteCost({
-              gramsWasted: run.gramsWasted.toNumber(),
-              timeWastedHours: run.timeWastedHours.toNumber(),
-              filamentPricePerKg,
-              printerDepreciationCostPerHour,
-              printerMaintenanceCostPerHour,
-              printerAvgPowerConsumptionKwh: run.printer.avgPowerConsumptionKwh.toNumber(),
-              energyCostPerKwh,
-            })
+            const badge = getProductionStatusBadge(run.status)
+            // costSnapshot is only null for legacy rows created before Task 7
+            // added the column (see prisma/schema.prisma's costSnapshot doc
+            // comment) -- there's no historical Printer/Filament/Settings
+            // state to reconstruct one for them, so this never recalculates
+            // live (spec §4): it shows "—" instead.
+            const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
 
             return (
               <tr key={run.id} className="tk-row">
@@ -85,10 +62,18 @@ export default async function ProductionPage() {
                 <td>{run.quantityPlanned}</td>
                 <td>{run.quantitySuccess}</td>
                 <td>{run.quantityFailed}</td>
-                <td>{formatCurrency(filamentCost)}</td>
-                <td>{run.gramsWasted.toNumber()}g / {run.timeWastedHours.toNumber()}h</td>
-                <td>{formatCurrency(wasteCost)}</td>
                 <td>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}
+                    title={run.status === 'CANCELADA' && run.cancelReason ? `Motivo: ${run.cancelReason}` : undefined}
+                  >
+                    {badge.label}
+                  </span>
+                </td>
+                <td>{run.gramsWasted.toNumber()}g / {run.timeWastedHours.toNumber()}h</td>
+                <td>{snapshot ? formatCurrency(snapshot.total) : '—'}</td>
+                <td className="flex flex-col gap-1 py-2">
+                  {run.status !== 'CANCELADA' && <CancelProductionRunForm id={run.id} />}
                   <ConfirmDeleteForm action={async () => { 'use server'; await deleteProductionRun(run.id) }} />
                 </td>
               </tr>

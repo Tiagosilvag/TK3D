@@ -1,6 +1,10 @@
 'use client'
 import { useRef } from 'react'
 import { createProductionRun } from '@/actions/productionRuns'
+import { WASTE_REASON_LABELS } from '@/lib/format'
+import type { WasteReason } from '@prisma/client'
+
+const WASTE_REASON_OPTIONS = Object.keys(WASTE_REASON_LABELS) as WasteReason[]
 
 type Option = { id: string; name: string }
 
@@ -80,6 +84,15 @@ export function ProductionRunForm({
       <label className="text-sm">
         Tempo desperdiçado (h)
         <input name="timeWastedHours" type="number" step="0.001" min="0" className="tk-input-full" required />
+      </label>
+      <label className="text-sm">
+        Motivo do desperdício (opcional)
+        <select name="wasteReason" defaultValue="" className="tk-input-full">
+          <option value="">Nenhum</option>
+          {WASTE_REASON_OPTIONS.map((reason) => (
+            <option key={reason} value={reason}>{WASTE_REASON_LABELS[reason]}</option>
+          ))}
+        </select>
       </label>
       <label className="col-span-full text-sm md:col-span-3">
         Observações (opcional)
