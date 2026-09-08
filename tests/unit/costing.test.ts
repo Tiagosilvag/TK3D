@@ -8,12 +8,16 @@ import {
   calculateWasteCost,
   getStockStatus,
   getStockStatusWithThresholds,
+  calculateStockReferenceQuantity,
+  calculateStockPercentRemaining,
   calculateWeightedAverageCost,
   applyRounding,
   sumUsageCost,
   buildProductionCostSnapshot,
+  buildSaleCostSnapshot,
   simulateProductPrice,
   type ProductionCostSnapshotInput,
+  type ProductCostBreakdown,
 } from '@/lib/costing'
 
 describe('calculatePrinterDepreciationCostPerHour (no maintenance folded in)', () => {
@@ -97,6 +101,88 @@ describe('getStockStatusWithThresholds', () => {
   it('0% ou menos -> esgotado, independente dos limiares', () => {
     expect(getStockStatusWithThresholds(0, 0.50, 0.20)).toEqual({ emoji: '⚫', label: 'Esgotado' })
     expect(getStockStatusWithThresholds(-1, 0.05, 0.01)).toEqual({ emoji: '⚫', label: 'Esgotado' })
+  })
+})
+
+// Fix 2 (task-10 brief): percentRemaining used to divide currentStock by
+// "total ever purchased" (sum of every AccessoryPurchase/SupplyPurchase
+// ever recorded), which decays toward zero for any item restocked many
+// times regardless of its real health -- a fast-turnover item that gets
+// restocked often looks progressively worse the longer it's been tracked,
+// even though it's never actually running low right after each restock.
+//
+// Chosen fix (documented in the task-10 report): replace "total já
+// comprado" with "média das últimas N compras" as the 100% reference level
+// -- this is the brief's own second option, picked over "abandon percentage,
+// use only an absolute threshold" because (a) it keeps the existing
+// percentage-based UI/status functions unchanged (getStockStatusWithThresholds
+// still takes a 0-100 percentRemaining, no call-site rewiring needed beyond
+// how that percentage is computed) and (b) it doesn't require a new
+// per-item "standard restock size" field on the schema -- the purchase
+// history already loaded by both pages (ordered by purchaseDate desc) is
+// enough. A fast-turnover item's reference level tracks its OWN typical
+// restock size, so right after a normal-sized restock it reads close to
+// 100% no matter how many restocks came before it.
+describe('calculateStockReferenceQuantity', () => {
+  it('média das últimas N (padrão 5) quantidades, mais recente primeiro', () => {
+    // 5 compras de 100 cada -> referência = 100.
+    expect(calculateStockReferenceQuantity([100, 100, 100, 100, 100])).toBeCloseTo(100, 6)
+  })
+
+  it('ignora compras mais antigas que as últimas N', () => {
+    // 7 compras (mais recente primeiro); só as 5 primeiras (100 cada) contam
+    // -- as duas últimas (10 cada, mais antigas) são ignoradas.
+    const quantities = [100, 100, 100, 100, 100, 10, 10]
+    expect(calculateStockReferenceQuantity(quantities, 5)).toBeCloseTo(100, 6)
+  })
+
+  it('usa todas as compras disponíveis quando há menos que N', () => {
+    expect(calculateStockReferenceQuantity([40, 60], 5)).toBeCloseTo(50, 6)
+  })
+
+  it('sample size customizável', () => {
+    expect(calculateStockReferenceQuantity([100, 100, 10, 10], 2)).toBeCloseTo(100, 6)
+  })
+
+  it('lista vazia -> referência 0 (sem histórico de compra)', () => {
+    expect(calculateStockReferenceQuantity([])).toBe(0)
+  })
+})
+
+describe('calculateStockPercentRemaining', () => {
+  it('currentStock sobre a referência das últimas compras, como percentual', () => {
+    expect(calculateStockPercentRemaining(90, 100)).toBeCloseTo(90, 6)
+    expect(calculateStockPercentRemaining(50, 100)).toBeCloseTo(50, 6)
+  })
+
+  it('pode passar de 100% (acabou de repor bem mais que o costume) -- não é um bug, só reflete a saúde real do estoque', () => {
+    expect(calculateStockPercentRemaining(300, 100)).toBeCloseTo(300, 6)
+  })
+
+  it('referência zero (sem histórico): 0% se esgotado, 100% se há algo em estoque sem como comparar', () => {
+    expect(calculateStockPercentRemaining(0, 0)).toBe(0)
+    expect(calculateStockPercentRemaining(5, 0)).toBe(100)
+  })
+
+  it('cenário de giro rápido (o bug do Fix 2): item restocado muitas vezes não cai artificialmente pra crítico', () => {
+    // Item com giro rápido: 20 compras de 100 unidades já feitas ao longo do
+    // tempo (2000 total já comprado) -- mas o saldo atual (90, logo após a
+    // 20a reposição) é saudável relativo ao padrão de reposição desse item.
+    const purchaseHistoryDesc = Array(20).fill(100) // mais recente primeiro
+    const currentStock = 90
+
+    // Comportamento ANTIGO (não exportado, calculado aqui só pra contraste):
+    // 90 / (20*100) * 100 = 4.5% -> cairia em "crítico" (< 10%), errado.
+    const oldPercent = (currentStock / (purchaseHistoryDesc.reduce((s, q) => s + q, 0))) * 100
+    expect(oldPercent).toBeCloseTo(4.5, 4)
+    expect(getStockStatusWithThresholds(oldPercent, 0.30, 0.10).label).toBe('Estoque crítico')
+
+    // Comportamento NOVO: referência = média das últimas 5 compras (100),
+    // percentRemaining = 90/100*100 = 90% -> "Em estoque", correto.
+    const referenceQuantity = calculateStockReferenceQuantity(purchaseHistoryDesc)
+    const newPercent = calculateStockPercentRemaining(currentStock, referenceQuantity)
+    expect(newPercent).toBeCloseTo(90, 6)
+    expect(getStockStatusWithThresholds(newPercent, 0.30, 0.10).label).toBe('Em estoque')
   })
 })
 
@@ -644,6 +730,47 @@ describe('buildProductionCostSnapshot (spec §4/§5, task-5 brief)', () => {
   it('é uma função pura: mesma entrada sempre produz o mesmo snapshot (serializável em JSON, sem instâncias/timestamps escondidos)', () => {
     const a = buildProductionCostSnapshot(baseInput, settings)
     const b = buildProductionCostSnapshot(baseInput, settings)
+    expect(a).toEqual(b)
+    expect(JSON.parse(JSON.stringify(a))).toEqual(a)
+  })
+})
+
+// Sale cost snapshot (task-10 brief, new feature): mirrors
+// buildProductionCostSnapshot's {unitCost, total} shape above -- a Sale has
+// no waste/quantityFailed concept of its own, so `total` here is simply
+// unitCost.finalCost * quantity, the total cost basis the sale represents.
+describe('buildSaleCostSnapshot (task-10 brief, new feature -- Sale cost snapshot)', () => {
+  const breakdown: ProductCostBreakdown = {
+    filamentCost: 3,
+    electricityCost: 0.5,
+    printerCost: 0.6,
+    maintenanceCost: 0.1,
+    laborCost: 2,
+    suppliesCost: 0.2,
+    packagingCost: 0.3,
+    accessoryCost: 0.4,
+    failureRateCost: 0.71,
+    subtotal: 7.1,
+    finalCost: 7.81,
+    suggestedPrice: 15.62,
+    marketplacePrice: 22,
+  }
+
+  it('total = unitCost.finalCost * quantity (hand-computed)', () => {
+    const snapshot = buildSaleCostSnapshot(breakdown, 3)
+    expect(snapshot.quantity).toBe(3)
+    expect(snapshot.unitCost).toEqual(breakdown)
+    expect(snapshot.total).toBeCloseTo(7.81 * 3, 6)
+  })
+
+  it('quantidade 1: total == finalCost', () => {
+    const snapshot = buildSaleCostSnapshot(breakdown, 1)
+    expect(snapshot.total).toBeCloseTo(7.81, 6)
+  })
+
+  it('é uma função pura, serializável em JSON', () => {
+    const a = buildSaleCostSnapshot(breakdown, 5)
+    const b = buildSaleCostSnapshot(breakdown, 5)
     expect(a).toEqual(b)
     expect(JSON.parse(JSON.stringify(a))).toEqual(a)
   })

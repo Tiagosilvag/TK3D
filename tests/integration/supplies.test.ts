@@ -205,4 +205,20 @@ describe('deleteSupply', () => {
     const stillThere = await prisma.supply.findUnique({ where: { id: item.id } })
     expect(stillThere).not.toBeNull()
   })
+
+  // Fix 1 (task-10 brief): mirrors accessories.test.ts's equivalent case --
+  // "esgotados não devem ser excluídos" had no guard at all before this fix.
+  it('recusa excluir um insumo esgotado (currentStock <= 0), mesmo sem nenhum Product referenciando', async () => {
+    await createSupply(fd({ name: 'Insumo Esgotado', unit: 'UN', quantity: '10', totalCost: '5', purchaseDate: '2026-01-01' }))
+    const item = await prisma.supply.findFirstOrThrow({ where: { name: 'Insumo Esgotado' } })
+
+    await prisma.supply.update({ where: { id: item.id }, data: { currentStock: 0 } })
+
+    const result = await deleteSupply(item.id)
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/esgotad/i)
+
+    const stillThere = await prisma.supply.findUnique({ where: { id: item.id } })
+    expect(stillThere).not.toBeNull()
+  })
 })

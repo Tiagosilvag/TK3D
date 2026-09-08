@@ -63,6 +63,42 @@ export function getStockStatusWithThresholds(
   return { emoji: '🟢', label: 'Em estoque' }
 }
 
+// Fix 2 (task-10 brief): percentRemaining for Accessory/Supply used to
+// divide currentStock by "total já comprado" (sum of EVERY purchase ever
+// recorded) -- correct-looking at first ("quanto sobrou do total"), but it
+// decays toward zero for any item that gets restocked often, regardless of
+// whether it's actually running low. A fast-turnover item restocked weekly
+// for a year looks progressively more "crítico" over time even right after
+// a normal-sized restock, purely because the denominator keeps growing.
+//
+// Chosen fix: replace "total já comprado" with "média das últimas N
+// compras" as the 100%-reference stock level. This was the brief's own
+// second proposed option, picked over "drop percentage, use only an
+// absolute currentStock threshold" for two reasons: (1) it keeps
+// getStockStatusWithThresholds and every percentage-based UI element
+// unchanged -- only how percentRemaining itself is computed changes; (2) it
+// needs no new schema field (no per-item "standard restock size" like
+// Filament's initialStockGrams) -- the purchase history both pages already
+// load (ordered by purchaseDate desc) is enough. A fast-turnover item's
+// reference level tracks its OWN typical restock size, so right after a
+// normal restock it reads close to 100% no matter how many restocks came
+// before it -- exactly the property the old calculation lacked.
+export function calculateStockReferenceQuantity(recentPurchaseQuantitiesDesc: number[], sampleSize = 5): number {
+  const sample = recentPurchaseQuantitiesDesc.slice(0, sampleSize)
+  if (sample.length === 0) return 0
+  return sample.reduce((sum, q) => sum + q, 0) / sample.length
+}
+
+// referenceQuantity <= 0 only happens when there's no purchase history at
+// all (impossible in practice -- creating an Accessory/Supply IS its first
+// purchase) or every recent purchase was somehow zero -- treated as "can't
+// judge health from history", so it falls back to a binary
+// esgotado(0%)/não-esgotado(100%) reading instead of a NaN/Infinity percent.
+export function calculateStockPercentRemaining(currentStock: number, referenceQuantity: number): number {
+  if (referenceQuantity <= 0) return currentStock > 0 ? 100 : 0
+  return (currentStock / referenceQuantity) * 100
+}
+
 // Weighted-average purchase cost (spec §1.1, task-3 brief): every new
 // AccessoryPurchase (and, task 4, SupplyPurchase) folds into the running
 // average instead of replacing it. Creating a brand-new Accessory is just
@@ -486,5 +522,34 @@ export function buildProductionCostSnapshot(
     wasteCost,
     total,
     consumedResources,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sale cost snapshot (task-10 brief, new feature -- explicit user request
+// after the final whole-branch review, mirroring ProductionRun.costSnapshot
+// exactly).
+//
+// A Sale freezes its cost basis at creation time into a `costSnapshot Json?`
+// column, same historical-cost architecture as ProductionRun (spec §4):
+// later Settings/Printer/Filament/Accessory/Supply changes must never alter
+// an already-recorded sale's displayed profit. Deliberately the SAME
+// {unitCost, total} shape as ProductionCostSnapshot above (unitCost is the
+// full per-unit ProductCostBreakdown, total is the aggregate figure every
+// later screen reads) so a caller familiar with one recognizes the other --
+// a Sale has no waste/quantityFailed concept of its own, so there is no
+// wasteCost/consumedResources term here; `total` is simply
+// unitCost.finalCost * quantity, the total cost basis this sale represents.
+export interface SaleCostSnapshot {
+  quantity: number
+  unitCost: ProductCostBreakdown
+  total: number
+}
+
+export function buildSaleCostSnapshot(breakdown: ProductCostBreakdown, quantity: number): SaleCostSnapshot {
+  return {
+    quantity,
+    unitCost: breakdown,
+    total: breakdown.finalCost * quantity,
   }
 }

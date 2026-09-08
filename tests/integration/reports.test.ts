@@ -2,7 +2,6 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 import {
   getRevenueByChannel,
-  getTotalWasteCost,
   getTopProducts,
   getConsignmentStockSummary,
   getConsignmentRevenue,
@@ -69,43 +68,13 @@ describe('getRevenueByChannel', () => {
   })
 })
 
-describe('getTotalWasteCost', () => {
-  it('soma o custo de desperdício de todas as execuções de produção', async () => {
-    const { printer, filament, product } = await createSupportRecords()
-    await prisma.settings.upsert({ where: { id: 1 }, update: { energyCostPerKwh: 1 }, create: { id: 1, energyCostPerKwh: 1 } })
-
-    await prisma.productionRun.create({
-      data: {
-        productId: product.id,
-        printerId: printer.id,
-        filamentId: filament.id,
-        date: new Date(),
-        quantityPlanned: 10,
-        quantitySuccess: 8,
-        quantityFailed: 2,
-        gramsUsed: 200,
-        gramsWasted: 100,
-        timeWastedHours: 1,
-      },
-    })
-
-    // printerDepreciationCostPerHour = 1 / 1 = 1 (maintenance is no longer folded
-    // into depreciation, it's a separate term below)
-    // printerMaintenanceCostPerHour = purchasePrice(1) * annualMaintenancePercent(0.10, Settings default) / annualUsageHours(2000, Settings default) = 0.00005
-    // filamentPricePerKg = 100 / 1 = 100
-    // filamentWasteCost = 100g * (100/1000) = 10
-    // timeWasteCost = 1h * (1 + 0.00005 + 1*0.1) = 1.10005
-    // total = 10 + 1.10005 = 11.10005
-    const total = await getTotalWasteCost()
-    expect(total).toBeCloseTo(11.10005, 5)
-  })
-
-  it('retorna zero quando não há execuções de produção', async () => {
-    await prisma.settings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } })
-    const total = await getTotalWasteCost()
-    expect(total).toBe(0)
-  })
-})
+// Fix 3 (task-10 brief): getTotalWasteCost() -- which used to live here and
+// live-recalculated waste cost from CURRENT Printer/Filament/Settings for
+// every historical run -- was removed along with its dashboard card. The
+// "relatórios de produção (Task 9)" suite below already covers the correct,
+// snapshot-based replacement (getProductionSummary().totalWasteCost, which
+// sums each run's frozen costSnapshot.wasteCost and is now the only source
+// of this number).
 
 describe('getTopProducts', () => {
   it('retorna os produtos mais vendidos em ordem decrescente de quantidade', async () => {
@@ -261,7 +230,13 @@ describe('relatórios de produção (Task 9)', () => {
   }
 
   describe('getProductionSummary', () => {
-    it('agrega todas as produções sem filtro', async () => {
+    // Fix 5 (task-10 brief): run4 is CANCELADA (cancelled in
+    // createProductionFixtures above) -- a cancelled run had all its stock
+    // fully reversed, so it represents zero real incurred cost. totalCost/
+    // totalWasteCost must exclude it by default; totalRuns/
+    // totalUnitsProduced/totalTimeHours are unaffected (that's not what Fix
+    // 5 asks for -- only the cost/waste aggregates).
+    it('agrega todas as produções sem filtro, excluindo custo/desperdício de produções CANCELADAs (Fix 5)', async () => {
       const f = await createProductionFixtures()
       const summary = await getProductionSummary()
 
@@ -271,10 +246,23 @@ describe('relatórios de produção (Task 9)', () => {
       // totalTimeHours = product.printTimeHours*quantitySuccess + timeWastedHours per run
       const expectedTime = (1 * 10 + 0.1) + (1 * 7 + 0.2) + (2 * 8 + 0.3) + (2 * 5 + 0.4)
       expect(summary.totalTimeHours).toBeCloseTo(expectedTime, 5)
-      const expectedCost = f.snapshots.run1 + f.snapshots.run2 + f.snapshots.run3 + f.snapshots.run4
+      // run4 (CANCELADA) excluded from cost/waste totals.
+      const expectedCost = f.snapshots.run1 + f.snapshots.run2 + f.snapshots.run3
       expect(summary.totalCost).toBeCloseTo(expectedCost, 5)
-      const expectedWaste = f.wasteCosts.run1 + f.wasteCosts.run2 + f.wasteCosts.run3 + f.wasteCosts.run4
+      const expectedWaste = f.wasteCosts.run1 + f.wasteCosts.run2 + f.wasteCosts.run3
       expect(summary.totalWasteCost).toBeCloseTo(expectedWaste, 5)
+    })
+
+    it('ao filtrar explicitamente por status=CANCELADA, o custo dessa produção volta a ser exibido (Fix 5)', async () => {
+      const f = await createProductionFixtures()
+      const summary = await getProductionSummary({ status: 'CANCELADA' })
+
+      expect(summary.totalRuns).toBe(1)
+      expect(summary.totalUnitsProduced).toBe(5)
+      // The user explicitly asked to view the cancelled run -- its own
+      // recorded cost snapshot is still shown for it, not silently zeroed.
+      expect(summary.totalCost).toBeCloseTo(f.snapshots.run4, 5)
+      expect(summary.totalWasteCost).toBeCloseTo(f.wasteCosts.run4, 5)
     })
 
     it('retorna zeros quando não há produções', async () => {
@@ -331,7 +319,7 @@ describe('relatórios de produção (Task 9)', () => {
   })
 
   describe('getProductionByProduct', () => {
-    it('agrupa produção por produto', async () => {
+    it('agrupa produção por produto, excluindo custo de produções CANCELADAs (Fix 5)', async () => {
       const f = await createProductionFixtures()
       const rows = await getProductionByProduct()
       expect(rows).toHaveLength(2)
@@ -341,10 +329,12 @@ describe('relatórios de produção (Task 9)', () => {
       expect(rowA.quantitySuccess).toBe(17)
       expect(rowA.totalCost).toBeCloseTo(f.snapshots.run1 + f.snapshots.run2, 5)
 
+      // run4 (CANCELADA) still counts toward runsCount/quantitySuccess but
+      // contributes zero to totalCost by default.
       const rowB = rows.find((r) => r.productId === f.productB.id)!
       expect(rowB.runsCount).toBe(2)
       expect(rowB.quantitySuccess).toBe(13)
-      expect(rowB.totalCost).toBeCloseTo(f.snapshots.run3 + f.snapshots.run4, 5)
+      expect(rowB.totalCost).toBeCloseTo(f.snapshots.run3, 5)
     })
 
     it('respeita filtros', async () => {

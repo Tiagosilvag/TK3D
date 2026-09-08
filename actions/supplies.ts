@@ -81,13 +81,22 @@ export async function registerSupplyPurchase(formData: FormData): Promise<Action
   return { success: true }
 }
 
-// Physical delete — only allowed when nothing references this supply.
-// SupplyPurchase rows cascade automatically (they only exist to explain
-// this supply's own history); a ProductSupplyUsage still pointing at it
-// hits Postgres's FK constraint (already ON DELETE RESTRICT since the
-// original schema) and Prisma throws, which propagates unhandled -- same
-// precedent as deleteAccessory/deleteFilament.
+// Physical delete — only allowed when nothing references this supply AND it
+// isn't depleted. "Esgotados não podem ser excluídos" is an explicit rule
+// from the original spec/prompt (mirrors Accessory's spec §1.3 -- "mesma
+// lógica ... mesmo padrão esgotado/histórico") -- before this guard
+// (task-10 brief, Fix 1) the only thing stopping a delete was the FK
+// constraint below, which does nothing for an esgotado item that no Product
+// ever referenced. SupplyPurchase rows cascade automatically (they only
+// exist to explain this supply's own history); a ProductSupplyUsage still
+// pointing at it hits Postgres's FK constraint (already ON DELETE RESTRICT
+// since the original schema) and Prisma throws, which propagates unhandled --
+// same precedent as deleteAccessory/deleteFilament.
 export async function deleteSupply(id: string): Promise<ActionResult> {
+  const supply = await prisma.supply.findUniqueOrThrow({ where: { id } })
+  if (supply.currentStock.toNumber() <= 0) {
+    return { success: false, error: 'Itens esgotados não podem ser excluídos — o histórico é mantido automaticamente.' }
+  }
   await prisma.supply.delete({ where: { id } })
   revalidatePath('/supplies')
   return { success: true }

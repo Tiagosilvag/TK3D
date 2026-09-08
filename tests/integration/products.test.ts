@@ -280,6 +280,13 @@ describe('products actions', () => {
 
   describe('applyProductPrice (task-6 brief — Simulação de preço)', () => {
     async function createBaseProduct() {
+      // Fix 4 (task-10 brief): applyProductPrice now reads
+      // Settings.roundingMode, so every test in this describe block needs a
+      // Settings row to exist (this file's cleanup() wipes Settings
+      // entirely between tests, unlike the other suites). Default
+      // roundingMode (NONE) matches the pre-Fix-4 behavior exactly, so
+      // tests that don't care about rounding are unaffected.
+      await prisma.settings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } })
       const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
       const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
       const created = await createProduct(fd({
@@ -328,6 +335,35 @@ describe('products actions', () => {
       const untouched = await prisma.product.findUniqueOrThrow({ where: { id: product.id } })
       expect(untouched.suggestedPrice).toBeNull()
       expect(untouched.marketplacePrice).toBeNull()
+    })
+
+    // Fix 4 (task-10 brief): applyRounding/Settings.roundingMode (lib/costing.ts,
+    // built in Task 2) was fully implemented and unit-tested but had zero call
+    // sites -- applyProductPrice persisted whatever raw value it was handed,
+    // ignoring Settings.roundingMode entirely. Brief's own example: R$23,45
+    // with roundingMode=R90 must be GRAVADO as R$23,90.
+    it('aplica applyRounding (Settings.roundingMode) ao preço final antes de gravar (Fix 4)', async () => {
+      const product = await createBaseProduct()
+      await prisma.settings.upsert({ where: { id: 1 }, update: { roundingMode: 'R90' }, create: { id: 1, roundingMode: 'R90' } })
+
+      const result = await applyProductPrice(product.id, 23.45, 41.12)
+      expect(result.success).toBe(true)
+
+      const updated = await prisma.product.findUniqueOrThrow({ where: { id: product.id } })
+      expect(updated.suggestedPrice?.toNumber()).toBeCloseTo(23.90, 2)
+      expect(updated.marketplacePrice?.toNumber()).toBeCloseTo(41.90, 2)
+    })
+
+    it('com roundingMode=NONE (default), grava o preço exatamente como recebido -- sem regressão', async () => {
+      const product = await createBaseProduct()
+      await prisma.settings.upsert({ where: { id: 1 }, update: { roundingMode: 'NONE' }, create: { id: 1, roundingMode: 'NONE' } })
+
+      const result = await applyProductPrice(product.id, 23.45, 41.12)
+      expect(result.success).toBe(true)
+
+      const updated = await prisma.product.findUniqueOrThrow({ where: { id: product.id } })
+      expect(updated.suggestedPrice?.toNumber()).toBeCloseTo(23.45, 2)
+      expect(updated.marketplacePrice?.toNumber()).toBeCloseTo(41.12, 2)
     })
   })
 

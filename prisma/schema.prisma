@@ -346,6 +346,20 @@ model Sale {
   saleDate        DateTime
   buyerOrPlatform String?
   notes           String?
+  // Custo histórico (task-10 brief, new feature -- mirrors ProductionRun's
+  // costSnapshot exactly, spec §4 pattern extended here per explicit user
+  // request after the final review): calculated ONCE at creation time via
+  // createSale (lib/costing.ts#buildSaleCostSnapshot, from
+  // getProductCostBreakdown's then-current Printer/Filament/Accessory/
+  // Supply/Settings values) and never rewritten afterwards -- altering
+  // Settings/Printer/Filament/Accessory/Supply later must never change an
+  // already-recorded sale's displayed profit. Nullable because pre-existing
+  // sales (created before this column existed) genuinely have no snapshot --
+  // there's no historical state to reconstruct one retroactively (same
+  // "don't invent data" precedent as ProductionRun.costSnapshot and the
+  // Accessory/Supply purchase-history backfill). getSaleProfit() falls back
+  // to a live recompute only for such legacy rows.
+  costSnapshot    Json?
   createdAt       DateTime    @default(now())
 }
 

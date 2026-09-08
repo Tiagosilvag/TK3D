@@ -36,6 +36,13 @@ export default async function SalesPage({
     prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
   ])
 
+  // getSaleProfit (task-10 brief, new feature) now returns {profit, estimated}
+  // instead of a bare number -- estimated is true only for a legacy sale
+  // recorded before Sale.costSnapshot existed, which still falls back to a
+  // live recompute (so it CAN drift if Settings/Printer/Filament/Accessory/
+  // Supply change later, unlike every snapshot-backed sale). Surfaced below
+  // as a small "*" marker rather than a bigger UI change -- every new sale's
+  // profit is frozen and displays exactly as before.
   const profits = await Promise.all(sales.map((s) => getSaleProfit(s.id)))
 
   return (
@@ -78,7 +85,7 @@ export default async function SalesPage({
         </thead>
         <tbody>
           {sales.map((s, i) => {
-            const profit = profits[i]
+            const { profit, estimated } = profits[i]
             return (
               <tr key={s.id} className="tk-row">
                 <td className="py-2">{s.saleDate.toLocaleDateString('pt-BR')}</td>
@@ -99,6 +106,9 @@ export default async function SalesPage({
                 <td className="text-slate-500 dark:text-slate-400">{s.buyerOrPlatform ?? '-'}</td>
                 <td className={profit >= 0 ? 'font-medium text-emerald-600 dark:text-emerald-400' : 'font-medium text-red-600 dark:text-red-400'}>
                   {formatCurrency(profit)}
+                  {estimated && (
+                    <span title="Venda anterior a este recurso: custo estimado retroativamente, pode variar se preços mudarem" className="ml-1 text-slate-400 dark:text-slate-500">*</span>
+                  )}
                 </td>
                 <td>
                   <ConfirmDeleteForm action={async () => { 'use server'; await deleteSale(s.id) }} />

@@ -1,18 +1,25 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createSale } from '@/actions/sales'
+import { createSale, getSaleProfit } from '@/actions/sales'
+import { getProductCostBreakdown } from '@/actions/products'
+import type { SaleCostSnapshot } from '@/lib/costing'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
 async function cleanup() {
   // Sale references Product, which references Printer/Filament, so it must
   // be wiped before those parent tables (children before parents), matching
-  // the discipline in productionRuns.test.ts.
+  // the discipline in productionRuns.test.ts. productAccessoryUsage/
+  // accessory/supply added for the Sale cost snapshot tests below, which
+  // give a product an accessory usage to mutate its price after a sale.
   await prisma.sale.deleteMany()
   await prisma.productSupplyUsage.deleteMany()
+  await prisma.productAccessoryUsage.deleteMany()
   await prisma.product.deleteMany()
   await prisma.printer.deleteMany()
   await prisma.filament.deleteMany()
+  await prisma.accessory.deleteMany()
+  await prisma.supply.deleteMany()
 }
 
 beforeAll(async () => {
@@ -110,5 +117,109 @@ describe('sales actions', () => {
 
     const count = await prisma.sale.count({ where: { productId: product.id } })
     expect(count).toBe(0)
+  })
+})
+
+// New feature (task-10 brief): Sale gains costSnapshot, mirroring
+// ProductionRun's exactly (spec §4 pattern, Task 7). createSale computes and
+// stores it ONCE at creation time from getProductCostBreakdown's
+// then-current values; getSaleProfit() reads it back instead of
+// recalculating live. Same guarantee already proven for ProductionRun in
+// Task 7's tests: changing a price afterward must not move an
+// already-recorded sale's profit.
+describe('Sale cost snapshot (task-10 brief, new feature)', () => {
+  async function createProductWithAccessory() {
+    const printer = await prisma.printer.create({ data: { name: 'P2', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Azul', colorHex: '#0000ff', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const accessory = await prisma.accessory.create({ data: { name: 'Argola Snapshot', type: 'MOSQUETAO', currentStock: 100, avgUnitCost: 0.50 } })
+    const product = await prisma.product.create({
+      data: {
+        name: 'Produto Com Acessório Snapshot',
+        printerId: printer.id,
+        filamentId: filament.id,
+        weightGrams: 30,
+        printTimeHours: 2,
+        laborTimeHours: 0.25,
+      },
+    })
+    await prisma.productAccessoryUsage.create({ data: { productId: product.id, accessoryId: accessory.id, quantity: 2 } })
+    return { printer, filament, accessory, product }
+  }
+
+  it('createSale grava um costSnapshot com o total correto (unitCost.finalCost * quantity)', async () => {
+    const { product } = await createProductWithAccessory()
+
+    const result = await createSale(fd({
+      channel: 'DIRETA',
+      productId: product.id,
+      quantity: '3',
+      unitPrice: '50.00',
+      saleDate: '2026-09-01',
+    }))
+    expect(result.success).toBe(true)
+
+    const sale = await prisma.sale.findFirstOrThrow({ where: { productId: product.id } })
+    expect(sale.costSnapshot).not.toBeNull()
+    const snapshot = sale.costSnapshot as unknown as SaleCostSnapshot
+    expect(snapshot.quantity).toBe(3)
+    expect(snapshot.total).toBeCloseTo(snapshot.unitCost.finalCost * 3, 6)
+
+    const profit = await getSaleProfit(sale.id)
+    expect(profit.estimated).toBe(false)
+    expect(profit.profit).toBeCloseTo(3 * 50 - snapshot.total, 6)
+  })
+
+  it('lucro de uma venda já registrada NÃO muda depois que o preço de um acessório ou de Settings muda (mesma garantia de ProductionRun/Task 7)', async () => {
+    const { accessory, product } = await createProductWithAccessory()
+    await prisma.settings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } })
+
+    const result = await createSale(fd({
+      channel: 'DIRETA',
+      productId: product.id,
+      quantity: '2',
+      unitPrice: '60.00',
+      saleDate: '2026-09-01',
+    }))
+    expect(result.success).toBe(true)
+    const sale = await prisma.sale.findFirstOrThrow({ where: { productId: product.id } })
+
+    const profitBefore = await getSaleProfit(sale.id)
+    expect(profitBefore.estimated).toBe(false)
+
+    // Change the accessory's avgUnitCost (e.g. a new, more expensive
+    // AccessoryPurchase recalculated it) AND a Settings cost input, both
+    // AFTER the sale was already recorded.
+    await prisma.accessory.update({ where: { id: accessory.id }, data: { avgUnitCost: 99 } })
+    await prisma.settings.update({ where: { id: 1 }, data: { energyCostPerKwh: 999, laborCostPerHour: 999 } })
+
+    const profitAfter = await getSaleProfit(sale.id)
+    expect(profitAfter.profit).toBeCloseTo(profitBefore.profit, 6)
+    expect(profitAfter.estimated).toBe(false)
+
+    // Sanity check: had this sale recalculated live (the old, pre-Fix
+    // behavior), its profit WOULD have moved -- proving the settings/
+    // accessory change above was actually capable of affecting cost.
+    const liveBreakdown = await getProductCostBreakdown(product.id)
+    const liveRecomputedProfit = 2 * (60 - liveBreakdown.finalCost)
+    expect(liveRecomputedProfit).not.toBeCloseTo(profitBefore.profit, 1)
+  })
+
+  it('venda legada sem costSnapshot (pré-migration) cai no fallback de recálculo ao vivo, marcado como estimated', async () => {
+    const { product } = await createProductWithAccessory()
+
+    // Simulates a pre-migration row: created directly, bypassing createSale,
+    // so costSnapshot stays null (exactly what old rows look like).
+    const legacySale = await prisma.sale.create({
+      data: { channel: 'DIRETA', productId: product.id, quantity: 1, unitPrice: 100, saleDate: new Date('2026-01-01') },
+    })
+    expect(legacySale.costSnapshot).toBeNull()
+
+    const profit = await getSaleProfit(legacySale.id)
+    expect(profit.estimated).toBe(true)
+    // Doesn't crash/lock the screen -- a real number comes back, computed
+    // live via getProductCostBreakdown, matching the pre-Fix behavior for
+    // exactly this legacy case.
+    expect(typeof profit.profit).toBe('number')
+    expect(Number.isFinite(profit.profit)).toBe(true)
   })
 })

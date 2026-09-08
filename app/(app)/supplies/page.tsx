@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { formatCurrency } from '@/lib/format'
-import { getStockStatusWithThresholds } from '@/lib/costing'
+import { getStockStatusWithThresholds, calculateStockReferenceQuantity, calculateStockPercentRemaining } from '@/lib/costing'
 import { SupplyForm } from './SupplyForm'
 import { RestockForm } from './RestockForm'
 import { deleteSupply } from '@/actions/supplies'
@@ -69,17 +69,17 @@ export default async function SuppliesPage({
   const lowThresholdPercent = settings.stockLowThresholdPercent.toNumber()
   const criticalThresholdPercent = settings.stockCriticalThresholdPercent.toNumber()
 
-  // percentRemaining = quanto do total já comprado (soma de todas as
-  // SupplyPurchase) ainda está em estoque -- não existe um campo "estoque
-  // inicial" fixo pra Supply (diferente do Filament, onde cada rolo tem um
-  // peso inicial único): o estoque de um Supply é reposto ao longo do tempo
-  // por várias compras, então "total já comprado" é a referência de 100%
-  // mais direta pra medir "quanto sobrou" (mesmo cálculo de Accessory).
+  // percentRemaining (Fix 2, task-10 brief) = currentStock sobre a MÉDIA DAS
+  // ÚLTIMAS N COMPRAS (lib/costing.ts#calculateStockReferenceQuantity), não
+  // mais "total já comprado" -- mesmo cálculo e mesmo raciocínio de
+  // Accessory (ver comentário lá): dividir pelo total histórico decaía pra
+  // zero em qualquer item de giro rápido. `s.purchases` já vem ordenado por
+  // purchaseDate desc (query acima).
   const rows = supplies.map((s) => {
     const currentStock = s.currentStock.toNumber()
     const avgUnitCost = s.avgUnitCost.toNumber()
-    const totalPurchased = s.purchases.reduce((sum, p) => sum + p.quantity.toNumber(), 0)
-    const percentRemaining = totalPurchased > 0 ? (currentStock / totalPurchased) * 100 : 0
+    const referenceQuantity = calculateStockReferenceQuantity(s.purchases.map((p) => p.quantity.toNumber()))
+    const percentRemaining = calculateStockPercentRemaining(currentStock, referenceQuantity)
     const valueInStock = currentStock * avgUnitCost
     const status = getStockStatusWithThresholds(percentRemaining, lowThresholdPercent, criticalThresholdPercent)
     return { supply: s, currentStock, avgUnitCost, percentRemaining, valueInStock, status }
@@ -215,6 +215,9 @@ export default async function SuppliesPage({
       {esgotadosRows.length > 0 && (
         <details className="mt-8">
           <summary className="tk-summary">Insumos esgotados ({esgotadosRows.length})</summary>
+          {/* Fix 1 (task-10 brief): esgotados não podem ser excluídos (guarda em
+              deleteSupply) -- o botão de excluir some desta seção porque a
+              ação sempre recusaria, sem oferecer uma opção que nunca funciona. */}
           <table className="mt-3 w-full text-sm">
             <thead>
               <tr className="tk-table-head-row">
@@ -222,7 +225,6 @@ export default async function SuppliesPage({
                 <th>Unidade</th>
                 <th>Custo médio</th>
                 <th>Repor estoque</th>
-                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -233,9 +235,6 @@ export default async function SuppliesPage({
                   <td>{formatCurrency(avgUnitCost)}</td>
                   <td>
                     <RestockForm supplyId={s.id} />
-                  </td>
-                  <td>
-                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteSupply(s.id) }} />
                   </td>
                 </tr>
               ))}

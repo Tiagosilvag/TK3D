@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { productSchema } from '@/lib/validation/product'
-import { calculateProductCost, calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour, calculateFilamentPricePerKg, sumUsageCost, type ProductCostBreakdown } from '@/lib/costing'
+import { calculateProductCost, calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour, calculateFilamentPricePerKg, sumUsageCost, applyRounding, type ProductCostBreakdown } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
@@ -221,6 +221,18 @@ const applyPriceSchema = z.object({
   marketplacePrice: z.coerce.number().nonnegative('Preço de marketplace não pode ser negativo'),
 })
 
+// Fix 4 (task-10 brief): applyRounding/Settings.roundingMode (lib/costing.ts,
+// Task 2) had zero call sites before this -- fully implemented and
+// unit-tested, but never wired into anything that persists or displays a
+// final price. Applied here to BOTH final prices, exactly once, right
+// before persisting -- never to any cost breakdown component (spec §3: "só
+// é aplicada ao preço sugerido/marketplace final, nunca aos componentes de
+// custo"). PriceSimulation.tsx applies the same function to the live
+// preview before this action is ever called, so the value the user sees
+// and the value this persists already agree; re-applying it here is a
+// no-op on an already-rounded value (applyRounding is idempotent for a
+// fixed mode) and is what makes this the single source of truth for what
+// actually gets stored, regardless of what a caller passes in.
 export async function applyProductPrice(
   productId: string,
   suggestedPrice: number,
@@ -228,11 +240,16 @@ export async function applyProductPrice(
 ): Promise<ActionResult> {
   const parsed = applyPriceSchema.safeParse({ productId, suggestedPrice, marketplacePrice })
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+
+  const settings = await prisma.settings.findUniqueOrThrow({ where: { id: 1 } })
+  const roundedSuggestedPrice = applyRounding(parsed.data.suggestedPrice, settings.roundingMode)
+  const roundedMarketplacePrice = applyRounding(parsed.data.marketplacePrice, settings.roundingMode)
+
   await prisma.product.update({
     where: { id: parsed.data.productId },
     data: {
-      suggestedPrice: parsed.data.suggestedPrice,
-      marketplacePrice: parsed.data.marketplacePrice,
+      suggestedPrice: roundedSuggestedPrice,
+      marketplacePrice: roundedMarketplacePrice,
     },
   })
   revalidatePath('/products')

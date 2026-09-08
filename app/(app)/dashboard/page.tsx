@@ -3,7 +3,6 @@ import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import {
   getRevenueByChannel,
-  getTotalWasteCost,
   getTopProducts,
   getConsignmentStockSummary,
   getConsignmentRevenue,
@@ -111,7 +110,6 @@ export default async function DashboardPage({
 
   const [
     revenue,
-    wasteCost,
     topProducts,
     consignmentStock,
     consignmentRevenue,
@@ -123,7 +121,6 @@ export default async function DashboardPage({
     filterPrinters,
   ] = await Promise.all([
     getRevenueByChannel(),
-    getTotalWasteCost(),
     getTopProducts(5),
     getConsignmentStockSummary(),
     getConsignmentRevenue(),
@@ -196,15 +193,17 @@ export default async function DashboardPage({
         </div>
       </section>
 
-      {/* Secondary metrics: waste is money lost (amber), consignment units are assets held by partners (slate). */}
+      {/* Secondary metric: consignment units are assets held by partners.
+          Fix 3 (task-10 brief): the old "Custo total de desperdício" card
+          here used to live-recalculate from CURRENT Printer/Filament/
+          Settings for every historical run (lib/reports.ts's now-removed
+          getTotalWasteCost) -- exactly what the costSnapshot mechanism
+          (spec §4, Task 7) was built to eliminate. The "Desperdício total"
+          card in the "Produção" section below (Task 9) already reads
+          costSnapshot.wasteCost correctly and is the single source of truth
+          for this number going forward, so the old contradicting card is
+          removed rather than kept side-by-side with it. */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Custo total de desperdício</p>
-          <p className="mt-1 font-display text-3xl font-semibold tabular-nums tracking-tight text-amber-600 dark:text-amber-400">
-            {formatCurrency(wasteCost)}
-          </p>
-          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Material e tempo de máquina perdidos em falhas de impressão</p>
-        </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
           <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Peças em consignação</p>
           <p className="mt-1 font-display text-3xl font-semibold tabular-nums tracking-tight text-slate-900 dark:text-slate-100">

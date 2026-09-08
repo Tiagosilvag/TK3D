@@ -1,6 +1,6 @@
 'use client'
 import { useMemo, useState } from 'react'
-import { simulateProductPrice } from '@/lib/costing'
+import { simulateProductPrice, applyRounding, type RoundingMode } from '@/lib/costing'
 import { applyProductPrice } from '@/actions/products'
 import { formatCurrency } from '@/lib/format'
 
@@ -23,6 +23,7 @@ export function PriceSimulation({
   marketplaceFeePercent,
   taxPercent,
   marketplaceFixedFee,
+  roundingMode,
   currentSuggestedPrice,
   currentMarketplacePrice,
 }: {
@@ -34,6 +35,12 @@ export function PriceSimulation({
   marketplaceFeePercent: number
   taxPercent: number
   marketplaceFixedFee: number
+  // Fix 4 (task-10 brief): Settings.roundingMode, applied to the final
+  // suggested/marketplace price shown here -- same value applyProductPrice
+  // applies again before persisting (lib/costing.ts#applyRounding is a
+  // no-op on an already-rounded number, so preview and persisted value
+  // always agree).
+  roundingMode: RoundingMode
   currentSuggestedPrice: number | null
   currentMarketplacePrice: number | null
 }) {
@@ -43,19 +50,24 @@ export function PriceSimulation({
   const [applying, setApplying] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
-  const result = useMemo(
-    () =>
-      simulateProductPrice({
-        finalCost,
-        markup,
-        marginPercent,
-        discountPercent,
-        marketplaceFeePercent,
-        taxPercent,
-        marketplaceFixedFee,
-      }),
-    [finalCost, markup, marginPercent, discountPercent, marketplaceFeePercent, taxPercent, marketplaceFixedFee],
-  )
+  const result = useMemo(() => {
+    const raw = simulateProductPrice({
+      finalCost,
+      markup,
+      marginPercent,
+      discountPercent,
+      marketplaceFeePercent,
+      taxPercent,
+      marketplaceFixedFee,
+    })
+    // Fix 4: rounding applies ONLY to the final price, never to any cost
+    // component upstream of it -- applied here, after simulateProductPrice
+    // has already produced the final suggested/marketplace figures.
+    return {
+      suggestedPrice: applyRounding(raw.suggestedPrice, roundingMode),
+      marketplacePrice: applyRounding(raw.marketplacePrice, roundingMode),
+    }
+  }, [finalCost, markup, marginPercent, discountPercent, marketplaceFeePercent, taxPercent, marketplaceFixedFee, roundingMode])
 
   async function handleApply() {
     setApplying(true)

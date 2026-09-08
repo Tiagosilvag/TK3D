@@ -79,12 +79,22 @@ export async function registerAccessoryPurchase(formData: FormData): Promise<Act
   return { success: true }
 }
 
-// Physical delete — only allowed when nothing references this accessory.
-// AccessoryPurchase rows cascade automatically (they only exist to explain
-// this accessory's own history); a Product still pointing at it via
-// accessoryId hits Postgres's FK constraint and Prisma throws, which
-// propagates unhandled — same precedent as deleteFilament.
+// Physical delete — only allowed when nothing references this accessory AND
+// it isn't depleted. "Esgotados não podem ser excluídos" is an explicit rule
+// from the original spec/prompt (spec §1.1: esgotado "some da lista
+// principal ... histórico de compras preservado", never deleted) -- before
+// this guard (task-10 brief, Fix 1) the only thing stopping a delete was the
+// FK constraint below, which does nothing for an esgotado item that no
+// Product ever referenced. AccessoryPurchase rows cascade automatically
+// (they only exist to explain this accessory's own history); a Product still
+// pointing at it via ProductAccessoryUsage hits Postgres's FK constraint and
+// Prisma throws, which propagates unhandled — same precedent as
+// deleteFilament.
 export async function deleteAccessory(id: string): Promise<ActionResult> {
+  const accessory = await prisma.accessory.findUniqueOrThrow({ where: { id } })
+  if (accessory.currentStock.toNumber() <= 0) {
+    return { success: false, error: 'Itens esgotados não podem ser excluídos — o histórico é mantido automaticamente.' }
+  }
   await prisma.accessory.delete({ where: { id } })
   revalidatePath('/accessories')
   return { success: true }

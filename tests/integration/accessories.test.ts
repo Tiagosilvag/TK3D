@@ -232,4 +232,26 @@ describe('deleteAccessory', () => {
     const stillThere = await prisma.accessory.findUnique({ where: { id: item.id } })
     expect(stillThere).not.toBeNull()
   })
+
+  // Fix 1 (task-10 brief): "esgotados não devem ser excluídos" is an explicit
+  // rule from the original spec/prompt -- before this fix, an unreferenced
+  // but depleted (currentStock <= 0) accessory had no guard at all and
+  // deleted cleanly (only the FK check above ever blocked a delete). This
+  // proves the guard rejects it instead, with history (the accessory row
+  // itself) preserved.
+  it('recusa excluir um acessório esgotado (currentStock <= 0), mesmo sem nenhum Product referenciando', async () => {
+    await createAccessory(fd({ name: 'Clicker Esgotado', type: 'CLICKER', quantity: '10', totalCost: '5', purchaseDate: '2026-01-01' }))
+    const item = await prisma.accessory.findFirstOrThrow({ where: { name: 'Clicker Esgotado' } })
+
+    // Drain it to 0 the same way production consumption would (task-7),
+    // without going through a whole ProductionRun fixture here.
+    await prisma.accessory.update({ where: { id: item.id }, data: { currentStock: 0 } })
+
+    const result = await deleteAccessory(item.id)
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/esgotad/i)
+
+    const stillThere = await prisma.accessory.findUnique({ where: { id: item.id } })
+    expect(stillThere).not.toBeNull()
+  })
 })

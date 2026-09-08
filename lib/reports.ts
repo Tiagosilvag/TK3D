@@ -1,5 +1,4 @@
 import { prisma } from '@/lib/prisma'
-import { calculateWasteCost, calculatePrinterDepreciationCostPerHour, calculatePrinterMaintenanceCostPerHour, calculateFilamentPricePerKg } from '@/lib/costing'
 import type { ProductionCostSnapshot } from '@/lib/costing'
 import type { Prisma, ProductionStatus, WasteReason } from '@prisma/client'
 
@@ -10,35 +9,6 @@ export async function getRevenueByChannel(): Promise<Record<'DIRETA' | 'MARKETPL
     result[s.channel] += s.quantity * s.unitPrice.toNumber()
   }
   return result as Record<'DIRETA' | 'MARKETPLACE', number>
-}
-
-export async function getTotalWasteCost(): Promise<number> {
-  const runs = await prisma.productionRun.findMany({ include: { printer: true, filament: true } })
-  const settings = await prisma.settings.findUniqueOrThrow({ where: { id: 1 } })
-  return runs.reduce((sum, run) => {
-    const printerDepreciationCostPerHour = calculatePrinterDepreciationCostPerHour({
-      purchasePrice: run.printer.purchasePrice.toNumber(),
-      depreciationHours: run.printer.depreciationHours.toNumber(),
-    })
-    const printerMaintenanceCostPerHour = calculatePrinterMaintenanceCostPerHour({
-      purchasePrice: run.printer.purchasePrice.toNumber(),
-      annualMaintenancePercent: settings.annualMaintenancePercent.toNumber(),
-      annualUsageHours: settings.annualUsageHours.toNumber(),
-    })
-    const filamentPricePerKg = calculateFilamentPricePerKg({
-      spoolPrice: run.filament.spoolPrice.toNumber(),
-      spoolWeightKg: run.filament.spoolWeightKg.toNumber(),
-    })
-    return sum + calculateWasteCost({
-      gramsWasted: run.gramsWasted.toNumber(),
-      timeWastedHours: run.timeWastedHours.toNumber(),
-      filamentPricePerKg,
-      printerDepreciationCostPerHour,
-      printerMaintenanceCostPerHour,
-      printerAvgPowerConsumptionKwh: run.printer.avgPowerConsumptionKwh.toNumber(),
-      energyCostPerKwh: settings.energyCostPerKwh.toNumber(),
-    })
-  }, 0)
 }
 
 export async function getConsignmentRevenue(): Promise<number> {
@@ -122,6 +92,21 @@ function readSnapshot(run: { costSnapshot: unknown }): ProductionCostSnapshot | 
   return run.costSnapshot as ProductionCostSnapshot | null
 }
 
+// Fix 5 (task-10 brief): a CANCELADA run had every resource it consumed
+// fully reversed by cancelProductionRun (spec §5.5) -- it represents zero
+// real incurred cost, so it must NOT inflate "Custo total"/"Desperdício
+// total" by default. It still keeps its own frozen costSnapshot (never
+// rewritten, same as any other run) so its cost isn't lost -- it just isn't
+// counted automatically. The one exception: if the caller explicitly asked
+// to filter down to status=CANCELADA (they deliberately want to inspect
+// cancelled runs), its cost IS counted for that explicit view -- the
+// existing status filter still lets a user see it if they choose, per the
+// brief.
+function shouldCountCost(run: { status: ProductionStatus }, filters: ProductionReportFilters): boolean {
+  if (run.status !== 'CANCELADA') return true
+  return filters.status === 'CANCELADA'
+}
+
 export interface ProductionSummary {
   totalRuns: number
   totalUnitsProduced: number
@@ -145,7 +130,7 @@ export async function getProductionSummary(filters: ProductionReportFilters = {}
     totalPlanned += run.quantityPlanned
     totalTimeHours += run.product.printTimeHours.toNumber() * run.quantitySuccess + run.timeWastedHours.toNumber()
     const snapshot = readSnapshot(run)
-    if (snapshot) {
+    if (snapshot && shouldCountCost(run, filters)) {
       totalCost += snapshot.total
       totalWasteCost += snapshot.wasteCost
     }
@@ -184,7 +169,7 @@ export async function getProductionByProduct(filters: ProductionReportFilters = 
     row.runsCount += 1
     row.quantitySuccess += run.quantitySuccess
     const snapshot = readSnapshot(run)
-    if (snapshot) row.totalCost += snapshot.total
+    if (snapshot && shouldCountCost(run, filters)) row.totalCost += snapshot.total
     byProduct.set(run.productId, row)
   }
 
