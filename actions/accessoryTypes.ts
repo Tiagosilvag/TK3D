@@ -10,13 +10,29 @@ function isUniqueConstraintError(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
 }
 
+// Bug 4: "CLICKER" e "Clicker" cadastrados como tipos diferentes. Todo nome
+// é normalizado pra "Primeira maiúscula, resto minúsculo" antes de salvar,
+// e a checagem de duplicata (abaixo) é case-insensitive -- então dois tipos
+// nunca mais divergem só por capitalização, seja na entrada do usuário
+// (normalização) ou num nome já existente escrito diferente (bloqueio).
+function normalizeTypeName(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) return trimmed
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase()
+}
+
 const nameSchema = z.object({ name: z.string().min(1, 'Nome é obrigatório') })
 
 export async function createAccessoryType(formData: FormData): Promise<ActionResult> {
   const parsed = nameSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  const name = normalizeTypeName(parsed.data.name)
+
+  const existing = await prisma.accessoryTypeRecord.findFirst({ where: { name: { equals: name, mode: 'insensitive' } } })
+  if (existing) return { success: false, error: `Já existe um tipo chamado "${existing.name}"` }
+
   try {
-    await prisma.accessoryTypeRecord.create({ data: { name: parsed.data.name } })
+    await prisma.accessoryTypeRecord.create({ data: { name } })
   } catch (err) {
     if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um tipo com esse nome' }
     throw err
@@ -28,8 +44,13 @@ export async function createAccessoryType(formData: FormData): Promise<ActionRes
 export async function renameAccessoryType(id: string, formData: FormData): Promise<ActionResult> {
   const parsed = nameSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  const name = normalizeTypeName(parsed.data.name)
+
+  const existing = await prisma.accessoryTypeRecord.findFirst({ where: { name: { equals: name, mode: 'insensitive' }, id: { not: id } } })
+  if (existing) return { success: false, error: `Já existe um tipo chamado "${existing.name}"` }
+
   try {
-    await prisma.accessoryTypeRecord.update({ where: { id }, data: { name: parsed.data.name } })
+    await prisma.accessoryTypeRecord.update({ where: { id }, data: { name } })
   } catch (err) {
     if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um tipo com esse nome' }
     throw err

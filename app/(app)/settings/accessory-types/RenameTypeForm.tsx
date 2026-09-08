@@ -19,9 +19,12 @@ export function RenameTypeForm({ id, name }: { id: string; name: string }) {
 
   if (!editing) {
     return (
-      <button type="button" onClick={() => setEditing(true)} className="text-amber-600 hover:underline dark:text-amber-400">
-        Renomear
-      </button>
+      <div className="flex items-center gap-3">
+        <span className="text-slate-800 dark:text-slate-200">{name}</span>
+        <button type="button" onClick={() => setEditing(true)} className="text-amber-600 hover:underline dark:text-amber-400">
+          Renomear
+        </button>
+      </div>
     )
   }
 

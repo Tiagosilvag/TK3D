@@ -118,6 +118,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
             laborCostPerHour={settings.laborCostPerHour.toNumber()}
             currentSuppliesCost={currentSuppliesCost}
             currentAccessoriesCost={currentAccessoriesCost}
+            showLiveCostPanel={false}
           />
 
           <details className="mt-6 tk-panel p-4">

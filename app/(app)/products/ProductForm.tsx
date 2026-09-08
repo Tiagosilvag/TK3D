@@ -43,6 +43,7 @@ export function ProductForm({
   laborCostPerHour,
   currentSuppliesCost = 0,
   currentAccessoriesCost = 0,
+  showLiveCostPanel = true,
 }: {
   product?: ProductValues
   printers: PrinterOption[]
@@ -51,6 +52,13 @@ export function ProductForm({
   laborCostPerHour: number
   currentSuppliesCost?: number
   currentAccessoriesCost?: number
+  // Bug 7: a página de detalhe (/products/[id]) já mostra "Simulação de
+  // preço" (usa finalCost com taxa de falha + markup/margem/desconto
+  // configuráveis) -- ter os dois painéis lado a lado com fórmulas
+  // diferentes (aqui: ×2/×3,3 fixos; lá: Settings-driven) confundia mais do
+  // que ajudava. Only a página de criação (/products, sem o painel da
+  // direita ainda) continua mostrando este painel.
+  showLiveCostPanel?: boolean
 }) {
   const formRef = useRef<HTMLFormElement>(null)
   const router = useRouter()
@@ -186,6 +194,7 @@ export function ProductForm({
         </div>
       </form>
 
+      {showLiveCostPanel && (
       <div className="mt-4 tk-panel p-4">
         <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Custo estimado (ao vivo)</h2>
         <dl className="space-y-1 text-sm">
@@ -231,6 +240,7 @@ export function ProductForm({
           </div>
         </dl>
       </div>
+      )}
     </>
   )
 }

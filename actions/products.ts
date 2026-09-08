@@ -115,6 +115,31 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
   )
 }
 
+// Bug 3: auto-preenchimento do formulário de Produção ao selecionar um
+// produto -- devolve os dados da ficha técnica que o form de produção
+// consegue mapear (impressora/filamento, e peso×qtd como sugestão de
+// "Filamento usado (g)"). printTimeHours vai junto só como referência
+// informativa: ProductionRun não tem um campo de tempo de impressão
+// próprio (só timeWastedHours, que é sobre desperdício), então a tela usa
+// esse valor pra mostrar "tempo esperado" ao lado da quantidade planejada,
+// sem inventar uma coluna nova no schema pra isso.
+export interface ProductProductionDefaults {
+  printerId: string
+  filamentId: string
+  weightGrams: number
+  printTimeHours: number
+}
+
+export async function getProductProductionDefaults(productId: string): Promise<ProductProductionDefaults> {
+  const product = await prisma.product.findUniqueOrThrow({ where: { id: productId } })
+  return {
+    printerId: product.printerId,
+    filamentId: product.filamentId,
+    weightGrams: product.weightGrams.toNumber(),
+    printTimeHours: product.printTimeHours.toNumber(),
+  }
+}
+
 function filamentOptionLabel(f: {
   manufacturer: string
   colorName: string

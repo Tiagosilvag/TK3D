@@ -3,6 +3,7 @@ import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createProductionRun, updateProductionRun } from '@/actions/productionRuns'
+import { getProductProductionDefaults } from '@/actions/products'
 import { WASTE_REASON_LABELS } from '@/lib/format'
 import { SubmitButton } from '@/components/SubmitButton'
 import type { WasteReason } from '@prisma/client'
@@ -10,6 +11,10 @@ import type { WasteReason } from '@prisma/client'
 const WASTE_REASON_OPTIONS = Object.keys(WASTE_REASON_LABELS) as WasteReason[]
 
 type Option = { id: string; name: string }
+
+function formatHours(hours: number): string {
+  return `${hours.toFixed(2)}h`
+}
 
 type EditingRun = {
   id: string
@@ -42,6 +47,45 @@ export function ProductionRunForm({
   const formRef = useRef<HTMLFormElement>(null)
   const [quantityFailed, setQuantityFailed] = useState(editingRun ? String(editingRun.quantityFailed) : '')
 
+  // Bug 3: selecionar um produto busca sua ficha técnica e pré-preenche
+  // impressora/filamento/"Filamento usado (g)" — tudo continua editável,
+  // é só um ponto de partida.
+  const [productId, setProductId] = useState('')
+  const [printerId, setPrinterId] = useState('')
+  const [filamentId, setFilamentId] = useState('')
+  const [quantityPlanned, setQuantityPlanned] = useState('')
+  const [gramsUsed, setGramsUsed] = useState('')
+  const [expectedPrintTimeHours, setExpectedPrintTimeHours] = useState<number | null>(null)
+  const [productWeightGrams, setProductWeightGrams] = useState<number | null>(null)
+
+  async function handleProductChange(newProductId: string) {
+    setProductId(newProductId)
+    if (!newProductId) {
+      setExpectedPrintTimeHours(null)
+      setProductWeightGrams(null)
+      return
+    }
+    try {
+      const defaults = await getProductProductionDefaults(newProductId)
+      setPrinterId(defaults.printerId)
+      setFilamentId(defaults.filamentId)
+      setExpectedPrintTimeHours(defaults.printTimeHours)
+      setProductWeightGrams(defaults.weightGrams)
+      const qty = parseFloat(quantityPlanned) || 1
+      setGramsUsed(String(defaults.weightGrams * qty))
+    } catch {
+      // Produto sem dados carregáveis não deve travar o preenchimento manual.
+    }
+  }
+
+  function handleQuantityPlannedChange(value: string) {
+    setQuantityPlanned(value)
+    if (productWeightGrams != null) {
+      const qty = parseFloat(value) || 0
+      setGramsUsed(String(productWeightGrams * qty))
+    }
+  }
+
   async function action(formData: FormData) {
     if (editingRun) {
       const result = await updateProductionRun(editingRun.id, formData)
@@ -56,6 +100,13 @@ export function ProductionRunForm({
     if (result.success) {
       formRef.current?.reset()
       setQuantityFailed('')
+      setProductId('')
+      setPrinterId('')
+      setFilamentId('')
+      setQuantityPlanned('')
+      setGramsUsed('')
+      setExpectedPrintTimeHours(null)
+      setProductWeightGrams(null)
     } else {
       alert(result.error)
     }
@@ -93,12 +144,12 @@ export function ProductionRunForm({
         </div>
 
         <label className="text-sm">
-          Filamento desperdiçado (g) *
-          <input name="gramsWasted" type="number" step="0.01" min="0" defaultValue={editingRun.gramsWasted} className="tk-input-full" required />
+          Filamento desperdiçado (g)
+          <input name="gramsWasted" type="number" step="0.01" min="0" defaultValue={editingRun.gramsWasted} className="tk-input-full" />
         </label>
         <label className="text-sm">
-          Tempo desperdiçado (h) *
-          <input name="timeWastedHours" type="number" step="0.001" min="0" defaultValue={editingRun.timeWastedHours} className="tk-input-full" required />
+          Tempo desperdiçado (h)
+          <input name="timeWastedHours" type="number" step="0.001" min="0" defaultValue={editingRun.timeWastedHours} className="tk-input-full" />
         </label>
         <label className="text-sm">
           Motivo do desperdício (opcional)
@@ -130,7 +181,13 @@ export function ProductionRunForm({
     <form ref={formRef} action={action} className="grid grid-cols-2 gap-3 tk-panel p-4 md:grid-cols-4">
       <label className="text-sm">
         Produto *
-        <select name="productId" defaultValue="" className="tk-input-full" required>
+        <select
+          name="productId"
+          value={productId}
+          onChange={(e) => void handleProductChange(e.target.value)}
+          className="tk-input-full"
+          required
+        >
           <option value="" disabled>Selecione</option>
           {products.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
@@ -139,7 +196,7 @@ export function ProductionRunForm({
       </label>
       <label className="text-sm">
         Impressora *
-        <select name="printerId" defaultValue="" className="tk-input-full" required>
+        <select name="printerId" value={printerId} onChange={(e) => setPrinterId(e.target.value)} className="tk-input-full" required>
           <option value="" disabled>Selecione</option>
           {printers.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
@@ -148,7 +205,7 @@ export function ProductionRunForm({
       </label>
       <label className="text-sm">
         Filamento *
-        <select name="filamentId" defaultValue="" className="tk-input-full" required>
+        <select name="filamentId" value={filamentId} onChange={(e) => setFilamentId(e.target.value)} className="tk-input-full" required>
           <option value="" disabled>Selecione</option>
           {filaments.map((f) => (
             <option key={f.id} value={f.id}>{f.name}</option>
@@ -161,7 +218,21 @@ export function ProductionRunForm({
       </label>
       <label className="text-sm">
         Qtd. planejada *
-        <input name="quantityPlanned" type="number" step="1" min="1" className="tk-input-full" required />
+        {expectedPrintTimeHours != null && (
+          <span className="ml-1 font-normal text-slate-400 dark:text-slate-500">
+            (tempo de impressão esperado: {formatHours(expectedPrintTimeHours * (parseFloat(quantityPlanned) || 1))})
+          </span>
+        )}
+        <input
+          name="quantityPlanned"
+          type="number"
+          step="1"
+          min="1"
+          value={quantityPlanned}
+          onChange={(e) => handleQuantityPlannedChange(e.target.value)}
+          className="tk-input-full"
+          required
+        />
       </label>
       <label className="text-sm">
         Qtd. sucesso *
@@ -182,7 +253,16 @@ export function ProductionRunForm({
       </label>
       <label className="text-sm">
         Filamento usado (g) *
-        <input name="gramsUsed" type="number" step="0.01" min="0" className="tk-input-full" required />
+        <input
+          name="gramsUsed"
+          type="number"
+          step="0.01"
+          min="0"
+          value={gramsUsed}
+          onChange={(e) => setGramsUsed(e.target.value)}
+          className="tk-input-full"
+          required
+        />
       </label>
 
       {failed > 0 && (
@@ -191,12 +271,12 @@ export function ProductionRunForm({
             Detalhes do desperdício
           </h3>
           <label className="text-sm">
-            Filamento desperdiçado (g) *
-            <input name="gramsWasted" type="number" step="0.01" min="0" defaultValue="0" className="tk-input-full" required />
+            Filamento desperdiçado (g)
+            <input name="gramsWasted" type="number" step="0.01" min="0" defaultValue="0" className="tk-input-full" />
           </label>
           <label className="text-sm">
-            Tempo desperdiçado (h) *
-            <input name="timeWastedHours" type="number" step="0.001" min="0" defaultValue="0" className="tk-input-full" required />
+            Tempo desperdiçado (h)
+            <input name="timeWastedHours" type="number" step="0.001" min="0" defaultValue="0" className="tk-input-full" />
           </label>
           <label className="text-sm">
             Motivo do desperdício (opcional)
