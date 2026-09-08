@@ -4,6 +4,10 @@ import { createConsignmentDelivery } from '@/actions/consignmentDeliveries'
 
 type Option = { id: string; name: string }
 
+function today(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
 export function DeliveryForm({
   partners,
   products,
@@ -53,7 +57,7 @@ export function DeliveryForm({
       </label>
       <label className="text-sm">
         Data da entrega
-        <input name="deliveryDate" type="date" className="tk-input-full" required />
+        <input name="deliveryDate" type="date" defaultValue={today()} className="tk-input-full" required />
       </label>
       <label className="col-span-full text-sm md:col-span-3">
         Observações (opcional)

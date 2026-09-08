@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { createProduct, updateProduct } from '@/actions/products'
 import { formatCurrency } from '@/lib/format'
 import { SubmitButton } from '@/components/SubmitButton'
+import { HoursInput } from '@/components/HoursInput'
 
 type PrinterOption = { id: string; name: string; costPerHour: number }
 type FilamentOption = { id: string; name: string; pricePerGram: number }
@@ -265,8 +266,8 @@ export function ProductForm({
               <input name="weightGrams" type="number" step="0.01" value={weightGrams} onChange={(e) => setWeightGrams(e.target.value)} className="tk-input-full" required />
             </label>
             <label className="text-sm">
-              Tempo de impressão (h) *
-              <input name="printTimeHours" type="number" step="0.001" value={printTimeHours} onChange={(e) => setPrintTimeHours(e.target.value)} className="tk-input-full" required />
+              Tempo de impressão (HH:MM) *
+              <HoursInput name="printTimeHours" value={parseFloat(printTimeHours) || 0} onChange={(hours) => setPrintTimeHours(String(hours))} required />
             </label>
           </>
         )}
@@ -314,8 +315,13 @@ export function ProductForm({
                     <input type="number" step="0.01" value={row.weightGrams} onChange={(e) => updatePartRow(i, { weightGrams: e.target.value })} className="tk-input-full" required />
                   </label>
                   <label className="text-xs">
-                    Tempo impr. (h) *
-                    <input type="number" step="0.001" value={row.printTimeHours} onChange={(e) => updatePartRow(i, { printTimeHours: e.target.value })} className="tk-input-full" required />
+                    Tempo impr. (HH:MM) *
+                    <HoursInput
+                      value={parseFloat(row.printTimeHours) || 0}
+                      onChange={(hours) => updatePartRow(i, { printTimeHours: String(hours) })}
+                      required
+                      className="tk-input-full"
+                    />
                   </label>
                   <label className="text-xs">
                     Qtd. por unidade *
@@ -340,8 +346,8 @@ export function ProductForm({
           <summary className="tk-summary">Campos opcionais</summary>
           <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
             <label className="text-sm">
-              Tempo de mão de obra (h) (opcional)
-              <input name="laborTimeHours" type="number" step="0.001" value={laborTimeHours} onChange={(e) => setLaborTimeHours(e.target.value)} className="tk-input-full" />
+              Tempo de mão de obra (HH:MM) (opcional)
+              <HoursInput name="laborTimeHours" value={parseFloat(laborTimeHours) || 0} onChange={(hours) => setLaborTimeHours(String(hours))} />
             </label>
             <label className="text-sm">
               Embalagem (opcional)

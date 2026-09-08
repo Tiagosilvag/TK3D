@@ -9,6 +9,10 @@ import type { MarketplacePlatformKind } from '@prisma/client'
 
 type Option = { id: string; name: string }
 
+function today(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
 // 3.6: plataforma específica obrigatória -- "Marketplace" genérico saiu da
 // lista de opções pra venda nova (só existe em vendas já registradas antes
 // dessa mudança, ver EditingSale abaixo).
@@ -141,7 +145,7 @@ export function SaleForm({
       </label>
       <label className="text-sm">
         Data da venda *
-        <input name="saleDate" type="date" defaultValue={editingSale?.saleDate} className="tk-input-full" required />
+        <input name="saleDate" type="date" defaultValue={editingSale?.saleDate ?? today()} className="tk-input-full" required />
       </label>
       <label className="text-sm">
         Comprador (opcional)

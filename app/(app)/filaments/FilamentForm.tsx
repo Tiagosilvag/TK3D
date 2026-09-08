@@ -31,7 +31,10 @@ type EditingFilament = {
 export function FilamentForm({ editingFilament }: { editingFilament?: EditingFilament }) {
   const router = useRouter()
   const formRef = useRef<HTMLFormElement>(null)
-  const [spoolWeightKg, setSpoolWeightKg] = useState(editingFilament ? String(editingFilament.spoolWeightKg) : '')
+  // 3.8: rolos de filamento são quase sempre 1kg -- prefill nesse valor em
+  // vez de deixar o campo em branco poupa o caso mais comum, ainda editável
+  // pra rolos de outro peso (500g, 3kg etc.).
+  const [spoolWeightKg, setSpoolWeightKg] = useState(editingFilament ? String(editingFilament.spoolWeightKg) : '1')
   const [spoolPrice, setSpoolPrice] = useState(editingFilament ? String(editingFilament.spoolPrice) : '')
   const [colorHex, setColorHex] = useState(editingFilament?.colorHex ?? '#ff0000')
 

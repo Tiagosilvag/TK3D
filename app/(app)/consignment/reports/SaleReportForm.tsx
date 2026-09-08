@@ -2,6 +2,10 @@
 import { useMemo, useRef, useState } from 'react'
 import { createConsignmentSaleReport } from '@/actions/consignmentSaleReports'
 
+function today(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
 type DeliveryOption = {
   id: string
   partnerName: string
@@ -70,7 +74,7 @@ export function SaleReportForm({ deliveries }: { deliveries: DeliveryOption[] })
       </label>
       <label className="text-sm">
         Data do relatório
-        <input name="reportDate" type="date" className="tk-input-full" required />
+        <input name="reportDate" type="date" defaultValue={today()} className="tk-input-full" required />
       </label>
       <label className="text-sm">
         Comissão (0-1)

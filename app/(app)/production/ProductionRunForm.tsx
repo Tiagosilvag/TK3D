@@ -6,11 +6,16 @@ import { createProductionRun, updateProductionRun } from '@/actions/productionRu
 import { getProductProductionDefaults, type ProductProductionPartDefault } from '@/actions/products'
 import { WASTE_REASON_LABELS } from '@/lib/format'
 import { SubmitButton } from '@/components/SubmitButton'
+import { HoursInput } from '@/components/HoursInput'
 import type { WasteReason } from '@prisma/client'
 
 const WASTE_REASON_OPTIONS = Object.keys(WASTE_REASON_LABELS) as WasteReason[]
 
 type Option = { id: string; name: string }
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10)
+}
 
 function formatHours(hours: number): string {
   return `${hours.toFixed(2)}h`
@@ -46,6 +51,7 @@ export function ProductionRunForm({
   const router = useRouter()
   const formRef = useRef<HTMLFormElement>(null)
   const [quantityFailed, setQuantityFailed] = useState(editingRun ? String(editingRun.quantityFailed) : '')
+  const [timeWastedHours, setTimeWastedHours] = useState(editingRun ? String(editingRun.timeWastedHours) : '0')
 
   // Bug 3: selecionar um produto busca sua ficha técnica e pré-preenche
   // impressora/filamento/"Filamento usado (g)" — tudo continua editável,
@@ -183,8 +189,8 @@ export function ProductionRunForm({
           <input name="gramsWasted" type="number" step="0.01" min="0" defaultValue={editingRun.gramsWasted} className="tk-input-full" />
         </label>
         <label className="text-sm">
-          Tempo desperdiçado (h)
-          <input name="timeWastedHours" type="number" step="0.001" min="0" defaultValue={editingRun.timeWastedHours} className="tk-input-full" />
+          Tempo desperdiçado (HH:MM)
+          <HoursInput name="timeWastedHours" value={parseFloat(timeWastedHours) || 0} onChange={(hours) => setTimeWastedHours(String(hours))} />
         </label>
         <label className="text-sm">
           Motivo do desperdício (opcional)
@@ -266,7 +272,7 @@ export function ProductionRunForm({
       </label>
       <label className="text-sm">
         Data *
-        <input name="date" type="date" className="tk-input-full" required />
+        <input name="date" type="date" defaultValue={today()} className="tk-input-full" required />
       </label>
       <label className="text-sm">
         Qtd. planejada *
@@ -327,8 +333,8 @@ export function ProductionRunForm({
             <input name="gramsWasted" type="number" step="0.01" min="0" defaultValue="0" className="tk-input-full" />
           </label>
           <label className="text-sm">
-            Tempo desperdiçado (h)
-            <input name="timeWastedHours" type="number" step="0.001" min="0" defaultValue="0" className="tk-input-full" />
+            Tempo desperdiçado (HH:MM)
+            <HoursInput name="timeWastedHours" value={parseFloat(timeWastedHours) || 0} onChange={(hours) => setTimeWastedHours(String(hours))} />
           </label>
           <label className="text-sm">
             Motivo do desperdício (opcional)
