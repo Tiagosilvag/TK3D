@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { SettingsForm } from './SettingsForm'
 
@@ -13,6 +14,9 @@ export default async function SettingsPage() {
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Configurações</h1>
+      <Link href="/settings/accessory-types" className="mb-4 inline-block text-sm text-amber-600 hover:underline dark:text-amber-400">
+        Tipos de acessório &rarr;
+      </Link>
       <SettingsForm
         settings={{
           energyCostPerKwh: settings.energyCostPerKwh.toNumber(),

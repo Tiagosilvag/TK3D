@@ -6,26 +6,8 @@ import { AccessoryForm } from './AccessoryForm'
 import { RestockForm } from './RestockForm'
 import { deleteAccessory } from '@/actions/accessories'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
-import type { AccessoryType } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
-
-const ACCESSORY_TYPE_LABELS: Record<AccessoryType, string> = {
-  CORRENTE_BOLINHA: 'Corrente bolinha',
-  CORRENTE_ELO: 'Corrente elo',
-  MOSQUETAO: 'Mosquetão',
-  CLICKER: 'Clicker',
-  OUTRO: 'Outro',
-}
-
-const TYPE_FILTERS: { value: AccessoryType | undefined; label: string }[] = [
-  { value: undefined, label: 'Todos' },
-  { value: 'CORRENTE_BOLINHA', label: 'Corrente bolinha' },
-  { value: 'CORRENTE_ELO', label: 'Corrente elo' },
-  { value: 'MOSQUETAO', label: 'Mosquetão' },
-  { value: 'CLICKER', label: 'Clicker' },
-  { value: 'OUTRO', label: 'Outro' },
-]
 
 function buildHref(params: { type?: string; stock?: string }): string {
   const qs = new URLSearchParams()
@@ -50,21 +32,32 @@ function formatDate(d: Date): string {
 export default async function AccessoriesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ type?: string; stock?: string }>
+  searchParams: Promise<{ type?: string; stock?: string; editId?: string }>
 }) {
-  const { type, stock } = await searchParams
-  const activeType = (['CORRENTE_BOLINHA', 'CORRENTE_ELO', 'MOSQUETAO', 'CLICKER', 'OUTRO'] as const).includes(type as AccessoryType)
-    ? (type as AccessoryType)
-    : undefined
+  const { type, stock, editId } = await searchParams
   const activeStock = stock === 'baixo' ? 'baixo' : undefined
 
-  const [accessories, settings] = await Promise.all([
+  const [accessories, settings, accessoryTypes, editingAccessoryRecord] = await Promise.all([
     prisma.accessory.findMany({
       include: { purchases: { orderBy: { purchaseDate: 'desc' } } },
       orderBy: [{ name: 'asc' }, { colorName: 'asc' }],
     }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
+    prisma.accessoryTypeRecord.findMany({ orderBy: { name: 'asc' } }),
+    editId ? prisma.accessory.findUnique({ where: { id: editId } }) : null,
   ])
+
+  const activeType = accessoryTypes.some((t) => t.id === type) ? type : undefined
+  const typeLabel = (id: string) => accessoryTypes.find((t) => t.id === id)?.name ?? id
+  const editingAccessory = editingAccessoryRecord
+    ? {
+        id: editingAccessoryRecord.id,
+        name: editingAccessoryRecord.name,
+        type: editingAccessoryRecord.type,
+        colorName: editingAccessoryRecord.colorName,
+        colorHex: editingAccessoryRecord.colorHex,
+      }
+    : undefined
 
   const lowThresholdPercent = settings.stockLowThresholdPercent.toNumber()
   const criticalThresholdPercent = settings.stockCriticalThresholdPercent.toNumber()
@@ -105,7 +98,7 @@ export default async function AccessoriesPage({
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Acessórios</h1>
-      <AccessoryForm />
+      <AccessoryForm key={editingAccessory?.id ?? 'new'} accessoryTypes={accessoryTypes} editingAccessory={editingAccessory} />
 
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
         <div className="tk-panel p-4">
@@ -131,9 +124,12 @@ export default async function AccessoriesPage({
       </div>
 
       <div className="mb-2 mt-6 flex flex-wrap gap-1">
-        {TYPE_FILTERS.map((f) => (
-          <Link key={f.label} href={buildHref({ type: f.value, stock: activeStock })} className={tabClass(activeType === f.value)}>
-            {f.label}
+        <Link href={buildHref({ stock: activeStock })} className={tabClass(!activeType)}>
+          Todos
+        </Link>
+        {accessoryTypes.map((t) => (
+          <Link key={t.id} href={buildHref({ type: t.id, stock: activeStock })} className={tabClass(activeType === t.id)}>
+            {t.name}
           </Link>
         ))}
       </div>
@@ -170,7 +166,7 @@ export default async function AccessoriesPage({
                 {a.colorHex && <span style={{ background: a.colorHex }} className="inline-block h-3 w-3 rounded-full" />}
               </td>
               <td>{a.name}</td>
-              <td>{ACCESSORY_TYPE_LABELS[a.type] ?? a.type}</td>
+              <td>{typeLabel(a.type)}</td>
               <td>{a.colorName || '—'}</td>
               <td>{currentStock}</td>
               <td>{formatCurrency(avgUnitCost)}</td>
@@ -205,7 +201,12 @@ export default async function AccessoriesPage({
                       </tbody>
                     </table>
                   </details>
-                  <ConfirmDeleteForm action={async () => { 'use server'; await deleteAccessory(a.id) }} />
+                  <div className="flex items-center gap-3">
+                    <Link href={`/accessories?editId=${a.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                      Editar
+                    </Link>
+                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteAccessory(a.id) }} />
+                  </div>
                 </div>
               </td>
             </tr>
@@ -243,7 +244,7 @@ export default async function AccessoriesPage({
                     {a.colorHex && <span style={{ background: a.colorHex }} className="inline-block h-3 w-3 rounded-full" />}
                   </td>
                   <td>{a.name}</td>
-                  <td>{ACCESSORY_TYPE_LABELS[a.type] ?? a.type}</td>
+                  <td>{typeLabel(a.type)}</td>
                   <td>{a.colorName || '—'}</td>
                   <td>{formatCurrency(avgUnitCost)}</td>
                   <td>

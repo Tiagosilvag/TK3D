@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { updateSettings } from '@/actions/settings'
+import { SubmitButton } from '@/components/SubmitButton'
 
 type RoundingMode = 'NONE' | 'R90' | 'R99' | 'R00'
 
@@ -62,23 +63,23 @@ export function SettingsForm({ settings }: { settings: SettingsValues }) {
       <fieldset className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <legend className="mb-1 text-sm font-semibold">Custos</legend>
         <label className="text-sm">
-          Custo de energia (R$/kWh)
+          Custo de energia (R$/kWh) *
           <input name="energyCostPerKwh" type="number" step="0.0001" defaultValue={settings.energyCostPerKwh} className="tk-input-full" required />
         </label>
         <label className="text-sm">
-          Custo de mão de obra (R$/hora)
+          Custo de mão de obra (R$/hora) *
           <input name="laborCostPerHour" type="number" step="0.01" defaultValue={settings.laborCostPerHour} className="tk-input-full" required />
         </label>
         <label className="text-sm">
-          Taxa de falha (0 a 1)
+          Taxa de falha (0 a 1) *
           <input name="failureRatePercent" type="number" step="0.0001" min="0" max="1" defaultValue={settings.failureRatePercent} className="tk-input-full" required />
         </label>
         <label className="text-sm">
-          Manutenção anual estimada (0 a 1, % do preço de compra da impressora)
+          Manutenção anual estimada (0 a 1, % do preço de compra da impressora) *
           <input name="annualMaintenancePercent" type="number" step="0.0001" min="0" max="1" defaultValue={settings.annualMaintenancePercent} className="tk-input-full" required />
         </label>
         <label className="text-sm">
-          Horas de uso estimadas por ano (por impressora)
+          Horas de uso estimadas por ano (por impressora) *
           <input name="annualUsageHours" type="number" step="1" defaultValue={settings.annualUsageHours} className="tk-input-full" required />
         </label>
       </fieldset>
@@ -86,27 +87,27 @@ export function SettingsForm({ settings }: { settings: SettingsValues }) {
       <fieldset className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <legend className="mb-1 text-sm font-semibold">Precificação</legend>
         <label className="text-sm">
-          Taxa do marketplace (0 a 1)
+          Taxa do marketplace (0 a 1) *
           <input name="marketplaceFeePercent" type="number" step="0.0001" min="0" max="1" defaultValue={settings.marketplaceFeePercent} className="tk-input-full" required />
         </label>
         <label className="text-sm">
-          Imposto (0 a 1)
+          Imposto (0 a 1) *
           <input name="taxPercent" type="number" step="0.0001" min="0" max="1" defaultValue={settings.taxPercent} className="tk-input-full" required />
         </label>
         <label className="text-sm">
-          Taxa fixa do marketplace (R$)
+          Taxa fixa do marketplace (R$) *
           <input name="marketplaceFixedFee" type="number" step="0.01" defaultValue={settings.marketplaceFixedFee} className="tk-input-full" required />
         </label>
         <label className="text-sm">
-          Markup padrão
+          Markup padrão *
           <input name="defaultMarkup" type="number" step="0.01" defaultValue={settings.defaultMarkup} className="tk-input-full" required />
         </label>
         <label className="text-sm">
-          Margem desejada (0 a 1)
+          Margem desejada (0 a 1) *
           <input name="desiredMarginPercent" type="number" step="0.0001" min="0" max="1" defaultValue={settings.desiredMarginPercent} className="tk-input-full" required />
         </label>
         <label className="text-sm">
-          Desconto padrão (0 a 1)
+          Desconto padrão (0 a 1) *
           <input name="defaultDiscountPercent" type="number" step="0.0001" min="0" max="1" defaultValue={settings.defaultDiscountPercent} className="tk-input-full" required />
         </label>
       </fieldset>
@@ -114,11 +115,11 @@ export function SettingsForm({ settings }: { settings: SettingsValues }) {
       <fieldset className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <legend className="mb-1 text-sm font-semibold">Estoque (acessórios e insumos)</legend>
         <label className="text-sm">
-          Limiar de estoque baixo (0 a 1)
+          Limiar de estoque baixo (0 a 1) *
           <input name="stockLowThresholdPercent" type="number" step="0.0001" min="0" max="1" defaultValue={settings.stockLowThresholdPercent} className="tk-input-full" required />
         </label>
         <label className="text-sm">
-          Limiar de estoque crítico (0 a 1)
+          Limiar de estoque crítico (0 a 1) *
           <input name="stockCriticalThresholdPercent" type="number" step="0.0001" min="0" max="1" defaultValue={settings.stockCriticalThresholdPercent} className="tk-input-full" required />
         </label>
       </fieldset>
@@ -143,7 +144,7 @@ export function SettingsForm({ settings }: { settings: SettingsValues }) {
         ))}
       </fieldset>
 
-      <button className="mt-2 tk-btn-primary">Salvar</button>
+      <SubmitButton pendingLabel="Salvando…" className="mt-2 tk-btn-primary">Salvar</SubmitButton>
       {message && <p className="text-sm text-slate-600 dark:text-slate-400">{message}</p>}
     </form>
   )

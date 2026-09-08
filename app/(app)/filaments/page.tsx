@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { calculateFilamentPricePerGram, getStockStatus } from '@/lib/costing'
+import { formatCurrency } from '@/lib/format'
 import { FilamentForm } from './FilamentForm'
 import { deleteFilament } from '@/actions/filaments'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
@@ -36,16 +37,16 @@ function tabClass(isActive: boolean): string {
 export default async function FilamentsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ material?: string; stock?: string; color?: string }>
+  searchParams: Promise<{ material?: string; stock?: string; color?: string; editId?: string }>
 }) {
-  const { material, stock, color } = await searchParams
+  const { material, stock, color, editId } = await searchParams
   const activeMaterial = (['PLA', 'PETG', 'TPU', 'OUTRO'] as const).includes(material as FilamentMaterial)
     ? (material as FilamentMaterial)
     : undefined
   const activeStock = stock === 'baixo' ? 'baixo' : undefined
   const activeColor = color || undefined
 
-  const [allInStock, inactiveFilaments, distinctColors] = await Promise.all([
+  const [allInStock, inactiveFilaments, distinctColors, editingFilamentRecord] = await Promise.all([
     prisma.filament.findMany({
       where: {
         currentStockGrams: { gt: 0 },
@@ -61,7 +62,20 @@ export default async function FilamentsPage({
       select: { colorName: true },
       orderBy: { colorName: 'asc' },
     }),
+    editId ? prisma.filament.findUnique({ where: { id: editId } }) : null,
   ])
+
+  const editingFilament = editingFilamentRecord
+    ? {
+        id: editingFilamentRecord.id,
+        manufacturer: editingFilamentRecord.manufacturer,
+        material: editingFilamentRecord.material,
+        colorName: editingFilamentRecord.colorName,
+        colorHex: editingFilamentRecord.colorHex,
+        spoolWeightKg: editingFilamentRecord.spoolWeightKg.toNumber(),
+        spoolPrice: editingFilamentRecord.spoolPrice.toNumber(),
+      }
+    : undefined
 
   const rows = allInStock
     .map((f) => {
@@ -79,7 +93,7 @@ export default async function FilamentsPage({
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Filamentos</h1>
-      <FilamentForm />
+      <FilamentForm key={editingFilament?.id ?? 'new'} editingFilament={editingFilament} />
 
       <div className="mb-2 mt-6 flex flex-wrap gap-1">
         {MATERIAL_FILTERS.map((f) => (
@@ -127,28 +141,46 @@ export default async function FilamentsPage({
             <th>Material</th>
             <th>Estoque atual (g)</th>
             <th>% restante</th>
+            <th>Preço do rolo</th>
             <th>R$/g</th>
             <th>Status</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ filament: f, currentStockGrams, percentRemaining, pricePerGram, status }) => (
-            <tr key={f.id} className="tk-row">
-              <td className="py-2">
-                <span style={{ background: f.colorHex }} className="inline-block h-3 w-3 rounded-full" />
-              </td>
-              <td>{f.manufacturer} {f.colorName} — Rolo #{String(f.rollNumber).padStart(3, '0')}</td>
-              <td>{f.material}</td>
-              <td>{currentStockGrams}g</td>
-              <td>{percentRemaining.toFixed(1)}%</td>
-              <td>R$ {pricePerGram.toFixed(4)}</td>
-              <td>{status.emoji} {status.label}</td>
-              <td>
-                <ConfirmDeleteForm action={async () => { 'use server'; await deleteFilament(f.id) }} />
-              </td>
-            </tr>
-          ))}
+          {rows.map(({ filament: f, currentStockGrams, percentRemaining, pricePerGram, status }) => {
+            const priceMissing = pricePerGram <= 0
+            return (
+              <tr key={f.id} className="tk-row">
+                <td className="py-2">
+                  <span style={{ background: f.colorHex }} className="inline-block h-3 w-3 rounded-full" />
+                </td>
+                <td>{f.manufacturer} {f.colorName} — Rolo #{String(f.rollNumber).padStart(3, '0')}</td>
+                <td>{f.material}</td>
+                <td>{currentStockGrams}g</td>
+                <td>{percentRemaining.toFixed(1)}%</td>
+                <td>{formatCurrency(f.spoolPrice.toNumber())}</td>
+                <td>
+                  {priceMissing ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+                      ⚠️ Preço não informado
+                    </span>
+                  ) : (
+                    <>R$ {pricePerGram.toFixed(4)}</>
+                  )}
+                </td>
+                <td>{status.emoji} {status.label}</td>
+                <td>
+                  <div className="flex items-center gap-3">
+                    <Link href={`/filaments?editId=${f.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                      Editar
+                    </Link>
+                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteFilament(f.id) }} />
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
 

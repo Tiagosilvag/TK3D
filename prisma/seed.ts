@@ -1,4 +1,4 @@
-import { PrismaClient, AccessoryType, SupplyUnit, FilamentMaterial as MaterialType } from '@prisma/client'
+import { PrismaClient, SupplyUnit, FilamentMaterial as MaterialType } from '@prisma/client'
 
 const prisma = new PrismaClient()
 

@@ -22,19 +22,33 @@ const CHANNEL_FILTERS: { value: SaleChannel | undefined; label: string }[] = [
 export default async function SalesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ channel?: string }>
+  searchParams: Promise<{ channel?: string; editId?: string }>
 }) {
-  const { channel } = await searchParams
+  const { channel, editId } = await searchParams
   const activeChannel = channel === 'DIRETA' || channel === 'MARKETPLACE' ? channel : undefined
 
-  const [sales, products] = await Promise.all([
+  const [sales, products, editingSaleRecord] = await Promise.all([
     prisma.sale.findMany({
       where: activeChannel ? { channel: activeChannel } : undefined,
       orderBy: { saleDate: 'desc' },
       include: { product: true },
     }),
     prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+    editId ? prisma.sale.findUnique({ where: { id: editId } }) : null,
   ])
+
+  const editingSale = editingSaleRecord
+    ? {
+        id: editingSaleRecord.id,
+        channel: editingSaleRecord.channel,
+        productId: editingSaleRecord.productId,
+        quantity: editingSaleRecord.quantity,
+        unitPrice: editingSaleRecord.unitPrice.toNumber(),
+        saleDate: editingSaleRecord.saleDate.toISOString().slice(0, 10),
+        buyerOrPlatform: editingSaleRecord.buyerOrPlatform,
+        notes: editingSaleRecord.notes,
+      }
+    : undefined
 
   // getSaleProfit (task-10 brief, new feature) now returns {profit, estimated}
   // instead of a bare number -- estimated is true only for a legacy sale
@@ -48,7 +62,7 @@ export default async function SalesPage({
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Vendas</h1>
-      <SaleForm products={products} />
+      <SaleForm key={editingSale?.id ?? 'new'} products={products} editingSale={editingSale} />
 
       <div className="mb-3 mt-6 flex gap-1">
         {CHANNEL_FILTERS.map((f) => {
@@ -79,15 +93,16 @@ export default async function SalesPage({
             <th>Qtd.</th>
             <th>Valor unit.</th>
             <th>Comprador/Plataforma</th>
+            <th>Custo</th>
             <th>Lucro</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           {sales.map((s, i) => {
-            const { profit, estimated } = profits[i]
+            const { profit, estimated, saleTotal, costTotal } = profits[i]
             return (
-              <tr key={s.id} className="tk-row">
+              <tr key={s.id} className="tk-row align-top">
                 <td className="py-2">{s.saleDate.toLocaleDateString('pt-BR')}</td>
                 <td>
                   <span
@@ -104,14 +119,41 @@ export default async function SalesPage({
                 <td>{s.quantity}</td>
                 <td>{formatCurrency(s.unitPrice.toNumber())}</td>
                 <td className="text-slate-500 dark:text-slate-400">{s.buyerOrPlatform ?? '-'}</td>
-                <td className={profit >= 0 ? 'font-medium text-emerald-600 dark:text-emerald-400' : 'font-medium text-red-600 dark:text-red-400'}>
-                  {formatCurrency(profit)}
-                  {estimated && (
-                    <span title="Venda anterior a este recurso: custo estimado retroativamente, pode variar se preços mudarem" className="ml-1 text-slate-400 dark:text-slate-500">*</span>
-                  )}
+                <td>{formatCurrency(costTotal)}</td>
+                <td>
+                  <details>
+                    <summary
+                      className={`cursor-pointer list-none font-medium ${profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}
+                      title="Ver detalhamento do lucro"
+                    >
+                      {formatCurrency(profit)}
+                      {estimated && (
+                        <span title="Venda anterior a este recurso: custo estimado retroativamente, pode variar se preços mudarem" className="ml-1 text-slate-400 dark:text-slate-500">*</span>
+                      )}
+                    </summary>
+                    <dl className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      <div className="flex justify-between gap-3">
+                        <dt>Valor da venda</dt>
+                        <dd>{formatCurrency(saleTotal)}</dd>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <dt>Custo de produção</dt>
+                        <dd>− {formatCurrency(costTotal)}</dd>
+                      </div>
+                      <div className="flex justify-between gap-3 font-medium text-slate-700 dark:text-slate-200">
+                        <dt>Lucro</dt>
+                        <dd>{formatCurrency(profit)}</dd>
+                      </div>
+                    </dl>
+                  </details>
                 </td>
                 <td>
-                  <ConfirmDeleteForm action={async () => { 'use server'; await deleteSale(s.id) }} />
+                  <div className="flex items-center gap-3">
+                    <Link href={`/sales?editId=${s.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                      Editar
+                    </Link>
+                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteSale(s.id) }} />
+                  </div>
                 </td>
               </tr>
             )

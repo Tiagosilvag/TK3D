@@ -114,27 +114,41 @@ model PackagingItem {
   products  Product[]
 }
 
-enum AccessoryType {
-  CORRENTE_BOLINHA
-  CORRENTE_ELO
-  MOSQUETAO
-  CLICKER
-  OUTRO
+// Tipos de acessório (spec: Configurações → Tipos de acessório), movidos de
+// enum fixo para tabela editável em runtime — CRUD completo (criar,
+// renomear, remover-se-não-usado) via actions/accessoryTypes.ts. `id` fica
+// livre para o Prisma gerar cuid() em tipos novos; os 5 tipos originais
+// mantêm o próprio nome do antigo enum como id (ver migração
+// accessory_types_table), preservando toda referência existente sem
+// precisar reescrever nenhuma linha de Accessory.
+model AccessoryTypeRecord {
+  id          String      @id @default(cuid())
+  name        String      @unique
+  createdAt   DateTime    @default(now())
+  accessories Accessory[]
+
+  @@map("accessory_types")
 }
 
 model Accessory {
-  id           String                  @id @default(cuid())
-  name         String
-  type         AccessoryType
-  colorName    String                  @default("") // "" = sem cor / genérico
-  colorHex     String?
-  currentStock Decimal                 @db.Decimal(10, 2) // sempre em unidades
-  avgUnitCost  Decimal                 @db.Decimal(10, 4) // custo médio ponderado, recalculado a cada compra
-  active       Boolean                 @default(true)
-  createdAt    DateTime                @default(now())
-  updatedAt    DateTime                @updatedAt
-  purchases    AccessoryPurchase[]
-  usages       ProductAccessoryUsage[]
+  id            String                  @id @default(cuid())
+  name          String
+  // FK escalar pra accessory_types.id — chamado "type" (não "typeId") de
+  // propósito: mantém o nome do campo em accessorySchema/createAccessory e
+  // em toda chamada de teste existente (`type: 'MOSQUETAO'`) idêntico ao
+  // que já era quando "type" era o próprio enum, zero churn nesses
+  // call sites por causa da migração enum -> tabela.
+  type          String
+  accessoryType AccessoryTypeRecord     @relation(fields: [type], references: [id])
+  colorName     String                  @default("") // "" = sem cor / genérico
+  colorHex      String?
+  currentStock  Decimal                 @db.Decimal(10, 2) // sempre em unidades
+  avgUnitCost   Decimal                 @db.Decimal(10, 4) // custo médio ponderado, recalculado a cada compra
+  active        Boolean                 @default(true)
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+  purchases     AccessoryPurchase[]
+  usages        ProductAccessoryUsage[]
 
   @@unique([name, type, colorName])
 }

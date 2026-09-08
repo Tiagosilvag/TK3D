@@ -44,6 +44,29 @@ export async function createSale(formData: FormData): Promise<ActionResult> {
   return { success: true }
 }
 
+// Edits an existing sale (channel/product/quantity/unitPrice/date/buyer/
+// notes -- spec do módulo Vendas) and recomputes its costSnapshot the same
+// way createSale does, from the (possibly new) product's CURRENT cost
+// breakdown -- an edit is a correction to what was actually sold, not a
+// historical replay, so its frozen cost basis is refreshed to match.
+export async function updateSale(id: string, formData: FormData): Promise<ActionResult> {
+  const parsed = parse(formData)
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+
+  const breakdown = await getProductCostBreakdown(parsed.data.productId)
+  const snapshot = buildSaleCostSnapshot(breakdown, parsed.data.quantity)
+
+  await prisma.sale.update({
+    where: { id },
+    data: {
+      ...parsed.data,
+      costSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+    },
+  })
+  revalidatePath('/sales')
+  return { success: true }
+}
+
 // Physical delete: Sale is a historical transaction log, not a catalog
 // entity, so unlike Printer/Filament/PackagingItem/Accessory/Supply/Product
 // there is no soft-delete flag — removing a row (e.g. to fix a typo) really
@@ -56,6 +79,12 @@ export async function deleteSale(id: string): Promise<ActionResult> {
 
 export interface SaleProfit {
   profit: number
+  // Valor da venda (quantity * unitPrice) e custo de produção (frozen
+  // snapshot.total, ou recomputado ao vivo pra venda legada) -- expostos
+  // separadamente pra UI mostrar "Valor da venda - Custo = Lucro" (spec do
+  // módulo Vendas), não só o resultado já subtraído.
+  saleTotal: number
+  costTotal: number
   // true only for a legacy sale created before this column existed (no
   // costSnapshot to read) -- its cost had to be recomputed live from
   // CURRENT Printer/Filament/Accessory/Supply/Settings, so unlike every
@@ -77,11 +106,13 @@ export interface SaleProfit {
 export async function getSaleProfit(saleId: string): Promise<SaleProfit> {
   const sale = await prisma.sale.findUniqueOrThrow({ where: { id: saleId } })
   const snapshot = sale.costSnapshot as unknown as SaleCostSnapshot | null
+  const saleTotal = sale.quantity * sale.unitPrice.toNumber()
 
   if (snapshot) {
-    return { profit: sale.quantity * sale.unitPrice.toNumber() - snapshot.total, estimated: false }
+    return { profit: saleTotal - snapshot.total, saleTotal, costTotal: snapshot.total, estimated: false }
   }
 
   const breakdown = await getProductCostBreakdown(sale.productId)
-  return { profit: sale.quantity * (sale.unitPrice.toNumber() - breakdown.finalCost), estimated: true }
+  const costTotal = sale.quantity * breakdown.finalCost
+  return { profit: saleTotal - costTotal, saleTotal, costTotal, estimated: true }
 }

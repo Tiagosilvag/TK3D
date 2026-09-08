@@ -12,6 +12,7 @@ import {
   getPrinterUsage,
   type ProductionReportFilters,
 } from '@/lib/reports'
+import { calculateStockReferenceQuantity, calculateStockPercentRemaining, getStockStatusWithThresholds } from '@/lib/costing'
 import { formatCurrency, getProductionStatusBadge, WASTE_REASON_LABELS } from '@/lib/format'
 import type { ProductionStatus, WasteReason } from '@prisma/client'
 
@@ -119,6 +120,8 @@ export default async function DashboardPage({
     printerUsage,
     filterProducts,
     filterPrinters,
+    supplies,
+    settings,
   ] = await Promise.all([
     getRevenueByChannel(),
     getTopProducts(5),
@@ -130,7 +133,23 @@ export default async function DashboardPage({
     getPrinterUsage(productionFilters),
     prisma.product.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     prisma.printer.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    prisma.supply.findMany({ include: { purchases: { orderBy: { purchaseDate: 'desc' } } }, orderBy: { name: 'asc' } }),
+    prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
   ])
+
+  // Card de alerta (spec do módulo Insumos): insumos esgotados ou em estoque
+  // crítico, mesmo cálculo de status usado em app/(app)/supplies/page.tsx.
+  const lowThresholdPercent = settings.stockLowThresholdPercent.toNumber()
+  const criticalThresholdPercent = settings.stockCriticalThresholdPercent.toNumber()
+  const criticalSupplies = supplies
+    .map((s) => {
+      const currentStock = s.currentStock.toNumber()
+      const referenceQuantity = calculateStockReferenceQuantity(s.purchases.map((p) => p.quantity.toNumber()))
+      const percentRemaining = calculateStockPercentRemaining(currentStock, referenceQuantity)
+      const status = getStockStatusWithThresholds(percentRemaining, lowThresholdPercent, criticalThresholdPercent)
+      return { id: s.id, name: s.name, status }
+    })
+    .filter((s) => s.status.label === 'Esgotado' || s.status.label === 'Estoque crítico')
 
   const totalRevenue = revenue.DIRETA + revenue.MARKETPLACE + consignmentRevenue
   const diretaShare = totalRevenue > 0 ? (revenue.DIRETA / totalRevenue) * 100 : 0
@@ -192,6 +211,28 @@ export default async function DashboardPage({
           ) : null}
         </div>
       </section>
+
+      {criticalSupplies.length > 0 && (
+        <section className="rounded-2xl border border-red-200 bg-red-50 p-5 dark:border-red-900/50 dark:bg-red-500/10">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display text-sm font-semibold text-red-800 dark:text-red-300">
+              ⚠️ Insumos esgotados ou em estoque crítico
+            </h2>
+            <Link href="/supplies" className="text-xs font-medium text-red-700 underline-offset-2 hover:underline dark:text-red-400">
+              Ver insumos &rarr;
+            </Link>
+          </div>
+          <ul className="mt-3 space-y-1 text-sm">
+            {criticalSupplies.map((s) => (
+              <li key={s.id} className="flex items-center gap-2 text-red-800 dark:text-red-300">
+                <span>{s.status.emoji}</span>
+                <span className="font-medium">{s.name}</span>
+                <span className="text-red-600 dark:text-red-400">— {s.status.label}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* Secondary metric: consignment units are assets held by partners.
           Fix 3 (task-10 brief): the old "Custo total de desperdício" card

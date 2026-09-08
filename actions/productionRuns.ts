@@ -1,11 +1,12 @@
 'use server'
 import { prisma } from '@/lib/prisma'
-import { productionRunSchema } from '@/lib/validation/productionRun'
+import { productionRunSchema, productionRunWasteUpdateSchema } from '@/lib/validation/productionRun'
 import {
   buildProductionCostSnapshot,
   calculatePrinterDepreciationCostPerHour,
   calculatePrinterMaintenanceCostPerHour,
   calculateFilamentPricePerKg,
+  calculateWasteCost,
   type ProductionCostSnapshot,
 } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
@@ -217,6 +218,99 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
   revalidatePath('/filaments')
   revalidatePath('/accessories')
   revalidatePath('/supplies')
+  return { success: true }
+}
+
+// Edita uma produção já registrada (spec do módulo Produção): quantidade e
+// filamento ficam sempre somente leitura -- só desperdício (gramas/tempo/
+// motivo) e observações mudam, preservando a integridade histórica. Ajusta
+// o estoque de filamento pela DIFERENÇA de gramas desperdiçadas (não
+// reaplica o total) e recalcula wasteCost/total do costSnapshot a partir
+// das taxas ATUAIS de impressora/filamento/energia -- mesma limitação já
+// aceita em getSaleProfit/legacy fallback pra runs sem snapshot: sem uma
+// cópia congelada das taxas originais além do próprio unitCost, não há como
+// reconstruir o wasteCost exatamente como era no momento da criação.
+// Cancelada nunca é editável (já revertida, nada a preservar).
+export async function updateProductionRun(id: string, formData: FormData): Promise<ActionResult> {
+  const run = await prisma.productionRun.findUniqueOrThrow({ where: { id } })
+  if (run.status === 'CANCELADA') {
+    return { success: false, error: 'Uma produção cancelada não pode ser editada.' }
+  }
+
+  const parsed = productionRunWasteUpdateSchema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  const { gramsWasted, timeWastedHours, wasteReason, notes } = parsed.data
+
+  const [printer, filament, settings] = await Promise.all([
+    prisma.printer.findUniqueOrThrow({ where: { id: run.printerId } }),
+    prisma.filament.findUniqueOrThrow({ where: { id: run.filamentId } }),
+    prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
+  ])
+
+  const oldGramsWasted = run.gramsWasted.toNumber()
+  const deltaGrams = gramsWasted - oldGramsWasted
+  const filamentAvailable = filament.currentStockGrams.toNumber()
+  if (deltaGrams > filamentAvailable) {
+    return {
+      success: false,
+      error: `Estoque insuficiente de filamento para esse desperdício (necessário ${deltaGrams}g a mais, disponível ${filamentAvailable}g)`,
+    }
+  }
+
+  const printerDepreciationCostPerHour = calculatePrinterDepreciationCostPerHour({
+    purchasePrice: printer.purchasePrice.toNumber(),
+    depreciationHours: printer.depreciationHours.toNumber(),
+  })
+  const printerMaintenanceCostPerHour = calculatePrinterMaintenanceCostPerHour({
+    purchasePrice: printer.purchasePrice.toNumber(),
+    annualMaintenancePercent: settings.annualMaintenancePercent.toNumber(),
+    annualUsageHours: settings.annualUsageHours.toNumber(),
+  })
+  const filamentPricePerKg = calculateFilamentPricePerKg({
+    spoolPrice: filament.spoolPrice.toNumber(),
+    spoolWeightKg: filament.spoolWeightKg.toNumber(),
+  })
+  const newWasteCost = calculateWasteCost({
+    gramsWasted,
+    timeWastedHours,
+    filamentPricePerKg,
+    printerDepreciationCostPerHour,
+    printerMaintenanceCostPerHour,
+    printerAvgPowerConsumptionKwh: printer.avgPowerConsumptionKwh.toNumber(),
+    energyCostPerKwh: settings.energyCostPerKwh.toNumber(),
+  })
+
+  const oldSnapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+  const newSnapshot: ProductionCostSnapshot | null = oldSnapshot
+    ? {
+        ...oldSnapshot,
+        wasteCost: newWasteCost,
+        total: oldSnapshot.unitCost.finalCost * oldSnapshot.quantitySuccess + newWasteCost,
+        consumedResources: {
+          ...oldSnapshot.consumedResources,
+          filament: { ...oldSnapshot.consumedResources.filament, gramsWasted },
+        },
+      }
+    : null
+
+  await prisma.$transaction([
+    prisma.productionRun.update({
+      where: { id },
+      data: {
+        gramsWasted,
+        timeWastedHours,
+        wasteReason,
+        notes,
+        ...(newSnapshot ? { costSnapshot: newSnapshot as unknown as Prisma.InputJsonValue } : {}),
+      },
+    }),
+    ...(deltaGrams !== 0
+      ? [prisma.filament.update({ where: { id: run.filamentId }, data: { currentStockGrams: { decrement: deltaGrams } } })]
+      : []),
+  ])
+
+  revalidatePath('/production')
+  revalidatePath('/filaments')
   return { success: true }
 }
 

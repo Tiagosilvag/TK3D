@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { registerAccessoryPurchase } from '@/actions/accessories'
 import { formatCurrency } from '@/lib/format'
+import { SubmitButton } from '@/components/SubmitButton'
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
@@ -31,32 +32,41 @@ export function RestockForm({ accessoryId }: { accessoryId: string }) {
   const unitCost = hasBoth ? cost / qty : NaN
 
   return (
-    <form action={action} className="flex flex-wrap items-center gap-1">
+    <form action={action} className="flex flex-wrap items-end gap-1">
       <input type="hidden" name="accessoryId" value={accessoryId} />
-      <input
-        name="quantity"
-        type="number"
-        step="0.01"
-        placeholder="Qtd"
-        className="tk-input w-16"
-        value={quantity}
-        onChange={(e) => setQuantity(e.target.value)}
-        required
-      />
-      <input
-        name="totalCost"
-        type="number"
-        step="0.01"
-        placeholder="Valor"
-        className="tk-input w-20"
-        value={totalCost}
-        onChange={(e) => setTotalCost(e.target.value)}
-        required
-      />
-      <input name="purchaseDate" type="date" defaultValue={today()} className="tk-input w-36" required />
-      <button className="tk-btn-primary px-2 py-1 text-xs" title={Number.isFinite(unitCost) ? `R$/un: ${formatCurrency(unitCost)}` : undefined}>
-        Repor
-      </button>
+      <label className="text-xs text-slate-500 dark:text-slate-400">
+        Qtd *
+        <input
+          name="quantity"
+          type="number"
+          step="0.01"
+          placeholder="Qtd"
+          className="tk-input mt-0.5 w-16"
+          value={quantity}
+          onChange={(e) => setQuantity(e.target.value)}
+          required
+        />
+      </label>
+      <label className="text-xs text-slate-500 dark:text-slate-400">
+        Valor *
+        <input
+          name="totalCost"
+          type="number"
+          step="0.01"
+          placeholder="Valor"
+          className="tk-input mt-0.5 w-20"
+          value={totalCost}
+          onChange={(e) => setTotalCost(e.target.value)}
+          required
+        />
+      </label>
+      <label className="text-xs text-slate-500 dark:text-slate-400">
+        Data *
+        <input name="purchaseDate" type="date" defaultValue={today()} className="tk-input mt-0.5 w-36" required />
+      </label>
+      <SubmitButton pendingLabel="…" className="tk-btn-primary px-2 py-1 text-xs">
+        <span title={Number.isFinite(unitCost) ? `R$/un: ${formatCurrency(unitCost)}` : undefined}>Repor</span>
+      </SubmitButton>
     </form>
   )
 }

@@ -2,7 +2,11 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { formatCurrency } from '@/lib/format'
-import type { ProductCostFlags } from '@/lib/costing'
+import {
+  calculatePrinterDepreciationCostPerHour,
+  calculatePrinterMaintenanceCostPerHour,
+  type ProductCostFlags,
+} from '@/lib/costing'
 import { ProductForm } from '../ProductForm'
 import { CostBreakdown } from '../CostBreakdown'
 import { PriceSimulation } from '../PriceSimulation'
@@ -49,6 +53,31 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
   ])
 
+  const annualMaintenancePercent = settings.annualMaintenancePercent.toNumber()
+  const annualUsageHours = settings.annualUsageHours.toNumber()
+  const energyCostPerKwh = settings.energyCostPerKwh.toNumber()
+
+  const printerOptions = printers.map((p) => {
+    const purchasePrice = p.purchasePrice.toNumber()
+    const depreciationHours = p.depreciationHours.toNumber()
+    const costPerHour =
+      calculatePrinterDepreciationCostPerHour({ purchasePrice, depreciationHours }) +
+      calculatePrinterMaintenanceCostPerHour({ purchasePrice, annualMaintenancePercent, annualUsageHours }) +
+      p.avgPowerConsumptionKwh.toNumber() * energyCostPerKwh
+    return { id: p.id, name: p.name, costPerHour }
+  })
+
+  const packagingOptions = packagingItems.map((p) => ({ id: p.id, name: p.name, unitCost: p.unitCost.toNumber() }))
+
+  const currentSuppliesCost = product.supplyUsages.reduce(
+    (sum, u) => sum + u.quantity.toNumber() * u.supply.avgUnitCost.toNumber(),
+    0,
+  )
+  const currentAccessoriesCost = product.accessoryUsages.reduce(
+    (sum, u) => sum + u.quantity.toNumber() * u.accessory.avgUnitCost.toNumber(),
+    0,
+  )
+
   const costFlags: ProductCostFlags = {
     includeDepreciation: settings.includeDepreciation,
     includeEnergyCost: settings.includeEnergyCost,
@@ -83,13 +112,17 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               usesGlue: product.usesGlue,
               notes: product.notes,
             }}
-            printers={printers}
+            printers={printerOptions}
             filaments={filamentOptions}
-            packagingItems={packagingItems}
+            packagingItems={packagingOptions}
+            laborCostPerHour={settings.laborCostPerHour.toNumber()}
+            currentSuppliesCost={currentSuppliesCost}
+            currentAccessoriesCost={currentAccessoriesCost}
           />
 
-          <div className="mt-6 tk-panel p-4">
-            <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Insumos usados</h2>
+          <details className="mt-6 tk-panel p-4">
+            <summary className="tk-summary">Insumos (opcional)</summary>
+            <h2 className="mb-3 mt-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Insumos usados</h2>
             {product.supplyUsages.length === 0 ? (
               <p className="text-sm text-slate-500 dark:text-slate-400">Nenhum insumo cadastrado.</p>
             ) : (
@@ -130,10 +163,11 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               <input name="quantity" type="number" step="0.001" placeholder="Quantidade" className="tk-input" required />
               <button className="tk-btn-primary">Adicionar</button>
             </form>
-          </div>
+          </details>
 
-          <div className="mt-6 tk-panel p-4">
-            <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Acessórios usados</h2>
+          <details className="mt-6 tk-panel p-4">
+            <summary className="tk-summary">Acessórios (opcional)</summary>
+            <h2 className="mb-3 mt-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Acessórios usados</h2>
             {product.accessoryUsages.length === 0 ? (
               <p className="text-sm text-slate-500 dark:text-slate-400">Nenhum acessório cadastrado.</p>
             ) : (
@@ -174,7 +208,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               <input name="quantity" type="number" step="0.01" placeholder="Quantidade" className="tk-input" required />
               <button className="tk-btn-primary">Adicionar</button>
             </form>
-          </div>
+          </details>
 
           <div className="mt-6 tk-panel p-4">
             <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Fotos da peça</h2>

@@ -4,7 +4,7 @@ export const finishingTypeEnum = z.enum(['NENHUM', 'CANETA_VERNIZ', 'RESINA_UV',
 
 export const productSchema = z.object({
   name: z.string().min(1, 'Nome é obrigatório'),
-  category: z.string().min(1).default('Chaveiro'),
+  category: z.string().min(1, 'Selecione a categoria'),
   printerId: z.string().min(1, 'Selecione uma impressora'),
   filamentId: z.string().min(1, 'Selecione um filamento'),
   weightGrams: z.coerce.number().positive('Peso deve ser maior que zero'),

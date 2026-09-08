@@ -1,7 +1,15 @@
-import type { ProductionStatus, WasteReason } from '@prisma/client'
+import type { ProductionStatus, WasteReason, SupplyUnit } from '@prisma/client'
 
 export function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
+}
+
+// Sufixo de unidade de medida usado no "Custo por unidade" de Insumos (ex.:
+// "R$ 25,55/g", "R$ 0,12/ml", "R$ 3,40/m").
+const SUPPLY_UNIT_SUFFIX: Record<SupplyUnit, string> = { UN: 'un', ML: 'ml', G: 'g', M: 'm', OUTRO: 'un' }
+
+export function formatUnitCost(unit: SupplyUnit, value: number): string {
+  return `${formatCurrency(value)}/${SUPPLY_UNIT_SUFFIX[unit]}`
 }
 
 // Task 8 (spec §5.4/§6, task-8 brief): production history renders a colored

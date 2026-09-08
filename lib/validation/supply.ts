@@ -30,3 +30,12 @@ export const supplyPurchaseSchema = z.object({
 })
 
 export type SupplyPurchaseInput = z.infer<typeof supplyPurchaseSchema>
+
+// Corrige nome/unidade de um Supply já cadastrado -- nunca estoque/custo,
+// que só mudam por uma compra real (createSupply/registerSupplyPurchase).
+export const supplyUpdateSchema = z.object({
+  name: z.string().min(1, 'Nome é obrigatório'),
+  unit: supplyUnitEnum,
+})
+
+export type SupplyUpdateInput = z.infer<typeof supplyUpdateSchema>

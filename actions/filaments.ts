@@ -26,6 +26,18 @@ export async function createFilament(formData: FormData): Promise<ActionResult> 
   return { success: true }
 }
 
+// Corrects registration data (manufacturer/material/color/spool weight/spool
+// price) for an existing roll. Deliberately does NOT touch rollNumber,
+// initialStockGrams or currentStockGrams — those track physical stock
+// consumption and are unrelated to fixing a data-entry mistake.
+export async function updateFilament(id: string, formData: FormData): Promise<ActionResult> {
+  const parsed = filamentSchema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  await prisma.filament.update({ where: { id }, data: parsed.data })
+  revalidatePath('/filaments')
+  return { success: true }
+}
+
 // Physical delete — no soft-delete in this model (spec §3.2). If a Product/ProductionRun
 // references this roll, Postgres's FK constraint blocks it and Prisma throws; that
 // propagates as an unhandled error, matching the existing precedent elsewhere in this

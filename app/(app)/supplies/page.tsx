@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
-import { formatCurrency } from '@/lib/format'
+import { formatCurrency, formatUnitCost } from '@/lib/format'
 import { getStockStatusWithThresholds, calculateStockReferenceQuantity, calculateStockPercentRemaining } from '@/lib/costing'
 import { SupplyForm } from './SupplyForm'
 import { RestockForm } from './RestockForm'
@@ -50,21 +50,26 @@ function formatDate(d: Date): string {
 export default async function SuppliesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ unit?: string; stock?: string }>
+  searchParams: Promise<{ unit?: string; stock?: string; editId?: string }>
 }) {
-  const { unit, stock } = await searchParams
+  const { unit, stock, editId } = await searchParams
   const activeUnit = (['UN', 'ML', 'G', 'M', 'OUTRO'] as const).includes(unit as SupplyUnit)
     ? (unit as SupplyUnit)
     : undefined
   const activeStock = stock === 'baixo' ? 'baixo' : undefined
 
-  const [supplies, settings] = await Promise.all([
+  const [supplies, settings, editingSupplyRecord] = await Promise.all([
     prisma.supply.findMany({
       include: { purchases: { orderBy: { purchaseDate: 'desc' } } },
       orderBy: { name: 'asc' },
     }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
+    editId ? prisma.supply.findUnique({ where: { id: editId } }) : null,
   ])
+
+  const editingSupply = editingSupplyRecord
+    ? { id: editingSupplyRecord.id, name: editingSupplyRecord.name, unit: editingSupplyRecord.unit }
+    : undefined
 
   const lowThresholdPercent = settings.stockLowThresholdPercent.toNumber()
   const criticalThresholdPercent = settings.stockCriticalThresholdPercent.toNumber()
@@ -104,7 +109,7 @@ export default async function SuppliesPage({
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Insumos</h1>
-      <SupplyForm />
+      <SupplyForm key={editingSupply?.id ?? 'new'} editingSupply={editingSupply} />
 
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
         <div className="tk-panel p-4">
@@ -152,7 +157,7 @@ export default async function SuppliesPage({
             <th className="py-2">Nome</th>
             <th>Unidade</th>
             <th>Estoque</th>
-            <th>Custo médio</th>
+            <th>Custo por unidade</th>
             <th>Valor em estoque</th>
             <th>% restante</th>
             <th>Status</th>
@@ -166,7 +171,7 @@ export default async function SuppliesPage({
               <td className="py-2">{s.name}</td>
               <td>{SUPPLY_UNIT_LABELS[s.unit] ?? s.unit}</td>
               <td>{currentStock}</td>
-              <td>{formatCurrency(avgUnitCost)}</td>
+              <td>{formatUnitCost(s.unit, avgUnitCost)}</td>
               <td>{formatCurrency(valueInStock)}</td>
               <td>{percentRemaining.toFixed(1)}%</td>
               <td>{status.emoji} {status.label}</td>
@@ -198,7 +203,12 @@ export default async function SuppliesPage({
                       </tbody>
                     </table>
                   </details>
-                  <ConfirmDeleteForm action={async () => { 'use server'; await deleteSupply(s.id) }} />
+                  <div className="flex items-center gap-3">
+                    <Link href={`/supplies?editId=${s.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                      Editar
+                    </Link>
+                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteSupply(s.id) }} />
+                  </div>
                 </div>
               </td>
             </tr>
@@ -223,7 +233,7 @@ export default async function SuppliesPage({
               <tr className="tk-table-head-row">
                 <th className="py-2">Nome</th>
                 <th>Unidade</th>
-                <th>Custo médio</th>
+                <th>Custo por unidade</th>
                 <th>Repor estoque</th>
               </tr>
             </thead>
@@ -232,7 +242,7 @@ export default async function SuppliesPage({
                 <tr key={s.id} className="tk-row-inactive">
                   <td className="py-2">{s.name}</td>
                   <td>{SUPPLY_UNIT_LABELS[s.unit] ?? s.unit}</td>
-                  <td>{formatCurrency(avgUnitCost)}</td>
+                  <td>{formatUnitCost(s.unit, avgUnitCost)}</td>
                   <td>
                     <RestockForm supplyId={s.id} />
                   </td>

@@ -30,3 +30,14 @@ export const productionRunSchema = z.object({
   message: 'Sucesso + falhas não pode ser maior que o planejado',
   path: ['quantityFailed'],
 })
+
+// Edição de uma produção já registrada (spec do módulo Produção): quantidade
+// e filamento ficam sempre somente leitura para preservar integridade
+// histórica -- só os campos de desperdício e observações podem mudar,
+// qualquer que seja o status (exceto Cancelada, que não é editável).
+export const productionRunWasteUpdateSchema = z.object({
+  gramsWasted: z.coerce.number().nonnegative('Gramas desperdiçadas não pode ser negativo'),
+  timeWastedHours: z.coerce.number().nonnegative('Tempo desperdiçado não pode ser negativo'),
+  wasteReason: wasteReasonEnum.nullable().optional(),
+  notes: z.string().optional().nullable(),
+})

@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createPrinter, updatePrinter } from '@/actions/printers'
 import { formatCurrency } from '@/lib/format'
+import { SubmitButton } from '@/components/SubmitButton'
 
 type SettingsForPreview = {
   annualMaintenancePercent: number
@@ -82,42 +83,54 @@ export function PrinterForm({
 
   return (
     <form ref={formRef} action={action} className="grid grid-cols-4 gap-2 tk-panel p-4">
-      <input name="name" placeholder="Nome" className="tk-input" required defaultValue={editingPrinter?.name} />
-      <input
-        name="purchasePrice"
-        type="number"
-        step="0.01"
-        placeholder="Preço"
-        className="tk-input"
-        value={purchasePrice}
-        onChange={(e) => setPurchasePrice(e.target.value)}
-        required
-      />
-      <input
-        name="depreciationHours"
-        type="number"
-        step="1"
-        placeholder="Horas depreciação"
-        className="tk-input"
-        value={depreciationHours}
-        onChange={(e) => setDepreciationHours(e.target.value)}
-        required
-      />
-      <input
-        name="avgPowerConsumptionKwh"
-        type="number"
-        step="0.001"
-        placeholder="Consumo kWh/h"
-        className="tk-input"
-        value={avgPowerConsumptionKwh}
-        onChange={(e) => setAvgPowerConsumptionKwh(e.target.value)}
-        required
-      />
+      <label className="text-sm">
+        Nome *
+        <input name="name" placeholder="Nome" className="tk-input-full" required defaultValue={editingPrinter?.name} />
+      </label>
+      <label className="text-sm">
+        Preço *
+        <input
+          name="purchasePrice"
+          type="number"
+          step="0.01"
+          placeholder="Preço"
+          className="tk-input-full"
+          value={purchasePrice}
+          onChange={(e) => setPurchasePrice(e.target.value)}
+          required
+        />
+      </label>
+      <label className="text-sm">
+        Vida útil (h) *
+        <input
+          name="depreciationHours"
+          type="number"
+          step="1"
+          placeholder="Horas depreciação"
+          className="tk-input-full"
+          value={depreciationHours}
+          onChange={(e) => setDepreciationHours(e.target.value)}
+          required
+        />
+      </label>
+      <label className="text-sm">
+        Consumo kWh/h *
+        <input
+          name="avgPowerConsumptionKwh"
+          type="number"
+          step="0.001"
+          placeholder="Consumo kWh/h"
+          className="tk-input-full"
+          value={avgPowerConsumptionKwh}
+          onChange={(e) => setAvgPowerConsumptionKwh(e.target.value)}
+          required
+        />
+      </label>
       <div className="col-span-4 mt-2 flex items-center gap-3">
-        <button className="tk-btn-primary">{editingPrinter ? 'Salvar' : 'Adicionar'}</button>
+        <SubmitButton pendingLabel="Salvando…">{editingPrinter ? 'Salvar alterações' : 'Adicionar'}</SubmitButton>
         {editingPrinter && (
           <Link href="/printers" className="text-xs text-slate-500 hover:underline dark:text-slate-400">
-            Cancelar edição
+            Cancelar
           </Link>
         )}
       </div>

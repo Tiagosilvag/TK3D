@@ -1,7 +1,7 @@
 'use server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { supplySchema, supplyPurchaseSchema } from '@/lib/validation/supply'
+import { supplySchema, supplyPurchaseSchema, supplyUpdateSchema } from '@/lib/validation/supply'
 import { calculateWeightedAverageCost } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 
@@ -39,6 +39,21 @@ export async function createSupply(formData: FormData): Promise<ActionResult> {
         data: { supplyId: supply.id, quantity, totalCost, purchaseDate, notes },
       })
     })
+  } catch (err) {
+    if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um insumo com esse nome' }
+    throw err
+  }
+  revalidatePath('/supplies')
+  return { success: true }
+}
+
+// Corrige nome/unidade de um Supply já cadastrado -- nunca estoque ou custo,
+// que só mudam por uma compra real (createSupply/registerSupplyPurchase).
+export async function updateSupply(id: string, formData: FormData): Promise<ActionResult> {
+  const parsed = supplyUpdateSchema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  try {
+    await prisma.supply.update({ where: { id }, data: parsed.data })
   } catch (err) {
     if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um insumo com esse nome' }
     throw err

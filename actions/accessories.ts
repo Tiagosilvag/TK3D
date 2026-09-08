@@ -1,7 +1,7 @@
 'use server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { accessorySchema, accessoryPurchaseSchema } from '@/lib/validation/accessory'
+import { accessorySchema, accessoryPurchaseSchema, accessoryMultiColorSchema, accessoryUpdateSchema } from '@/lib/validation/accessory'
 import { calculateWeightedAverageCost } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 
@@ -38,6 +38,91 @@ export async function createAccessory(formData: FormData): Promise<ActionResult>
         data: { accessoryId: accessory.id, quantity, totalCost, purchaseDate, notes },
       })
     })
+  } catch (err) {
+    if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um acessório com esse nome, tipo e cor' }
+    throw err
+  }
+  revalidatePath('/accessories')
+  return { success: true }
+}
+
+// Cadastro com múltiplas variações de cor na mesma compra (spec do módulo
+// Acessórios): valor total dividido igualmente pelo total de peças de TODAS
+// as cores -- um único preço unitário médio, aplicado a cada linha. Cada
+// linha upserta sua própria Accessory (name+type+colorName) exatamente como
+// createAccessory (linha nova) ou registerAccessoryPurchase (linha já
+// existente, mesma média ponderada) faria isoladamente -- feito aqui numa
+// única transação pra não deixar cor nenhuma pela metade se alguma falhar.
+export async function createAccessoryMultiColor(formData: FormData): Promise<ActionResult> {
+  const raw = Object.fromEntries(formData)
+  let colors: unknown
+  try {
+    colors = JSON.parse(String(raw.colorsJson ?? '[]'))
+  } catch {
+    return { success: false, error: 'Cores inválidas' }
+  }
+  const parsed = accessoryMultiColorSchema.safeParse({ ...raw, colors })
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  const { name, type, totalCost, purchaseDate, notes, colors: colorRows } = parsed.data
+
+  const totalQuantity = colorRows.reduce((sum, c) => sum + c.quantity, 0)
+  const unitCost = totalCost / totalQuantity
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      for (const color of colorRows) {
+        const purchaseCostForColor = color.quantity * unitCost
+        const existing = await tx.accessory.findUnique({
+          where: { name_type_colorName: { name, type, colorName: color.colorName } },
+        })
+        if (existing) {
+          const currentStock = existing.currentStock.toNumber()
+          const newAvgUnitCost = calculateWeightedAverageCost({
+            currentStock,
+            avgUnitCost: existing.avgUnitCost.toNumber(),
+            purchaseQuantity: color.quantity,
+            purchaseTotalCost: purchaseCostForColor,
+          })
+          await tx.accessory.update({
+            where: { id: existing.id },
+            data: { currentStock: currentStock + color.quantity, avgUnitCost: newAvgUnitCost, colorHex: color.colorHex },
+          })
+          await tx.accessoryPurchase.create({
+            data: { accessoryId: existing.id, quantity: color.quantity, totalCost: purchaseCostForColor, purchaseDate, notes },
+          })
+        } else {
+          const accessory = await tx.accessory.create({
+            data: {
+              name,
+              type,
+              colorName: color.colorName,
+              colorHex: color.colorHex,
+              currentStock: color.quantity,
+              avgUnitCost: unitCost,
+            },
+          })
+          await tx.accessoryPurchase.create({
+            data: { accessoryId: accessory.id, quantity: color.quantity, totalCost: purchaseCostForColor, purchaseDate, notes },
+          })
+        }
+      }
+    })
+  } catch (err) {
+    if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um acessório com esse nome, tipo e cor' }
+    throw err
+  }
+  revalidatePath('/accessories')
+  return { success: true }
+}
+
+// Corrige nome/tipo/cor de um Accessory já cadastrado -- nunca estoque ou
+// custo, que só mudam por uma compra real (createAccessory/
+// registerAccessoryPurchase/createAccessoryMultiColor).
+export async function updateAccessory(id: string, formData: FormData): Promise<ActionResult> {
+  const parsed = accessoryUpdateSchema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  try {
+    await prisma.accessory.update({ where: { id }, data: parsed.data })
   } catch (err) {
     if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um acessório com esse nome, tipo e cor' }
     throw err

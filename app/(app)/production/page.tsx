@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { ProductionRunForm } from './ProductionRunForm'
 import { CancelProductionRunForm } from './CancelProductionRunForm'
@@ -8,8 +9,14 @@ import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 
 export const dynamic = 'force-dynamic'
 
-export default async function ProductionPage() {
-  const [runs, products, printers, filaments] = await Promise.all([
+export default async function ProductionPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ editId?: string }>
+}) {
+  const { editId } = await searchParams
+
+  const [runs, products, printers, filaments, editingRunRecord] = await Promise.all([
     prisma.productionRun.findMany({
       orderBy: { date: 'desc' },
       include: { product: true, printer: true, filament: true },
@@ -17,15 +24,38 @@ export default async function ProductionPage() {
     prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { manufacturer: 'asc' } }),
+    editId
+      ? prisma.productionRun.findUnique({ where: { id: editId }, include: { product: true, printer: true, filament: true } })
+      : null,
   ])
+
+  const editingRun = editingRunRecord
+    ? {
+        id: editingRunRecord.id,
+        productName: editingRunRecord.product.name,
+        printerName: editingRunRecord.printer.name,
+        filamentName: `${editingRunRecord.filament.manufacturer} ${editingRunRecord.filament.colorName} — Rolo #${String(editingRunRecord.filament.rollNumber).padStart(3, '0')}`,
+        date: editingRunRecord.date.toISOString().slice(0, 10),
+        quantityPlanned: editingRunRecord.quantityPlanned,
+        quantitySuccess: editingRunRecord.quantitySuccess,
+        quantityFailed: editingRunRecord.quantityFailed,
+        gramsUsed: editingRunRecord.gramsUsed.toNumber(),
+        gramsWasted: editingRunRecord.gramsWasted.toNumber(),
+        timeWastedHours: editingRunRecord.timeWastedHours.toNumber(),
+        wasteReason: editingRunRecord.wasteReason,
+        notes: editingRunRecord.notes,
+      }
+    : undefined
 
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Produção e desperdício</h1>
       <ProductionRunForm
+        key={editingRun?.id ?? 'new'}
         products={products}
         printers={printers}
         filaments={filaments.map((f) => ({ id: f.id, name: `${f.manufacturer} ${f.colorName} (${f.material}) — Rolo #${String(f.rollNumber).padStart(3, '0')} (${f.currentStockGrams.toNumber()}g restantes)` }))}
+        editingRun={editingRun}
       />
       <table className="mt-6 w-full text-sm">
         <thead>
@@ -72,7 +102,12 @@ export default async function ProductionPage() {
                 </td>
                 <td>{run.gramsWasted.toNumber()}g / {run.timeWastedHours.toNumber()}h</td>
                 <td>{snapshot ? formatCurrency(snapshot.total) : '—'}</td>
-                <td className="flex flex-col gap-1 py-2">
+                <td className="flex flex-col items-start gap-1 py-2">
+                  {run.status !== 'CANCELADA' && (
+                    <Link href={`/production?editId=${run.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                      Editar
+                    </Link>
+                  )}
                   {run.status !== 'CANCELADA' && <CancelProductionRunForm id={run.id} />}
                   <ConfirmDeleteForm action={async () => { 'use server'; await deleteProductionRun(run.id) }} />
                 </td>
