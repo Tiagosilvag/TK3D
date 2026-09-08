@@ -5,6 +5,8 @@ import { formatCurrency } from '@/lib/format'
 import { PrinterForm } from './PrinterForm'
 import { deletePrinter, reactivatePrinter, deletePrinterPermanently } from '@/actions/printers'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { DeletePrinterButton } from '@/components/DeletePrinterButton'
+import { ActionsMenu } from '@/components/ActionsMenu'
 
 export const dynamic = 'force-dynamic'
 
@@ -80,7 +82,7 @@ export default async function PrintersPage({
                 <td>{formatCurrency(maintCost)}</td>
                 <td>{formatCurrency(totalCost)}</td>
                 <td>
-                  <div className="flex items-center gap-3">
+                  <ActionsMenu>
                     <Link href={`/printers?editId=${p.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
                       Editar
                     </Link>
@@ -88,12 +90,11 @@ export default async function PrintersPage({
                       action={async () => { 'use server'; await deletePrinter(p.id) }}
                       label="Desativar"
                     />
-                    <ConfirmDeleteForm
-                      action={async () => { 'use server'; await deletePrinterPermanently(p.id) }}
-                      label="Excluir permanentemente"
-                      confirmMessage="Excluir esta impressora permanentemente? Essa ação não pode ser desfeita."
+                    <DeletePrinterButton
+                      printerName={p.name}
+                      onDelete={async () => { 'use server'; return deletePrinterPermanently(p.id) }}
                     />
-                  </div>
+                  </ActionsMenu>
                 </td>
               </tr>
             )
@@ -118,16 +119,15 @@ export default async function PrintersPage({
                   <td className="py-2">{p.name}</td>
                   <td>{formatCurrency(p.purchasePrice.toNumber())}</td>
                   <td>
-                    <div className="flex items-center gap-3">
+                    <ActionsMenu>
                       <form action={async () => { 'use server'; await reactivatePrinter(p.id) }}>
                         <button className="tk-link-success">Reativar</button>
                       </form>
-                      <ConfirmDeleteForm
-                        action={async () => { 'use server'; await deletePrinterPermanently(p.id) }}
-                        label="Excluir permanentemente"
-                        confirmMessage="Excluir esta impressora permanentemente? Essa ação não pode ser desfeita."
+                      <DeletePrinterButton
+                        printerName={p.name}
+                        onDelete={async () => { 'use server'; return deletePrinterPermanently(p.id) }}
                       />
-                    </div>
+                    </ActionsMenu>
                   </td>
                 </tr>
               ))}

@@ -244,6 +244,70 @@ export function sumUsageCost(usages: UsageCostInput[]): number {
   return usages.reduce((sum, u) => sum + u.quantity * u.avgUnitCost, 0)
 }
 
+// Termos já calculados (em R$, não mais em peso/tempo/taxa) que
+// combineProductCost soma em subtotal/finalCost/preços -- extraído de
+// calculateProductCost pra ser reutilizável por
+// calculateCompositeProductCost (2.1) abaixo, que chega a esses mesmos 4
+// primeiros termos somando várias ProductPart em vez de um único
+// peso/impressora/filamento.
+export interface ProductCostTerms {
+  filamentCost: number
+  electricityCost: number
+  printerCost: number
+  maintenanceCost: number
+  laborCost: number
+  suppliesCost: number
+  packagingCost: number
+  accessoryCost: number
+}
+
+// Grosses up a suggested price so that, after a percentage fee/tax cut and
+// a flat fixed fee, the seller is still left with `suggestedPrice`. Shared
+// by combineProductCost (using Settings' generic marketplace fee/tax) and
+// 4.1's per-platform pricing (using a specific MarketplacePlatform's own
+// feePercent/feeFixed instead) -- same formula, different fee source.
+export function calculatePlatformPrice(suggestedPrice: number, taxPercent: number, feePercent: number, feeFixed: number): number {
+  return suggestedPrice / (1 - feePercent - taxPercent) + feeFixed
+}
+
+export function combineProductCost(terms: ProductCostTerms, flags: ProductCostFlags, settings: Settings): ProductCostBreakdown {
+  const subtotal =
+    terms.filamentCost * on(flags.includeFilamentCost) +
+    terms.electricityCost * on(flags.includeEnergyCost) +
+    terms.printerCost * on(flags.includeDepreciation) +
+    terms.maintenanceCost * on(flags.includeMaintenance) +
+    terms.laborCost * on(flags.includeLaborCost) +
+    terms.suppliesCost * on(flags.includeSuppliesCost) +
+    terms.packagingCost * on(flags.includePackagingCost) +
+    terms.accessoryCost * on(flags.includeAccessoriesCost)
+
+  // Failure rate is applied as a markup on top of subtotal (not a flat
+  // additive term), same shape as before the flags existed — always
+  // calculated so the UI can show it, gated by includeFailureRate before
+  // it contributes to finalCost.
+  const failureRateCost = subtotal * settings.failureRatePercent
+  const finalCost = subtotal + failureRateCost * on(flags.includeFailureRate)
+
+  const suggestedPrice = finalCost * settings.defaultMarkup
+  const marketplacePrice = calculatePlatformPrice(suggestedPrice, settings.taxPercent, settings.marketplaceFeePercent, settings.marketplaceFixedFee)
+
+  return {
+    filamentCost: terms.filamentCost,
+    electricityCost: terms.electricityCost,
+    printerCost: terms.printerCost,
+    maintenanceCost: terms.maintenanceCost,
+    laborCost: terms.laborCost,
+    suppliesCost: terms.suppliesCost,
+    packagingCost: terms.packagingCost,
+    accessoryCost: terms.accessoryCost,
+    failureRateCost,
+    subtotal,
+    finalCost,
+    suggestedPrice,
+    marketplacePrice,
+  }
+}
+
 export function calculateProductCost(input: ProductCostInput, settings: Settings): ProductCostBreakdown {
   // Every term below is always calculated in full, regardless of its flag —
   // the breakdown must keep showing the real value (UI marks it visually
@@ -255,42 +319,74 @@ export function calculateProductCost(input: ProductCostInput, settings: Settings
   const maintenanceCost = input.printerMaintenanceCostPerHour * input.printTimeHours
   const laborCost = settings.laborCostPerHour * input.laborTimeHours
 
-  const subtotal =
-    filamentCost * on(input.includeFilamentCost) +
-    electricityCost * on(input.includeEnergyCost) +
-    printerCost * on(input.includeDepreciation) +
-    maintenanceCost * on(input.includeMaintenance) +
-    laborCost * on(input.includeLaborCost) +
-    input.suppliesCost * on(input.includeSuppliesCost) +
-    input.packagingCost * on(input.includePackagingCost) +
-    input.accessoryCost * on(input.includeAccessoriesCost)
+  return combineProductCost(
+    { filamentCost, electricityCost, printerCost, maintenanceCost, laborCost, suppliesCost: input.suppliesCost, packagingCost: input.packagingCost, accessoryCost: input.accessoryCost },
+    input,
+    settings,
+  )
+}
 
-  // Failure rate is applied as a markup on top of subtotal (not a flat
-  // additive term), same shape as before the flags existed — always
-  // calculated so the UI can show it, gated by includeFailureRate before
-  // it contributes to finalCost.
-  const failureRateCost = subtotal * settings.failureRatePercent
-  const finalCost = subtotal + failureRateCost * on(input.includeFailureRate)
+// ---------------------------------------------------------------------------
+// 2.1 Produto composto (BOM): cada ProductPart tem sua própria impressora/
+// filamento/peso/tempo de impressão e uma quantidade necessária por
+// unidade do produto final -- o custo de filamento/energia/depreciação/
+// manutenção do produto composto é a SOMA desses termos entre as peças
+// (cada um já multiplicado por quantityPerUnit). Mão de obra/embalagem/
+// insumos/acessórios continuam sendo conceito de produto inteiro (entram
+// na montagem, spec 2.3 -- não por peça), então chegam prontos de fora,
+// igual calculateProductCost recebe suppliesCost/packagingCost/
+// accessoryCost já somados.
+// ---------------------------------------------------------------------------
 
-  const suggestedPrice = finalCost * settings.defaultMarkup
-  const marketplacePrice = suggestedPrice / (1 - settings.marketplaceFeePercent - settings.taxPercent)
-    + settings.marketplaceFixedFee
+export interface ProductPartCostInput {
+  quantityPerUnit: number
+  weightGrams: number
+  printTimeHours: number
+  filamentPricePerKg: number
+  printerAvgPowerConsumptionKwh: number
+  printerDepreciationCostPerHour: number
+  printerMaintenanceCostPerHour: number
+}
 
-  return {
-    filamentCost,
-    electricityCost,
-    printerCost,
-    maintenanceCost,
-    laborCost,
-    suppliesCost: input.suppliesCost,
-    packagingCost: input.packagingCost,
-    accessoryCost: input.accessoryCost,
-    failureRateCost,
-    subtotal,
-    finalCost,
-    suggestedPrice,
-    marketplacePrice,
-  }
+export interface ProductPartsCostSum {
+  filamentCost: number
+  electricityCost: number
+  printerCost: number
+  maintenanceCost: number
+}
+
+export function sumProductPartsCost(parts: ProductPartCostInput[], settings: Pick<Settings, 'energyCostPerKwh'>): ProductPartsCostSum {
+  return parts.reduce<ProductPartsCostSum>(
+    (acc, part) => {
+      const qty = part.quantityPerUnit
+      return {
+        filamentCost: acc.filamentCost + part.weightGrams * (part.filamentPricePerKg / 1000) * qty,
+        electricityCost: acc.electricityCost + part.printerAvgPowerConsumptionKwh * settings.energyCostPerKwh * part.printTimeHours * qty,
+        printerCost: acc.printerCost + part.printerDepreciationCostPerHour * part.printTimeHours * qty,
+        maintenanceCost: acc.maintenanceCost + part.printerMaintenanceCostPerHour * part.printTimeHours * qty,
+      }
+    },
+    { filamentCost: 0, electricityCost: 0, printerCost: 0, maintenanceCost: 0 },
+  )
+}
+
+export interface CompositeProductCostInput extends ProductCostFlags {
+  parts: ProductPartCostInput[]
+  laborTimeHours: number
+  suppliesCost: number
+  packagingCost: number
+  accessoryCost: number
+}
+
+export function calculateCompositeProductCost(input: CompositeProductCostInput, settings: Settings): ProductCostBreakdown {
+  const partsSum = sumProductPartsCost(input.parts, settings)
+  const laborCost = settings.laborCostPerHour * input.laborTimeHours
+
+  return combineProductCost(
+    { ...partsSum, laborCost, suppliesCost: input.suppliesCost, packagingCost: input.packagingCost, accessoryCost: input.accessoryCost },
+    input,
+    settings,
+  )
 }
 
 // ---------------------------------------------------------------------------

@@ -1,10 +1,13 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { calculateFilamentPricePerGram, getStockStatus } from '@/lib/costing'
-import { formatCurrency } from '@/lib/format'
+import { formatCurrency, getStockStatusBadge } from '@/lib/format'
 import { FilamentForm } from './FilamentForm'
+import { AdjustStockButton } from '@/components/AdjustStockButton'
 import { deleteFilament } from '@/actions/filaments'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { StatusBadge } from '@/components/StatusBadge'
+import { ActionsMenu } from '@/components/ActionsMenu'
 import type { FilamentMaterial } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -133,7 +136,7 @@ export default async function FilamentsPage({
         </div>
       )}
 
-      <table className="mt-2 w-full text-sm">
+      <table className="tk-table-zebra mt-2 w-full text-sm">
         <thead>
           <tr className="tk-table-head-row">
             <th className="py-2"></th>
@@ -169,14 +172,15 @@ export default async function FilamentsPage({
                     <>R$ {pricePerGram.toFixed(4)}</>
                   )}
                 </td>
-                <td>{status.emoji} {status.label}</td>
+                <td><StatusBadge badge={getStockStatusBadge(status)} /></td>
                 <td>
-                  <div className="flex items-center gap-3">
+                  <ActionsMenu>
                     <Link href={`/filaments?editId=${f.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
                       Editar
                     </Link>
+                    <AdjustStockButton resourceType="FILAMENT" resourceId={f.id} resourceName={`${f.manufacturer} ${f.colorName}`} currentQuantity={currentStockGrams} unitLabel="g" />
                     <ConfirmDeleteForm action={async () => { 'use server'; await deleteFilament(f.id) }} />
-                  </div>
+                  </ActionsMenu>
                 </td>
               </tr>
             )
@@ -193,7 +197,7 @@ export default async function FilamentsPage({
       {inactiveFilaments.length > 0 && (
         <details className="mt-8">
           <summary className="tk-summary">Filamentos esgotados ({inactiveFilaments.length})</summary>
-          <table className="mt-3 w-full text-sm">
+          <table className="tk-table-zebra mt-3 w-full text-sm">
             <thead>
               <tr className="tk-table-head-row">
                 <th className="py-2"></th>

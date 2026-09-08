@@ -4,7 +4,21 @@ import { createConsignmentDelivery } from '@/actions/consignmentDeliveries'
 
 type Option = { id: string; name: string }
 
-export function DeliveryForm({ partners, products }: { partners: Option[]; products: Option[] }) {
+function today(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+export function DeliveryForm({
+  partners,
+  products,
+  defaultProductId,
+}: {
+  partners: Option[]
+  products: Option[]
+  // 2.2: link de ação rápida "Entregar a parceiro" em /stock chega aqui
+  // com ?productId=... pra pré-selecionar o produto.
+  defaultProductId?: string
+}) {
   const formRef = useRef<HTMLFormElement>(null)
 
   async function action(formData: FormData) {
@@ -26,7 +40,7 @@ export function DeliveryForm({ partners, products }: { partners: Option[]; produ
       </label>
       <label className="text-sm">
         Produto
-        <select name="productId" defaultValue="" className="tk-input-full" required>
+        <select name="productId" defaultValue={defaultProductId ?? ''} className="tk-input-full" required>
           <option value="" disabled>Selecione</option>
           {products.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
@@ -43,7 +57,7 @@ export function DeliveryForm({ partners, products }: { partners: Option[]; produ
       </label>
       <label className="text-sm">
         Data da entrega
-        <input name="deliveryDate" type="date" className="tk-input-full" required />
+        <input name="deliveryDate" type="date" defaultValue={today()} className="tk-input-full" required />
       </label>
       <label className="col-span-full text-sm md:col-span-3">
         Observações (opcional)

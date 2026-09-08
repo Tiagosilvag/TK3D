@@ -81,7 +81,7 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
   const data = parsed.data
 
-  const [product, printer, filament, settings] = await Promise.all([
+  const [product, printer, filament, settings, productPart] = await Promise.all([
     prisma.product.findUniqueOrThrow({
       where: { id: data.productId },
       include: {
@@ -93,6 +93,7 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
     prisma.printer.findUniqueOrThrow({ where: { id: data.printerId } }),
     prisma.filament.findUniqueOrThrow({ where: { id: data.filamentId } }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
+    data.productPartId ? prisma.productPart.findUniqueOrThrow({ where: { id: data.productPartId } }) : null,
   ])
 
   // --- Pre-transaction check across ALL resources (spec §5.2) ---
@@ -104,12 +105,14 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
       available: filamentAvailable,
       describe: () => `${filament.manufacturer} ${filament.material} ${filament.colorName} (necessário ${totalFilamentConsumed}g, disponível ${filamentAvailable}g)`,
     },
-    ...product.accessoryUsages.map((u): ResourceCheck => {
+    // 2.1: uma produção de PEÇA não consome insumos/acessórios do produto
+    // montado -- esses só são consumidos na montagem (spec 2.3).
+    ...(productPart ? [] : product.accessoryUsages.map((u): ResourceCheck => {
       const needed = u.quantity.toNumber() * data.quantitySuccess
       const available = u.accessory.currentStock.toNumber()
       return { needed, available, describe: () => `${u.accessory.name} (necessário ${needed}, disponível ${available})` }
-    }),
-    ...product.supplyUsages.map((u): ResourceCheck => {
+    })),
+    ...(productPart ? [] : product.supplyUsages.map((u): ResourceCheck => {
       const needed = u.quantity.toNumber() * data.quantitySuccess
       const available = u.supply.currentStock.toNumber()
       return {
@@ -117,7 +120,7 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
         available,
         describe: () => `${u.supply.name} (necessário ${formatSupplyQuantity(u.supply.unit, needed)}, disponível ${formatSupplyQuantity(u.supply.unit, available)})`,
       }
-    }),
+    })),
   ]
   const insufficient = checks.filter((c) => c.needed > c.available)
   if (insufficient.length > 0) {
@@ -153,25 +156,35 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
       includeSuppliesCost: settings.includeSuppliesCost,
       includePackagingCost: settings.includePackagingCost,
       filamentId: filament.id,
-      weightGrams: product.weightGrams.toNumber(),
-      printTimeHours: product.printTimeHours.toNumber(),
-      laborTimeHours: product.laborTimeHours.toNumber(),
+      // 2.1 Produto composto: uma produção de PEÇA usa o peso/tempo dessa
+      // peça (não o resumo agregado do produto composto, que somaria TODAS
+      // as peças e infla o custo de imprimir só uma). Embalagem/insumos/
+      // acessórios/mão de obra são conceito de produto MONTADO -- ficam
+      // zerados aqui e entram no custo só na montagem (spec 2.3, ainda não
+      // implementada), nunca duplicados na impressão de cada peça avulsa.
+      weightGrams: productPart ? productPart.weightGrams.toNumber() : product.weightGrams.toNumber(),
+      printTimeHours: productPart ? productPart.printTimeHours.toNumber() : product.printTimeHours.toNumber(),
+      laborTimeHours: productPart ? 0 : product.laborTimeHours.toNumber(),
       filamentPricePerKg,
       printerAvgPowerConsumptionKwh: printer.avgPowerConsumptionKwh.toNumber(),
       printerDepreciationCostPerHour,
       printerMaintenanceCostPerHour,
-      packagingItemId: product.packagingItemId,
-      packagingCost: product.packagingItem?.unitCost.toNumber() ?? 0,
-      accessoryUsages: product.accessoryUsages.map((u) => ({
-        accessoryId: u.accessoryId,
-        quantity: u.quantity.toNumber(),
-        avgUnitCost: u.accessory.avgUnitCost.toNumber(),
-      })),
-      supplyUsages: product.supplyUsages.map((u) => ({
-        supplyId: u.supplyId,
-        quantity: u.quantity.toNumber(),
-        avgUnitCost: u.supply.avgUnitCost.toNumber(),
-      })),
+      packagingItemId: productPart ? null : product.packagingItemId,
+      packagingCost: productPart ? 0 : (product.packagingItem?.unitCost.toNumber() ?? 0),
+      accessoryUsages: productPart
+        ? []
+        : product.accessoryUsages.map((u) => ({
+            accessoryId: u.accessoryId,
+            quantity: u.quantity.toNumber(),
+            avgUnitCost: u.accessory.avgUnitCost.toNumber(),
+          })),
+      supplyUsages: productPart
+        ? []
+        : product.supplyUsages.map((u) => ({
+            supplyId: u.supplyId,
+            quantity: u.quantity.toNumber(),
+            avgUnitCost: u.supply.avgUnitCost.toNumber(),
+          })),
       quantityPlanned: data.quantityPlanned,
       quantitySuccess: data.quantitySuccess,
       quantityFailed: data.quantityFailed,

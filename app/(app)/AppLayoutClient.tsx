@@ -11,11 +11,16 @@ type NavLink = { href: string; label: string }
 // manage what you sell), always visible and visually louder than the rest.
 const PROTAGONIST_LINKS: NavLink[] = [
   { href: '/dashboard', label: 'Dashboard' },
+  { href: '/orders', label: 'Pedidos' },
   { href: '/sales', label: 'Vendas' },
   { href: '/products', label: 'Produtos' },
 ]
 
-const SECONDARY_LINKS: NavLink[] = [{ href: '/production', label: 'Produção' }]
+const SECONDARY_LINKS: NavLink[] = [
+  { href: '/production', label: 'Produção' },
+  { href: '/assembly', label: 'Montagem' },
+  { href: '/stock', label: 'Meu Estoque' },
+]
 
 const CONSIGNMENT_NAV_LINKS: NavLink[] = [
   { href: '/consignment/partners', label: 'Parceiros' },

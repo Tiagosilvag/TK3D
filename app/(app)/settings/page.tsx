@@ -14,9 +14,14 @@ export default async function SettingsPage() {
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Configurações</h1>
-      <Link href="/settings/accessory-types" className="mb-4 inline-block text-sm text-amber-600 hover:underline dark:text-amber-400">
-        Tipos de acessório &rarr;
-      </Link>
+      <div className="mb-4 flex flex-wrap gap-4">
+        <Link href="/settings/accessory-types" className="text-sm text-amber-600 hover:underline dark:text-amber-400">
+          Tipos de acessório &rarr;
+        </Link>
+        <Link href="/settings/marketplace-platforms" className="text-sm text-amber-600 hover:underline dark:text-amber-400">
+          Plataformas de marketplace &rarr;
+        </Link>
+      </div>
       <SettingsForm
         settings={{
           energyCostPerKwh: settings.energyCostPerKwh.toNumber(),

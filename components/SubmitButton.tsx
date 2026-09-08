@@ -9,14 +9,16 @@ export function SubmitButton({
   children,
   pendingLabel = 'Salvando…',
   className = 'tk-btn-primary',
+  disabled = false,
 }: {
   children: React.ReactNode
   pendingLabel?: string
   className?: string
+  disabled?: boolean
 }) {
   const { pending } = useFormStatus()
   return (
-    <button type="submit" disabled={pending} className={`${className} disabled:cursor-not-allowed disabled:opacity-60`}>
+    <button type="submit" disabled={pending || disabled} className={`${className} disabled:cursor-not-allowed disabled:opacity-60`}>
       {pending ? pendingLabel : children}
     </button>
   )

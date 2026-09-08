@@ -3,14 +3,23 @@ import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createSale, updateSale } from '@/actions/sales'
-import { getProductCostBreakdown } from '@/actions/products'
+import { getPlatformSalePrice } from '@/actions/marketplacePlatforms'
 import { SubmitButton } from '@/components/SubmitButton'
+import type { MarketplacePlatformKind } from '@prisma/client'
 
 type Option = { id: string; name: string }
 
+function today(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+// 3.6: plataforma específica obrigatória -- "Marketplace" genérico saiu da
+// lista de opções pra venda nova (só existe em vendas já registradas antes
+// dessa mudança, ver EditingSale abaixo).
 const CHANNELS = [
   { value: 'DIRETA', label: 'Direta' },
-  { value: 'MARKETPLACE', label: 'Marketplace' },
+  { value: 'SHOPEE', label: 'Shopee' },
+  { value: 'MERCADO_LIVRE', label: 'Mercado Livre' },
 ]
 
 type EditingSale = {
@@ -24,23 +33,34 @@ type EditingSale = {
   notes: string | null
 }
 
-export function SaleForm({ products, editingSale }: { products: Option[]; editingSale?: EditingSale }) {
+export function SaleForm({
+  products,
+  editingSale,
+  defaultProductId,
+}: {
+  products: Option[]
+  editingSale?: EditingSale
+  // 2.2: link de ação rápida "Registrar venda direta" em /stock chega aqui
+  // com ?productId=... pra pré-selecionar o produto.
+  defaultProductId?: string
+}) {
   const router = useRouter()
   const formRef = useRef<HTMLFormElement>(null)
   const [unitPrice, setUnitPrice] = useState(editingSale ? String(editingSale.unitPrice) : '')
   const [prefilling, setPrefilling] = useState(false)
 
-  // Convenience only: when the sale is on the marketplace, suggest the
-  // product's computed marketplace price (cost + markup + marketplace fees)
-  // as a starting point for unitPrice — still a plain editable field, not a
-  // locked value, since the actual sale price can differ.
+  // Convenience only: when the sale is on Shopee/Mercado Livre, suggest that
+  // platform's own computed price (cost + markup + THAT platform's specific
+  // fee/tax, spec 4.1) as a starting point for unitPrice — still a plain
+  // editable field, not a locked value, since the actual sale price can
+  // differ.
   async function maybePrefillMarketplacePrice(productId: string, channel: string) {
     if (editingSale) return
-    if (channel !== 'MARKETPLACE' || !productId) return
+    if ((channel !== 'SHOPEE' && channel !== 'MERCADO_LIVRE') || !productId) return
     setPrefilling(true)
     try {
-      const breakdown = await getProductCostBreakdown(productId)
-      setUnitPrice(breakdown.marketplacePrice.toFixed(2))
+      const price = await getPlatformSalePrice(productId, channel as MarketplacePlatformKind)
+      setUnitPrice(price.toFixed(2))
     } catch {
       // Product lookup failing here shouldn't block filling the form
       // manually — leave whatever the user already typed in place.
@@ -86,9 +106,12 @@ export function SaleForm({ products, editingSale }: { products: Option[]; editin
       className="grid grid-cols-2 gap-3 tk-panel p-4 md:grid-cols-4"
     >
       <label className="text-sm">
-        Canal *
+        Plataforma *
         <select name="channel" defaultValue={editingSale?.channel ?? ''} onChange={handleSelectChange} className="tk-input-full" required>
           <option value="" disabled>Selecione</option>
+          {editingSale?.channel === 'MARKETPLACE' && (
+            <option value="MARKETPLACE">Marketplace (canal antigo)</option>
+          )}
           {CHANNELS.map((c) => (
             <option key={c.value} value={c.value}>{c.label}</option>
           ))}
@@ -96,7 +119,7 @@ export function SaleForm({ products, editingSale }: { products: Option[]; editin
       </label>
       <label className="text-sm">
         Produto *
-        <select name="productId" defaultValue={editingSale?.productId ?? ''} onChange={handleSelectChange} className="tk-input-full" required>
+        <select name="productId" defaultValue={editingSale?.productId ?? defaultProductId ?? ''} onChange={handleSelectChange} className="tk-input-full" required>
           <option value="" disabled>Selecione</option>
           {products.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
@@ -122,10 +145,10 @@ export function SaleForm({ products, editingSale }: { products: Option[]; editin
       </label>
       <label className="text-sm">
         Data da venda *
-        <input name="saleDate" type="date" defaultValue={editingSale?.saleDate} className="tk-input-full" required />
+        <input name="saleDate" type="date" defaultValue={editingSale?.saleDate ?? today()} className="tk-input-full" required />
       </label>
       <label className="text-sm">
-        Comprador/Plataforma (opcional)
+        Comprador (opcional)
         <input name="buyerOrPlatform" defaultValue={editingSale?.buyerOrPlatform ?? ''} className="tk-input-full" />
       </label>
       <label className="col-span-full text-sm md:col-span-2">

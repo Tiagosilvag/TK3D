@@ -1,11 +1,14 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
-import { formatCurrency } from '@/lib/format'
+import { formatCurrency, getStockStatusBadge, STOCK_ADJUSTMENT_REASON_LABELS } from '@/lib/format'
 import { getStockStatusWithThresholds, calculateStockReferenceQuantity, calculateStockPercentRemaining } from '@/lib/costing'
 import { AccessoryForm } from './AccessoryForm'
 import { RestockForm } from './RestockForm'
 import { deleteAccessory } from '@/actions/accessories'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { AdjustStockButton } from '@/components/AdjustStockButton'
+import { StatusBadge } from '@/components/StatusBadge'
+import { ActionsMenu } from '@/components/ActionsMenu'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,6 +49,19 @@ export default async function AccessoriesPage({
     prisma.accessoryTypeRecord.findMany({ orderBy: { name: 'asc' } }),
     editId ? prisma.accessory.findUnique({ where: { id: editId } }) : null,
   ])
+
+  // 2.6: histórico de ajustes de estoque, agrupado por acessório -- exibido
+  // junto do histórico de reposições já existente na mesma <details>.
+  const adjustments = await prisma.stockAdjustment.findMany({
+    where: { resourceType: 'ACCESSORY', resourceId: { in: accessories.map((a) => a.id) } },
+    orderBy: { createdAt: 'desc' },
+  })
+  const adjustmentsByAccessory = new Map<string, typeof adjustments>()
+  for (const adj of adjustments) {
+    const list = adjustmentsByAccessory.get(adj.resourceId) ?? []
+    list.push(adj)
+    adjustmentsByAccessory.set(adj.resourceId, list)
+  }
 
   const activeType = accessoryTypes.some((t) => t.id === type) ? type : undefined
   const typeLabel = (id: string) => accessoryTypes.find((t) => t.id === id)?.name ?? id
@@ -143,7 +159,7 @@ export default async function AccessoriesPage({
         </Link>
       </div>
 
-      <table className="mt-2 w-full text-sm">
+      <table className="tk-table-zebra mt-2 w-full text-sm">
         <thead>
           <tr className="tk-table-head-row">
             <th className="py-2"></th>
@@ -172,9 +188,9 @@ export default async function AccessoriesPage({
               <td>{formatCurrency(avgUnitCost)}</td>
               <td>{formatCurrency(valueInStock)}</td>
               <td>{percentRemaining.toFixed(1)}%</td>
-              <td>{status.emoji} {status.label}</td>
+              <td><StatusBadge badge={getStockStatusBadge(status)} /></td>
               <td>
-                <RestockForm accessoryId={a.id} />
+                <RestockForm accessoryId={a.id} accessoryName={a.name} />
               </td>
               <td>
                 <div className="flex flex-col items-start gap-1">
@@ -200,13 +216,36 @@ export default async function AccessoriesPage({
                         ))}
                       </tbody>
                     </table>
+                    {(adjustmentsByAccessory.get(a.id) ?? []).length > 0 && (
+                      <table className="mt-2 text-xs">
+                        <thead>
+                          <tr className="tk-table-head-row">
+                            <th className="pr-2">Data</th>
+                            <th className="pr-2">Ajuste</th>
+                            <th className="pr-2">Motivo</th>
+                            <th>Obs.</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(adjustmentsByAccessory.get(a.id) ?? []).map((adj) => (
+                            <tr key={adj.id} className="tk-row">
+                              <td className="pr-2">{formatDate(adj.createdAt)}</td>
+                              <td className="pr-2">{adj.difference.toNumber() > 0 ? '+' : ''}{adj.difference.toNumber()}</td>
+                              <td className="pr-2">{STOCK_ADJUSTMENT_REASON_LABELS[adj.reason]}</td>
+                              <td>{adj.reasonNote ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
                   </details>
-                  <div className="flex items-center gap-3">
+                  <ActionsMenu>
                     <Link href={`/accessories?editId=${a.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
                       Editar
                     </Link>
+                    <AdjustStockButton resourceType="ACCESSORY" resourceId={a.id} resourceName={a.name} currentQuantity={currentStock} />
                     <ConfirmDeleteForm action={async () => { 'use server'; await deleteAccessory(a.id) }} />
-                  </div>
+                  </ActionsMenu>
                 </div>
               </td>
             </tr>
@@ -226,7 +265,7 @@ export default async function AccessoriesPage({
           {/* Fix 1 (task-10 brief): esgotados não podem ser excluídos (guarda em
               deleteAccessory) -- o botão de excluir some desta seção porque a
               ação sempre recusaria, sem oferecer uma opção que nunca funciona. */}
-          <table className="mt-3 w-full text-sm">
+          <table className="tk-table-zebra mt-3 w-full text-sm">
             <thead>
               <tr className="tk-table-head-row">
                 <th className="py-2"></th>
@@ -248,7 +287,7 @@ export default async function AccessoriesPage({
                   <td>{a.colorName || '—'}</td>
                   <td>{formatCurrency(avgUnitCost)}</td>
                   <td>
-                    <RestockForm accessoryId={a.id} />
+                    <RestockForm accessoryId={a.id} accessoryName={a.name} />
                   </td>
                 </tr>
               ))}

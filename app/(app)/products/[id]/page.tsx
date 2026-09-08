@@ -1,7 +1,8 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
-import { formatCurrency } from '@/lib/format'
+import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
+import { StatusBadge } from '@/components/StatusBadge'
 import {
   calculatePrinterDepreciationCostPerHour,
   calculatePrinterMaintenanceCostPerHour,
@@ -39,11 +40,12 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
       supplyUsages: { include: { supply: true } },
       accessoryUsages: { include: { accessory: true } },
       photos: { orderBy: { createdAt: 'asc' }, select: { id: true } },
+      parts: { orderBy: { createdAt: 'asc' } },
     },
   })
   if (!product) notFound()
 
-  const [printers, filamentOptions, packagingItems, supplies, accessories, breakdown, settings] = await Promise.all([
+  const [printers, filamentOptions, packagingItems, supplies, accessories, breakdown, settings, partRuns] = await Promise.all([
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getEditableFilamentOptions(product.id),
     prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
@@ -51,7 +53,24 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     prisma.accessory.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getProductCostBreakdown(product.id),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
+    product.parts.length > 0
+      ? prisma.productionRun.findMany({
+          where: { productPartId: { in: product.parts.map((p) => p.id) } },
+          orderBy: { createdAt: 'desc' },
+        })
+      : Promise.resolve([]),
   ])
+
+  // 2.1: "peça pronta" reaproveita o ProductionStatus já existente
+  // (CONCLUIDA = sucesso atingiu o planejado) -- aqui só pega a produção
+  // MAIS RECENTE de cada peça (partRuns já vem ordenado desc) pra exibir
+  // como status atual dela, sem inventar um campo novo.
+  const latestRunByPart = new Map<string, (typeof partRuns)[number]>()
+  for (const run of partRuns) {
+    if (run.productPartId && !latestRunByPart.has(run.productPartId)) {
+      latestRunByPart.set(run.productPartId, run)
+    }
+  }
 
   const annualMaintenancePercent = settings.annualMaintenancePercent.toNumber()
   const annualUsageHours = settings.annualUsageHours.toNumber()
@@ -102,6 +121,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               id: product.id,
               name: product.name,
               category: product.category,
+              isComposite: product.isComposite,
               printerId: product.printerId,
               filamentId: product.filamentId,
               weightGrams: product.weightGrams.toNumber(),
@@ -112,13 +132,59 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               usesGlue: product.usesGlue,
               notes: product.notes,
             }}
+            existingParts={product.parts.map((p) => ({
+              id: p.id,
+              name: p.name,
+              printerId: p.printerId,
+              filamentId: p.filamentId,
+              weightGrams: p.weightGrams.toNumber(),
+              printTimeHours: p.printTimeHours.toNumber(),
+              quantityPerUnit: p.quantityPerUnit,
+            }))}
             printers={printerOptions}
             filaments={filamentOptions}
             packagingItems={packagingOptions}
             laborCostPerHour={settings.laborCostPerHour.toNumber()}
             currentSuppliesCost={currentSuppliesCost}
             currentAccessoriesCost={currentAccessoriesCost}
+            showLiveCostPanel={false}
           />
+
+          {product.isComposite && product.parts.length > 0 && (
+            <div className="mt-6 tk-panel p-4">
+              <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Peças</h2>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="tk-table-head-row">
+                    <th className="py-1">Peça</th>
+                    <th>Qtd. por unidade</th>
+                    <th>Última produção</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {product.parts.map((part) => {
+                    const latestRun = latestRunByPart.get(part.id)
+                    const badge = latestRun ? getProductionStatusBadge(latestRun.status) : null
+                    return (
+                      <tr key={part.id} className="tk-row">
+                        <td className="py-1">{part.name}</td>
+                        <td>{part.quantityPerUnit}</td>
+                        <td>{latestRun ? latestRun.date.toLocaleDateString('pt-BR') : '—'}</td>
+                        <td>
+                          {badge ? (
+                            <StatusBadge badge={badge} />
+                          ) : (
+                            <span className="text-slate-400 dark:text-slate-500">Sem produção ainda</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           <details className="mt-6 tk-panel p-4">
             <summary className="tk-summary">Insumos (opcional)</summary>
