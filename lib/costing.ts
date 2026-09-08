@@ -261,6 +261,15 @@ export interface ProductCostTerms {
   accessoryCost: number
 }
 
+// Grosses up a suggested price so that, after a percentage fee/tax cut and
+// a flat fixed fee, the seller is still left with `suggestedPrice`. Shared
+// by combineProductCost (using Settings' generic marketplace fee/tax) and
+// 4.1's per-platform pricing (using a specific MarketplacePlatform's own
+// feePercent/feeFixed instead) -- same formula, different fee source.
+export function calculatePlatformPrice(suggestedPrice: number, taxPercent: number, feePercent: number, feeFixed: number): number {
+  return suggestedPrice / (1 - feePercent - taxPercent) + feeFixed
+}
+
 export function combineProductCost(terms: ProductCostTerms, flags: ProductCostFlags, settings: Settings): ProductCostBreakdown {
   const subtotal =
     terms.filamentCost * on(flags.includeFilamentCost) +
@@ -280,8 +289,7 @@ export function combineProductCost(terms: ProductCostTerms, flags: ProductCostFl
   const finalCost = subtotal + failureRateCost * on(flags.includeFailureRate)
 
   const suggestedPrice = finalCost * settings.defaultMarkup
-  const marketplacePrice = suggestedPrice / (1 - settings.marketplaceFeePercent - settings.taxPercent)
-    + settings.marketplaceFixedFee
+  const marketplacePrice = calculatePlatformPrice(suggestedPrice, settings.taxPercent, settings.marketplaceFeePercent, settings.marketplaceFixedFee)
 
   return {
     filamentCost: terms.filamentCost,

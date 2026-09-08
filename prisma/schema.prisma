@@ -417,9 +417,35 @@ enum ProductionStatus {
   CANCELADA
 }
 
+// 3.6: canal de venda passou a exigir a plataforma específica (Direta/
+// Shopee/Mercado Livre) em vez do genérico "Marketplace" + texto livre.
+// MARKETPLACE fica só pra não quebrar vendas já registradas antes dessa
+// mudança (nunca reescrevemos histórico adivinhando qual plataforma real
+// foi usada) -- o formulário de nova venda não oferece mais essa opção.
 enum SaleChannel {
   DIRETA
   MARKETPLACE
+  SHOPEE
+  MERCADO_LIVRE
+}
+
+enum MarketplacePlatformKind {
+  SHOPEE
+  MERCADO_LIVRE
+}
+
+// 4.1: taxas de cada marketplace configuráveis (generaliza o par único
+// Settings.marketplaceFeePercent/marketplaceFixedFee, que era genérico pra
+// "marketplace" em geral). Uma linha por plataforma; seedadas com valores
+// zerados porque não há como saber a taxa real de cada uma sem o usuário
+// informar -- nunca inventamos um número plausível no lugar de dado real.
+model MarketplacePlatform {
+  id         String                  @id @default(cuid())
+  platform   MarketplacePlatformKind @unique
+  feePercent Decimal                 @db.Decimal(5, 4)
+  feeFixed   Decimal                 @db.Decimal(10, 2)
+  avgFreight Decimal                 @db.Decimal(10, 2)
+  updatedAt  DateTime                @updatedAt
 }
 
 model Sale {

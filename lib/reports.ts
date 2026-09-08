@@ -2,13 +2,17 @@ import { prisma } from '@/lib/prisma'
 import type { ProductionCostSnapshot } from '@/lib/costing'
 import type { Prisma, ProductionStatus, WasteReason } from '@prisma/client'
 
+// 3.6 estendeu SaleChannel com SHOPEE/MERCADO_LIVRE (além do MARKETPLACE
+// legado) -- pro Dashboard, que só distingue Direta vs Marketplace no
+// gráfico de participação, os três contam pro mesmo balde "MARKETPLACE".
 export async function getRevenueByChannel(): Promise<Record<'DIRETA' | 'MARKETPLACE', number>> {
   const sales = await prisma.sale.findMany()
-  const result: Record<string, number> = { DIRETA: 0, MARKETPLACE: 0 }
+  const result = { DIRETA: 0, MARKETPLACE: 0 }
   for (const s of sales) {
-    result[s.channel] += s.quantity * s.unitPrice.toNumber()
+    const bucket = s.channel === 'DIRETA' ? 'DIRETA' : 'MARKETPLACE'
+    result[bucket] += s.quantity * s.unitPrice.toNumber()
   }
-  return result as Record<'DIRETA' | 'MARKETPLACE', number>
+  return result
 }
 
 export async function getConsignmentRevenue(): Promise<number> {

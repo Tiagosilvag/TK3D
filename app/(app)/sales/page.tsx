@@ -10,15 +10,21 @@ import type { SaleChannel } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
+// 3.6: MARKETPLACE segue mapeado (só pra exibir vendas antigas registradas
+// antes dessa mudança) mas não aparece mais como opção nova em SaleForm.
 const CHANNEL_LABELS: Record<SaleChannel, string> = {
   DIRETA: 'Direta',
-  MARKETPLACE: 'Marketplace',
+  MARKETPLACE: 'Marketplace (antigo)',
+  SHOPEE: 'Shopee',
+  MERCADO_LIVRE: 'Mercado Livre',
 }
 
 const CHANNEL_FILTERS: { value: SaleChannel | undefined; label: string }[] = [
   { value: undefined, label: 'Todas' },
   { value: 'DIRETA', label: 'Direta' },
-  { value: 'MARKETPLACE', label: 'Marketplace' },
+  { value: 'SHOPEE', label: 'Shopee' },
+  { value: 'MERCADO_LIVRE', label: 'Mercado Livre' },
+  { value: 'MARKETPLACE', label: 'Marketplace (antigo)' },
 ]
 
 export default async function SalesPage({
@@ -27,7 +33,9 @@ export default async function SalesPage({
   searchParams: Promise<{ channel?: string; editId?: string; productId?: string; from?: string; to?: string }>
 }) {
   const { channel, editId, productId, from, to } = await searchParams
-  const activeChannel = channel === 'DIRETA' || channel === 'MARKETPLACE' ? channel : undefined
+  const activeChannel = (['DIRETA', 'MARKETPLACE', 'SHOPEE', 'MERCADO_LIVRE'] as const).includes(channel as SaleChannel)
+    ? (channel as SaleChannel)
+    : undefined
   const range = resolveDateRange({ from, to })
 
   const [sales, products, editingSaleRecord] = await Promise.all([
@@ -97,11 +105,11 @@ export default async function SalesPage({
         <thead>
           <tr className="tk-table-head-row">
             <th className="py-2">Data</th>
-            <th>Canal</th>
+            <th>Plataforma</th>
             <th>Produto</th>
             <th>Qtd.</th>
             <th>Valor unit.</th>
-            <th>Comprador/Plataforma</th>
+            <th>Comprador</th>
             <th>Custo</th>
             <th>Lucro</th>
             <th></th>
