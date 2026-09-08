@@ -7,6 +7,7 @@ import { AdjustStockButton } from '@/components/AdjustStockButton'
 import { deleteFilament } from '@/actions/filaments'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { StatusBadge } from '@/components/StatusBadge'
+import { ActionsMenu } from '@/components/ActionsMenu'
 import type { FilamentMaterial } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -173,13 +174,13 @@ export default async function FilamentsPage({
                 </td>
                 <td><StatusBadge badge={getStockStatusBadge(status)} /></td>
                 <td>
-                  <div className="flex items-center gap-3">
+                  <ActionsMenu>
                     <Link href={`/filaments?editId=${f.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
                       Editar
                     </Link>
                     <AdjustStockButton resourceType="FILAMENT" resourceId={f.id} resourceName={`${f.manufacturer} ${f.colorName}`} currentQuantity={currentStockGrams} unitLabel="g" />
                     <ConfirmDeleteForm action={async () => { 'use server'; await deleteFilament(f.id) }} />
-                  </div>
+                  </ActionsMenu>
                 </td>
               </tr>
             )

@@ -4,6 +4,7 @@ import { formatCurrency } from '@/lib/format'
 import { PackagingForm } from './PackagingForm'
 import { deletePackagingItem, reactivatePackagingItem } from '@/actions/packaging'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { ActionsMenu } from '@/components/ActionsMenu'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,12 +42,12 @@ export default async function PackagingPage({
               <td className="py-2">{item.name}</td>
               <td>{formatCurrency(item.unitCost.toNumber())}</td>
               <td>
-                <div className="flex items-center gap-3">
+                <ActionsMenu>
                   <Link href={`/packaging?editId=${item.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
                     Editar
                   </Link>
                   <ConfirmDeleteForm action={async () => { 'use server'; await deletePackagingItem(item.id) }} />
-                </div>
+                </ActionsMenu>
               </td>
             </tr>
           ))}

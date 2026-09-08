@@ -7,6 +7,7 @@ import type { ProductionCostSnapshot } from '@/lib/costing'
 import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { StatusBadge } from '@/components/StatusBadge'
+import { ActionsMenu } from '@/components/ActionsMenu'
 import { DateRangeFilter } from '@/components/DateRangeFilter'
 import { resolveDateRange } from '@/lib/dateRange'
 
@@ -169,14 +170,16 @@ export default async function ProductionPage({
                 </td>
                 <td>{run.gramsWasted.toNumber()}g / {run.timeWastedHours.toNumber()}h</td>
                 <td>{snapshot ? formatCurrency(snapshot.total) : '—'}</td>
-                <td className="flex flex-col items-start gap-1 py-2">
-                  {run.status !== 'CANCELADA' && (
-                    <Link href={`/production?editId=${run.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
-                      Editar
-                    </Link>
-                  )}
-                  {run.status !== 'CANCELADA' && <CancelProductionRunForm id={run.id} />}
-                  <ConfirmDeleteForm action={async () => { 'use server'; await deleteProductionRun(run.id) }} />
+                <td className="py-2">
+                  <ActionsMenu>
+                    {run.status !== 'CANCELADA' && (
+                      <Link href={`/production?editId=${run.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                        Editar
+                      </Link>
+                    )}
+                    {run.status !== 'CANCELADA' && <CancelProductionRunForm id={run.id} />}
+                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteProductionRun(run.id) }} />
+                  </ActionsMenu>
                 </td>
               </tr>
             )

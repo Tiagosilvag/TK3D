@@ -8,6 +8,7 @@ import { deleteSupply } from '@/actions/supplies'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { AdjustStockButton } from '@/components/AdjustStockButton'
 import { StatusBadge } from '@/components/StatusBadge'
+import { ActionsMenu } from '@/components/ActionsMenu'
 import type { SupplyUnit } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -240,13 +241,13 @@ export default async function SuppliesPage({
                       </table>
                     )}
                   </details>
-                  <div className="flex items-center gap-3">
+                  <ActionsMenu>
                     <Link href={`/supplies?editId=${s.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
                       Editar
                     </Link>
                     <AdjustStockButton resourceType="SUPPLY" resourceId={s.id} resourceName={s.name} currentQuantity={currentStock} unitLabel={SUPPLY_UNIT_LABELS[s.unit] === 'Unidade' ? '' : ` ${s.unit.toLowerCase()}`} />
                     <ConfirmDeleteForm action={async () => { 'use server'; await deleteSupply(s.id) }} />
-                  </div>
+                  </ActionsMenu>
                 </div>
               </td>
             </tr>

@@ -8,6 +8,7 @@ import { deleteAccessory } from '@/actions/accessories'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { AdjustStockButton } from '@/components/AdjustStockButton'
 import { StatusBadge } from '@/components/StatusBadge'
+import { ActionsMenu } from '@/components/ActionsMenu'
 
 export const dynamic = 'force-dynamic'
 
@@ -238,13 +239,13 @@ export default async function AccessoriesPage({
                       </table>
                     )}
                   </details>
-                  <div className="flex items-center gap-3">
+                  <ActionsMenu>
                     <Link href={`/accessories?editId=${a.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
                       Editar
                     </Link>
                     <AdjustStockButton resourceType="ACCESSORY" resourceId={a.id} resourceName={a.name} currentQuantity={currentStock} />
                     <ConfirmDeleteForm action={async () => { 'use server'; await deleteAccessory(a.id) }} />
-                  </div>
+                  </ActionsMenu>
                 </div>
               </td>
             </tr>

@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { getOwnStockSummary } from '@/lib/reports'
 import { AdjustStockButton } from '@/components/AdjustStockButton'
+import { ActionsMenu } from '@/components/ActionsMenu'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,7 +48,7 @@ export default async function StockPage() {
                 {r.available}
               </td>
               <td>
-                <div className="flex items-center gap-3">
+                <ActionsMenu>
                   <Link href={`/sales?productId=${r.productId}`} className="text-amber-600 hover:underline dark:text-amber-400">
                     Registrar venda direta
                   </Link>
@@ -55,7 +56,7 @@ export default async function StockPage() {
                     Entregar a parceiro
                   </Link>
                   <AdjustStockButton resourceType="PRODUCT" resourceId={r.productId} resourceName={r.productName} currentQuantity={r.available} />
-                </div>
+                </ActionsMenu>
               </td>
             </tr>
           ))}

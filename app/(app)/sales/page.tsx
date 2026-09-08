@@ -6,6 +6,7 @@ import { deleteSale, getSaleProfit } from '@/actions/sales'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { DateRangeFilter } from '@/components/DateRangeFilter'
 import { StatusBadge } from '@/components/StatusBadge'
+import { ActionsMenu } from '@/components/ActionsMenu'
 import { resolveDateRange } from '@/lib/dateRange'
 import type { SaleChannel } from '@prisma/client'
 
@@ -149,12 +150,12 @@ export default async function SalesPage({
                   </details>
                 </td>
                 <td>
-                  <div className="flex items-center gap-3">
+                  <ActionsMenu>
                     <Link href={`/sales?editId=${s.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
                       Editar
                     </Link>
                     <ConfirmDeleteForm action={async () => { 'use server'; await deleteSale(s.id) }} />
-                  </div>
+                  </ActionsMenu>
                 </td>
               </tr>
             )
