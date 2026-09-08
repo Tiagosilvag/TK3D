@@ -296,6 +296,72 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
   })
 }
 
+// 2.5 Estoque por parceiro aprimorado: saldo agregado por parceiro+produto
+// (múltiplas entregas do mesmo produto pro mesmo parceiro somadas, não uma
+// linha por entrega crua como getConsignmentStockSummary abaixo) + um
+// histórico cronológico misturando entregas e relatórios de venda -- tudo
+// derivado de ConsignmentDelivery/ConsignmentSaleReport, que já são a
+// única fonte real dessa informação (um relatório de venda continua sendo
+// preenchido manualmente porque é informação que só o parceiro tem — o que
+// fica automático aqui é a agregação/relatório em cima disso, não a
+// captura do evento em si).
+export interface ConsignmentHistoryEvent {
+  date: Date
+  type: 'entrega' | 'venda'
+  productName: string
+  quantity: number
+}
+
+export interface ConsignmentPartnerSummary {
+  partnerId: string
+  partnerName: string
+  products: { productName: string; delivered: number; sold: number; remaining: number }[]
+  history: ConsignmentHistoryEvent[]
+}
+
+export async function getConsignmentPartnerSummary(): Promise<ConsignmentPartnerSummary[]> {
+  const partners = await prisma.consignmentPartner.findMany({
+    where: { active: true },
+    orderBy: { name: 'asc' },
+    include: {
+      deliveries: {
+        include: { product: true, saleReports: true },
+        orderBy: { deliveryDate: 'desc' },
+      },
+    },
+  })
+
+  return partners.map((partner) => {
+    const byProduct = new Map<string, { delivered: number; sold: number }>()
+    const history: ConsignmentHistoryEvent[] = []
+
+    for (const delivery of partner.deliveries) {
+      const entry = byProduct.get(delivery.product.name) ?? { delivered: 0, sold: 0 }
+      entry.delivered += delivery.quantityDelivered
+      history.push({ date: delivery.deliveryDate, type: 'entrega', productName: delivery.product.name, quantity: delivery.quantityDelivered })
+      for (const report of delivery.saleReports) {
+        entry.sold += report.quantitySold
+        history.push({ date: report.reportDate, type: 'venda', productName: delivery.product.name, quantity: report.quantitySold })
+      }
+      byProduct.set(delivery.product.name, entry)
+    }
+
+    history.sort((a, b) => b.date.getTime() - a.date.getTime())
+
+    return {
+      partnerId: partner.id,
+      partnerName: partner.name,
+      products: [...byProduct.entries()].map(([productName, { delivered, sold }]) => ({
+        productName,
+        delivered,
+        sold,
+        remaining: delivered - sold,
+      })),
+      history,
+    }
+  })
+}
+
 export async function getConsignmentStockSummary() {
   const deliveries = await prisma.consignmentDelivery.findMany({
     include: { partner: true, product: true, saleReports: true },
