@@ -6,7 +6,13 @@ import {
   getTopProducts,
   getConsignmentStockSummary,
   getConsignmentRevenue,
+  getProductionSummary,
+  getProductionByProduct,
+  getFailuresByWasteReason,
+  getPrinterUsage,
 } from '@/lib/reports'
+import { createProductionRun, cancelProductionRun } from '@/actions/productionRuns'
+import type { ProductionCostSnapshot } from '@/lib/costing'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -22,6 +28,12 @@ async function cleanup() {
   await prisma.product.deleteMany()
   await prisma.printer.deleteMany()
   await prisma.filament.deleteMany()
+}
+
+function fd(obj: Record<string, string>): FormData {
+  const f = new FormData()
+  for (const [k, v] of Object.entries(obj)) f.append(k, v)
+  return f
 }
 
 beforeAll(async () => {
@@ -178,5 +190,216 @@ describe('getConsignmentStockSummary', () => {
     expect(summary).toEqual([
       { partnerName: 'Loja', productName: product.name, remaining: 6 },
     ])
+  })
+})
+
+// Task 9 (spec §6, task-9 brief): dashboard production indicators + breakdown
+// tables. Fixtures go through the REAL createProductionRun/cancelProductionRun
+// actions (not hand-built rows) so costSnapshot has the exact shape Task 7
+// produces -- these tests then read each run's own recorded costSnapshot.total
+// back out of the DB and compare it against what the aggregation function
+// summed, which is precisely what "sum costSnapshot, never recalculate" means
+// to test (the cost FORMULA itself is already unit-tested in costing.test.ts).
+describe('relatórios de produção (Task 9)', () => {
+  async function createProductionFixtures() {
+    await prisma.settings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } })
+
+    const printer1 = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+    const printer2 = await prisma.printer.create({ data: { name: 'P2', purchasePrice: 2000, depreciationHours: 8000, avgPowerConsumptionKwh: 0.2 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 100, spoolWeightKg: 1, initialStockGrams: 100000, currentStockGrams: 100000 } })
+    const productA = await prisma.product.create({ data: { name: 'Produto A', printerId: printer1.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0 } })
+    const productB = await prisma.product.create({ data: { name: 'Produto B', printerId: printer2.id, filamentId: filament.id, weightGrams: 20, printTimeHours: 2, laborTimeHours: 0 } })
+
+    const base = { filamentId: filament.id, gramsUsed: '50', gramsWasted: '5' }
+
+    // Run 1: Produto A / P1, 2026-01-05, 10 planned / 10 success / 0 failed
+    // => CONCLUIDA, no wasteReason.
+    const r1 = await createProductionRun(fd({
+      ...base, productId: productA.id, printerId: printer1.id,
+      date: '2026-01-05', quantityPlanned: '10', quantitySuccess: '10', quantityFailed: '0', timeWastedHours: '0.1',
+    }))
+    expect(r1.success).toBe(true)
+
+    // Run 2: Produto A / P1, 2026-01-10, 10 planned / 7 success / 3 failed,
+    // wasteReason FALHA_IMPRESSAO => COM_FALHAS.
+    const r2 = await createProductionRun(fd({
+      ...base, productId: productA.id, printerId: printer1.id,
+      date: '2026-01-10', quantityPlanned: '10', quantitySuccess: '7', quantityFailed: '3', timeWastedHours: '0.2',
+      wasteReason: 'FALHA_IMPRESSAO',
+    }))
+    expect(r2.success).toBe(true)
+
+    // Run 3: Produto B / P2, 2026-02-01, 10 planned / 8 success / 0 failed
+    // => PARCIAL (success < planned, no failures).
+    const r3 = await createProductionRun(fd({
+      ...base, productId: productB.id, printerId: printer2.id,
+      date: '2026-02-01', quantityPlanned: '10', quantitySuccess: '8', quantityFailed: '0', timeWastedHours: '0.3',
+    }))
+    expect(r3.success).toBe(true)
+
+    // Run 4: Produto B / P2, 2026-02-15, 5 planned / 5 success / 0 failed,
+    // then cancelled => CANCELADA.
+    const r4 = await createProductionRun(fd({
+      ...base, productId: productB.id, printerId: printer2.id,
+      date: '2026-02-15', quantityPlanned: '5', quantitySuccess: '5', quantityFailed: '0', timeWastedHours: '0.4',
+    }))
+    expect(r4.success).toBe(true)
+
+    const runs = await prisma.productionRun.findMany({ orderBy: { date: 'asc' } })
+    const [run1, run2, run3, run4] = runs
+    await cancelProductionRun(run4.id, 'Cancelado para teste')
+
+    const snapshots = runs.map((r) => (r.costSnapshot as unknown as ProductionCostSnapshot).total)
+    const wasteCosts = runs.map((r) => (r.costSnapshot as unknown as ProductionCostSnapshot).wasteCost)
+
+    return {
+      printer1, printer2, filament, productA, productB,
+      run1, run2, run3, run4,
+      snapshots: { run1: snapshots[0], run2: snapshots[1], run3: snapshots[2], run4: snapshots[3] },
+      wasteCosts: { run1: wasteCosts[0], run2: wasteCosts[1], run3: wasteCosts[2], run4: wasteCosts[3] },
+    }
+  }
+
+  describe('getProductionSummary', () => {
+    it('agrega todas as produções sem filtro', async () => {
+      const f = await createProductionFixtures()
+      const summary = await getProductionSummary()
+
+      expect(summary.totalRuns).toBe(4)
+      expect(summary.totalUnitsProduced).toBe(10 + 7 + 8 + 5) // 30
+      expect(summary.successRate).toBeCloseTo((30 / 35) * 100, 5)
+      // totalTimeHours = product.printTimeHours*quantitySuccess + timeWastedHours per run
+      const expectedTime = (1 * 10 + 0.1) + (1 * 7 + 0.2) + (2 * 8 + 0.3) + (2 * 5 + 0.4)
+      expect(summary.totalTimeHours).toBeCloseTo(expectedTime, 5)
+      const expectedCost = f.snapshots.run1 + f.snapshots.run2 + f.snapshots.run3 + f.snapshots.run4
+      expect(summary.totalCost).toBeCloseTo(expectedCost, 5)
+      const expectedWaste = f.wasteCosts.run1 + f.wasteCosts.run2 + f.wasteCosts.run3 + f.wasteCosts.run4
+      expect(summary.totalWasteCost).toBeCloseTo(expectedWaste, 5)
+    })
+
+    it('retorna zeros quando não há produções', async () => {
+      const summary = await getProductionSummary()
+      expect(summary).toEqual({
+        totalRuns: 0,
+        totalUnitsProduced: 0,
+        successRate: 0,
+        totalTimeHours: 0,
+        totalCost: 0,
+        totalWasteCost: 0,
+      })
+    })
+
+    it('filtra por produto', async () => {
+      const f = await createProductionFixtures()
+      const summary = await getProductionSummary({ productId: f.productA.id })
+      expect(summary.totalRuns).toBe(2)
+      expect(summary.totalUnitsProduced).toBe(17)
+      expect(summary.totalCost).toBeCloseTo(f.snapshots.run1 + f.snapshots.run2, 5)
+    })
+
+    it('filtra por impressora', async () => {
+      const f = await createProductionFixtures()
+      const summary = await getProductionSummary({ printerId: f.printer2.id })
+      expect(summary.totalRuns).toBe(2)
+      expect(summary.totalUnitsProduced).toBe(13)
+    })
+
+    it('filtra por status', async () => {
+      await createProductionFixtures()
+      const summary = await getProductionSummary({ status: 'CANCELADA' })
+      expect(summary.totalRuns).toBe(1)
+      expect(summary.totalUnitsProduced).toBe(5)
+
+      const comFalhas = await getProductionSummary({ status: 'COM_FALHAS' })
+      expect(comFalhas.totalRuns).toBe(1)
+      expect(comFalhas.totalUnitsProduced).toBe(7)
+    })
+
+    it('filtra por motivo de desperdício', async () => {
+      await createProductionFixtures()
+      const summary = await getProductionSummary({ wasteReason: 'FALHA_IMPRESSAO' })
+      expect(summary.totalRuns).toBe(1)
+      expect(summary.totalUnitsProduced).toBe(7)
+    })
+
+    it('filtra por período (data inicial/final)', async () => {
+      await createProductionFixtures()
+      const summary = await getProductionSummary({ from: new Date('2026-02-01'), to: new Date('2026-02-28') })
+      expect(summary.totalRuns).toBe(2)
+      expect(summary.totalUnitsProduced).toBe(13)
+    })
+  })
+
+  describe('getProductionByProduct', () => {
+    it('agrupa produção por produto', async () => {
+      const f = await createProductionFixtures()
+      const rows = await getProductionByProduct()
+      expect(rows).toHaveLength(2)
+
+      const rowA = rows.find((r) => r.productId === f.productA.id)!
+      expect(rowA.runsCount).toBe(2)
+      expect(rowA.quantitySuccess).toBe(17)
+      expect(rowA.totalCost).toBeCloseTo(f.snapshots.run1 + f.snapshots.run2, 5)
+
+      const rowB = rows.find((r) => r.productId === f.productB.id)!
+      expect(rowB.runsCount).toBe(2)
+      expect(rowB.quantitySuccess).toBe(13)
+      expect(rowB.totalCost).toBeCloseTo(f.snapshots.run3 + f.snapshots.run4, 5)
+    })
+
+    it('respeita filtros', async () => {
+      const f = await createProductionFixtures()
+      const rows = await getProductionByProduct({ productId: f.productA.id })
+      expect(rows).toHaveLength(1)
+      expect(rows[0].productId).toBe(f.productA.id)
+    })
+
+    it('retorna lista vazia quando não há produções', async () => {
+      const rows = await getProductionByProduct()
+      expect(rows).toEqual([])
+    })
+  })
+
+  describe('getFailuresByWasteReason', () => {
+    it('agrupa falhas por motivo, ignorando produções sem motivo', async () => {
+      await createProductionFixtures()
+      const rows = await getFailuresByWasteReason()
+      expect(rows).toEqual([
+        { wasteReason: 'FALHA_IMPRESSAO', runsCount: 1, quantityFailed: 3 },
+      ])
+    })
+
+    it('retorna lista vazia quando não há falhas classificadas', async () => {
+      const rows = await getFailuresByWasteReason()
+      expect(rows).toEqual([])
+    })
+  })
+
+  describe('getPrinterUsage', () => {
+    it('agrupa uso por impressora (contagem e horas)', async () => {
+      const f = await createProductionFixtures()
+      const rows = await getPrinterUsage()
+      expect(rows).toHaveLength(2)
+
+      const row1 = rows.find((r) => r.printerId === f.printer1.id)!
+      expect(row1.runsCount).toBe(2)
+      expect(row1.totalHours).toBeCloseTo((1 * 10 + 0.1) + (1 * 7 + 0.2), 5)
+
+      const row2 = rows.find((r) => r.printerId === f.printer2.id)!
+      expect(row2.runsCount).toBe(2)
+      expect(row2.totalHours).toBeCloseTo((2 * 8 + 0.3) + (2 * 5 + 0.4), 5)
+    })
+
+    it('respeita filtros', async () => {
+      const f = await createProductionFixtures()
+      const rows = await getPrinterUsage({ printerId: f.printer1.id })
+      expect(rows).toHaveLength(1)
+      expect(rows[0].printerId).toBe(f.printer1.id)
+    })
+
+    it('retorna lista vazia quando não há produções', async () => {
+      const rows = await getPrinterUsage()
+      expect(rows).toEqual([])
+    })
   })
 })
