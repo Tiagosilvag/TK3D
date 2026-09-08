@@ -10,6 +10,7 @@ import {
   removeProductSupplyUsage,
   addProductAccessoryUsage,
   removeProductAccessoryUsage,
+  applyProductPrice,
 } from '@/actions/products'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
@@ -275,6 +276,59 @@ describe('products actions', () => {
 
     // In-stock filaments (including a replacement roll) must also be present.
     expect(options.some((o) => o.id === replacementFilament.id)).toBe(true)
+  })
+
+  describe('applyProductPrice (task-6 brief — Simulação de preço)', () => {
+    async function createBaseProduct() {
+      const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+      const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+      const created = await createProduct(fd({
+        name: 'Produto Preço',
+        category: 'Chaveiro',
+        printerId: printer.id,
+        filamentId: filament.id,
+        weightGrams: '30',
+        printTimeHours: '2',
+        laborTimeHours: '0.25',
+        finishingType: 'NENHUM',
+        usesGlue: 'false',
+      }))
+      expect(created.success).toBe(true)
+      return prisma.product.findFirstOrThrow({ where: { name: 'Produto Preço' } })
+    }
+
+    it('grava suggestedPrice e marketplacePrice no produto', async () => {
+      const product = await createBaseProduct()
+      expect(product.suggestedPrice).toBeNull()
+      expect(product.marketplacePrice).toBeNull()
+
+      const result = await applyProductPrice(product.id, 18.5, 27.32)
+      expect(result.success).toBe(true)
+
+      const updated = await prisma.product.findUniqueOrThrow({ where: { id: product.id } })
+      expect(updated.suggestedPrice?.toNumber()).toBeCloseTo(18.5, 2)
+      expect(updated.marketplacePrice?.toNumber()).toBeCloseTo(27.32, 2)
+    })
+
+    it('sobrescreve um preço já aplicado anteriormente', async () => {
+      const product = await createBaseProduct()
+      await applyProductPrice(product.id, 10, 15)
+      await applyProductPrice(product.id, 20, 30)
+
+      const updated = await prisma.product.findUniqueOrThrow({ where: { id: product.id } })
+      expect(updated.suggestedPrice?.toNumber()).toBeCloseTo(20, 2)
+      expect(updated.marketplacePrice?.toNumber()).toBeCloseTo(30, 2)
+    })
+
+    it('rejeita preço negativo sem gravar nada', async () => {
+      const product = await createBaseProduct()
+      const result = await applyProductPrice(product.id, -5, 10)
+      expect(result.success).toBe(false)
+
+      const untouched = await prisma.product.findUniqueOrThrow({ where: { id: product.id } })
+      expect(untouched.suggestedPrice).toBeNull()
+      expect(untouched.marketplacePrice).toBeNull()
+    })
   })
 
   it('não duplica o filamento atual no dropdown de edição quando ele ainda está em estoque', async () => {

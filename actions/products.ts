@@ -207,3 +207,34 @@ export async function removeProductAccessoryUsage(usageId: string): Promise<Acti
   revalidatePath('/products')
   return { success: true }
 }
+
+// Preço §2 (task-6 brief): the ONLY thing that ever writes suggestedPrice/
+// marketplacePrice to the DB. The "Simulação de preço" section on the
+// product edit page (lib/costing.ts's simulateProductPrice, client-side,
+// never persisted) computes candidate values and calls this action only
+// when the user explicitly clicks "Aplicar preço calculado" -- this action
+// itself has no opinion on how the numbers were derived, it just validates
+// and persists whatever it's handed.
+const applyPriceSchema = z.object({
+  productId: z.string().min(1),
+  suggestedPrice: z.coerce.number().nonnegative('Preço sugerido não pode ser negativo'),
+  marketplacePrice: z.coerce.number().nonnegative('Preço de marketplace não pode ser negativo'),
+})
+
+export async function applyProductPrice(
+  productId: string,
+  suggestedPrice: number,
+  marketplacePrice: number,
+): Promise<ActionResult> {
+  const parsed = applyPriceSchema.safeParse({ productId, suggestedPrice, marketplacePrice })
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  await prisma.product.update({
+    where: { id: parsed.data.productId },
+    data: {
+      suggestedPrice: parsed.data.suggestedPrice,
+      marketplacePrice: parsed.data.marketplacePrice,
+    },
+  })
+  revalidatePath('/products')
+  return { success: true }
+}

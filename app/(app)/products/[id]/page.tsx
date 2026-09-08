@@ -2,9 +2,18 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { formatCurrency } from '@/lib/format'
+import type { ProductCostFlags } from '@/lib/costing'
 import { ProductForm } from '../ProductForm'
 import { CostBreakdown } from '../CostBreakdown'
-import { getProductCostBreakdown, getEditableFilamentOptions, addProductSupplyUsage, removeProductSupplyUsage } from '@/actions/products'
+import { PriceSimulation } from '../PriceSimulation'
+import {
+  getProductCostBreakdown,
+  getEditableFilamentOptions,
+  addProductSupplyUsage,
+  removeProductSupplyUsage,
+  addProductAccessoryUsage,
+  removeProductAccessoryUsage,
+} from '@/actions/products'
 import { addProductPhoto, removeProductPhoto } from '@/actions/productPhotos'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 
@@ -14,24 +23,43 @@ const SUPPLY_UNIT_LABELS: Record<string, string> = {
   G: 'Grama',
 }
 
+function accessoryOptionLabel(a: { name: string; colorName: string }): string {
+  return a.colorName ? `${a.name} — ${a.colorName}` : a.name
+}
+
 export default async function ProductEditPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const product = await prisma.product.findUnique({
     where: { id },
     include: {
       supplyUsages: { include: { supply: true } },
+      accessoryUsages: { include: { accessory: true } },
       photos: { orderBy: { createdAt: 'asc' }, select: { id: true } },
     },
   })
   if (!product) notFound()
 
-  const [printers, filamentOptions, packagingItems, supplies, breakdown] = await Promise.all([
+  const [printers, filamentOptions, packagingItems, supplies, accessories, breakdown, settings] = await Promise.all([
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getEditableFilamentOptions(product.id),
     prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.supply.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+    prisma.accessory.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getProductCostBreakdown(product.id),
+    prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
   ])
+
+  const costFlags: ProductCostFlags = {
+    includeDepreciation: settings.includeDepreciation,
+    includeEnergyCost: settings.includeEnergyCost,
+    includeMaintenance: settings.includeMaintenance,
+    includeLaborCost: settings.includeLaborCost,
+    includeFailureRate: settings.includeFailureRate,
+    includeFilamentCost: settings.includeFilamentCost,
+    includeAccessoriesCost: settings.includeAccessoriesCost,
+    includeSuppliesCost: settings.includeSuppliesCost,
+    includePackagingCost: settings.includePackagingCost,
+  }
 
   return (
     <div className="tk-page">
@@ -105,6 +133,50 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
           </div>
 
           <div className="mt-6 tk-panel p-4">
+            <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Acessórios usados</h2>
+            {product.accessoryUsages.length === 0 ? (
+              <p className="text-sm text-slate-500 dark:text-slate-400">Nenhum acessório cadastrado.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="tk-table-head-row">
+                    <th className="py-1">Acessório</th>
+                    <th>Quantidade</th>
+                    <th>Custo</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {product.accessoryUsages.map((usage) => (
+                    <tr key={usage.id} className="tk-row">
+                      <td className="py-1">{accessoryOptionLabel(usage.accessory)}</td>
+                      <td>{usage.quantity.toNumber()}</td>
+                      <td>{formatCurrency(usage.quantity.toNumber() * usage.accessory.avgUnitCost.toNumber())}</td>
+                      <td>
+                        <form action={async () => { 'use server'; await removeProductAccessoryUsage(usage.id) }}>
+                          <button className="tk-link-danger">Remover</button>
+                        </form>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <form action={async (formData: FormData) => { 'use server'; await addProductAccessoryUsage(formData) }} className="mt-4 grid grid-cols-3 gap-2">
+              <input type="hidden" name="productId" value={product.id} />
+              <select name="accessoryId" className="tk-input" required defaultValue="">
+                <option value="" disabled>Selecione um acessório</option>
+                {accessories.map((a) => (
+                  <option key={a.id} value={a.id}>{accessoryOptionLabel(a)}</option>
+                ))}
+              </select>
+              <input name="quantity" type="number" step="0.01" placeholder="Quantidade" className="tk-input" required />
+              <button className="tk-btn-primary">Adicionar</button>
+            </form>
+          </div>
+
+          <div className="mt-6 tk-panel p-4">
             <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Fotos da peça</h2>
             {product.photos.length === 0 ? (
               <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">Nenhuma foto ainda.</p>
@@ -147,7 +219,19 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
         </div>
 
         <div>
-          <CostBreakdown breakdown={breakdown} />
+          <CostBreakdown breakdown={breakdown} flags={costFlags} />
+          <PriceSimulation
+            productId={product.id}
+            finalCost={breakdown.finalCost}
+            defaultMarkup={settings.defaultMarkup.toNumber()}
+            defaultMarginPercent={settings.desiredMarginPercent.toNumber()}
+            defaultDiscountPercent={settings.defaultDiscountPercent.toNumber()}
+            marketplaceFeePercent={settings.marketplaceFeePercent.toNumber()}
+            taxPercent={settings.taxPercent.toNumber()}
+            marketplaceFixedFee={settings.marketplaceFixedFee.toNumber()}
+            currentSuggestedPrice={product.suggestedPrice?.toNumber() ?? null}
+            currentMarketplacePrice={product.marketplacePrice?.toNumber() ?? null}
+          />
         </div>
       </div>
     </div>

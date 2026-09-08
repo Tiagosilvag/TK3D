@@ -12,6 +12,7 @@ import {
   applyRounding,
   sumUsageCost,
   buildProductionCostSnapshot,
+  simulateProductPrice,
   type ProductionCostSnapshotInput,
 } from '@/lib/costing'
 
@@ -645,5 +646,81 @@ describe('buildProductionCostSnapshot (spec §4/§5, task-5 brief)', () => {
     const b = buildProductionCostSnapshot(baseInput, settings)
     expect(a).toEqual(b)
     expect(JSON.parse(JSON.stringify(a))).toEqual(a)
+  })
+})
+
+// "Simulação de preço" (task-6 brief, spec §2): a client-side-only pricing
+// preview that layers Settings' desiredMarginPercent/defaultDiscountPercent
+// on top of the existing markup-based suggestedPrice/marketplacePrice
+// formula from calculateProductCost, which stays untouched (still
+// markup-only, still the persisted Task-5 breakdown). This is the ONLY
+// place margin/discount currently affect a price:
+//   1. markup-based price = finalCost * markup (same shape as
+//      calculateProductCost.suggestedPrice)
+//   2. margin-based floor = finalCost / (1 - marginPercent) -- guarantees
+//      the suggested price never implies less than the desired profit
+//      margin, even if markup alone would undercut it
+//   3. suggestedPrice = max(1, 2), with a promotional discountPercent
+//      applied on top
+//   4. marketplacePrice reuses calculateProductCost's exact fee/tax/fixed-fee
+//      shape, applied to the (possibly discounted) suggestedPrice above
+describe('simulateProductPrice (task-6 brief — Simulação de preço)', () => {
+  const marketplaceInput = {
+    marketplaceFeePercent: 0.20,
+    taxPercent: 0.055,
+    marketplaceFixedFee: 4,
+  }
+
+  it('com markup dominante (markup*finalCost > piso de margem) e desconto zero, reproduz suggestedPrice/marketplacePrice de calculateProductCost', () => {
+    // finalCost 7.502, markup 2 -> markupPrice 15.004; margin 0.30 ->
+    // floor = 7.502/0.7 = 10.717... < 15.004, então o markup vence e o
+    // desconto zero não altera nada -- deve bater com o teste
+    // "marketplacePrice a partir de um suggestedPrice conhecido" acima.
+    const result = simulateProductPrice({
+      finalCost: 7.502,
+      markup: 2,
+      marginPercent: 0.30,
+      discountPercent: 0,
+      ...marketplaceInput,
+    })
+    expect(result.suggestedPrice).toBeCloseTo(15.004, 3)
+    expect(result.marketplacePrice).toBeCloseTo(24.1396, 2)
+  })
+
+  it('quando o piso de margem é maior que o preço via markup, a margem prevalece', () => {
+    // finalCost 10, markup 1.2 -> markupPrice 12; margin 0.5 -> floor = 10/0.5 = 20
+    const result = simulateProductPrice({
+      finalCost: 10,
+      markup: 1.2,
+      marginPercent: 0.5,
+      discountPercent: 0,
+      ...marketplaceInput,
+    })
+    expect(result.suggestedPrice).toBeCloseTo(20, 4)
+  })
+
+  it('desconto reduz o suggestedPrice final (aplicado por cima do preço base já escolhido)', () => {
+    // finalCost 10, markup 2 -> markupPrice 20 (vence a margem de 0.30,
+    // cujo piso é 10/0.7 ≈ 14.29); desconto 10% -> 20*0.9 = 18
+    const result = simulateProductPrice({
+      finalCost: 10,
+      markup: 2,
+      marginPercent: 0.30,
+      discountPercent: 0.10,
+      ...marketplaceInput,
+    })
+    expect(result.suggestedPrice).toBeCloseTo(18, 4)
+  })
+
+  it('marketplacePrice é sempre calculado a partir do suggestedPrice (já com desconto), com o mesmo formato de fee/tax/fixedFee', () => {
+    const result = simulateProductPrice({
+      finalCost: 10,
+      markup: 2,
+      marginPercent: 0.30,
+      discountPercent: 0.10,
+      ...marketplaceInput,
+    })
+    // suggestedPrice 18 -> marketplacePrice = 18 / (1 - 0.20 - 0.055) + 4
+    expect(result.marketplacePrice).toBeCloseTo(18 / 0.745 + 4, 4)
   })
 })

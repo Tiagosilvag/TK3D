@@ -258,6 +258,56 @@ export function calculateProductCost(input: ProductCostInput, settings: Settings
 }
 
 // ---------------------------------------------------------------------------
+// "Simulação de preço" (spec §2, task-6 brief)
+//
+// A client-side-only pricing preview: the Products edit page lets the user
+// temporarily override markup/margin/discount (never persisted, never fed
+// back into calculateProductCost above, which stays exactly as Task 5 left
+// it -- markup-only, still the canonical/persisted breakdown). This
+// function is the one place margin/discount currently affect a price:
+//   1. markup-based price = finalCost * markup, same shape as
+//      calculateProductCost's suggestedPrice.
+//   2. margin-based floor = finalCost / (1 - marginPercent) -- guarantees
+//      the suggested price never implies less than the desired profit
+//      margin, even if markup alone would undercut it.
+//   3. suggestedPrice = max(1, 2), with a promotional discountPercent
+//      applied on top of whichever wins.
+//   4. marketplacePrice reuses calculateProductCost's exact fee/tax/
+//      fixed-fee formula, applied to the (possibly discounted)
+//      suggestedPrice above.
+// With Settings' actual defaults (markup=2.00, margin=0.30, discount=0) the
+// margin floor never binds and the discount is a no-op, so this reproduces
+// calculateProductCost's suggestedPrice/marketplacePrice exactly -- this is
+// what lets the UI show a default calculated price preview using Settings'
+// current values before any simulation control is touched.
+// ---------------------------------------------------------------------------
+
+export interface PriceSimulationInput {
+  finalCost: number
+  markup: number
+  marginPercent: number
+  discountPercent: number
+  marketplaceFeePercent: number
+  taxPercent: number
+  marketplaceFixedFee: number
+}
+
+export interface PriceSimulationResult {
+  suggestedPrice: number
+  marketplacePrice: number
+}
+
+export function simulateProductPrice(input: PriceSimulationInput): PriceSimulationResult {
+  const markupPrice = input.finalCost * input.markup
+  const marginFloorPrice = input.marginPercent >= 1 ? Infinity : input.finalCost / (1 - input.marginPercent)
+  const basePrice = Math.max(markupPrice, marginFloorPrice)
+  const suggestedPrice = basePrice * (1 - input.discountPercent)
+  const marketplacePrice =
+    suggestedPrice / (1 - input.marketplaceFeePercent - input.taxPercent) + input.marketplaceFixedFee
+  return { suggestedPrice, marketplacePrice }
+}
+
+// ---------------------------------------------------------------------------
 // Production cost snapshot (spec §4/§5, task-5 brief)
 //
 // Historical-cost architecture: a ProductionRun freezes its entire cost
