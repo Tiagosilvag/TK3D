@@ -1,7 +1,15 @@
 'use server'
 import { prisma } from '@/lib/prisma'
 import { productionRunSchema } from '@/lib/validation/productionRun'
+import {
+  buildProductionCostSnapshot,
+  calculatePrinterDepreciationCostPerHour,
+  calculatePrinterMaintenanceCostPerHour,
+  calculateFilamentPricePerKg,
+  type ProductionCostSnapshot,
+} from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
+import { Prisma, type ProductionStatus, type SupplyUnit } from '@prisma/client'
 
 type ActionResult = { success: boolean; error?: string }
 
@@ -10,35 +18,205 @@ function parse(formData: FormData) {
   return productionRunSchema.safeParse({
     ...raw,
     notes: raw.notes || null,
+    wasteReason: raw.wasteReason || null,
   })
 }
 
-// The stock-sufficiency check below (gramsUsed + gramsWasted <= currentStockGrams)
-// cannot be expressed in the Zod schema alone because it depends on a database
-// read — same reasoning as createConsignmentSaleReport's balance check. The
-// create + decrement pair runs in a single $transaction so a run that fails
-// never partially applies (row created but stock unchanged, or vice versa).
+// Spec §5.4 -- computed once at creation, never recomputed afterwards.
+// CANCELADA is set exclusively by cancelProductionRun (never here).
+function computeStatus(quantitySuccess: number, quantityFailed: number, quantityPlanned: number): ProductionStatus {
+  if (quantityFailed > 0) return 'COM_FALHAS'
+  if (quantitySuccess < quantityPlanned) return 'PARCIAL'
+  return 'CONCLUIDA'
+}
+
+// Supply quantities in an insufficiency message carry their registered unit
+// (spec §5.2 example: "Cola Quente (necessário 20ml, disponível 15ml)").
+// Accessories have no unit dimension, so they're formatted as bare numbers.
+const SUPPLY_UNIT_SUFFIX: Record<SupplyUnit, string> = { UN: '', ML: 'ml', G: 'g', M: 'm', OUTRO: '' }
+function formatSupplyQuantity(unit: SupplyUnit, qty: number): string {
+  return `${qty}${SUPPLY_UNIT_SUFFIX[unit]}`
+}
+
+// Everything createProductionRun needs about a resource to (a) check it has
+// enough stock and (b) render its own "Label (necessário X, disponível Y)"
+// fragment (each resource kind formats its quantities differently -- supply
+// quantities carry a unit suffix, accessories/filament don't) -- so the
+// pre-transaction check below is one flat list + filter instead of three
+// near-duplicate blocks (spec §5.2: check ALL resources at once, list ALL
+// shortfalls, not just the first one found).
+interface ResourceCheck {
+  needed: number
+  available: number
+  describe: () => string
+}
+
+// The stock-sufficiency check below cannot be expressed in the Zod schema
+// alone because it depends on a database read (current stock of the
+// filament AND every accessory/supply the product's ficha técnica uses).
+// ALL resources are checked before any write happens -- a shortfall on any
+// one of them blocks the whole thing and names every shortfall found, not
+// just the first (spec §5.2, task-7 brief). The create + every decrement
+// then run in ONE $transaction, so a run that passes the check never
+// partially applies (row created but some stock untouched, or vice versa) --
+// same atomicity guarantee the pre-existing filament-only version had,
+// extended to accessories/supplies.
+//
+// Packaging is deliberately NOT stock-checked/decremented here even though
+// spec §5.2/§5.3's prose mentions "PackagingItem" alongside Accessory/Supply:
+// PackagingItem (schema) has no `currentStock` field and no purchase/restock
+// model anywhere in this plan (spec §2 explicitly says embalagem is "sem
+// mudança", and non-objectives §7 never proposes adding one). Adding a
+// stock counter now, with no way to ever replenish it, would make it
+// monotonically decrease to zero and then permanently block production for
+// every product using that packaging -- a regression, not a feature. So its
+// unitCost still flows into costSnapshot (via buildProductionCostSnapshot's
+// existing consumedResources.packaging, unchanged from Task 5) for cost
+// accounting/reversal bookkeeping, but no stock balance is checked or
+// touched for it. Flagged explicitly in the task report as a deviation from
+// the brief's literal wording, with rationale.
 export async function createProductionRun(formData: FormData): Promise<ActionResult> {
   const parsed = parse(formData)
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  const data = parsed.data
 
-  const totalConsumed = parsed.data.gramsUsed + parsed.data.gramsWasted
-  const filament = await prisma.filament.findUniqueOrThrow({ where: { id: parsed.data.filamentId } })
-  const currentStock = filament.currentStockGrams.toNumber()
-  if (totalConsumed > currentStock) {
-    return { success: false, error: `Quantidade excede o estoque disponível (${currentStock}g)` }
+  const [product, printer, filament, settings] = await Promise.all([
+    prisma.product.findUniqueOrThrow({
+      where: { id: data.productId },
+      include: {
+        packagingItem: true,
+        accessoryUsages: { include: { accessory: true } },
+        supplyUsages: { include: { supply: true } },
+      },
+    }),
+    prisma.printer.findUniqueOrThrow({ where: { id: data.printerId } }),
+    prisma.filament.findUniqueOrThrow({ where: { id: data.filamentId } }),
+    prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
+  ])
+
+  // --- Pre-transaction check across ALL resources (spec §5.2) ---
+  const totalFilamentConsumed = data.gramsUsed + data.gramsWasted
+  const filamentAvailable = filament.currentStockGrams.toNumber()
+  const checks: ResourceCheck[] = [
+    {
+      needed: totalFilamentConsumed,
+      available: filamentAvailable,
+      describe: () => `${filament.manufacturer} ${filament.material} ${filament.colorName} (necessário ${totalFilamentConsumed}g, disponível ${filamentAvailable}g)`,
+    },
+    ...product.accessoryUsages.map((u): ResourceCheck => {
+      const needed = u.quantity.toNumber() * data.quantitySuccess
+      const available = u.accessory.currentStock.toNumber()
+      return { needed, available, describe: () => `${u.accessory.name} (necessário ${needed}, disponível ${available})` }
+    }),
+    ...product.supplyUsages.map((u): ResourceCheck => {
+      const needed = u.quantity.toNumber() * data.quantitySuccess
+      const available = u.supply.currentStock.toNumber()
+      return {
+        needed,
+        available,
+        describe: () => `${u.supply.name} (necessário ${formatSupplyQuantity(u.supply.unit, needed)}, disponível ${formatSupplyQuantity(u.supply.unit, available)})`,
+      }
+    }),
+  ]
+  const insufficient = checks.filter((c) => c.needed > c.available)
+  if (insufficient.length > 0) {
+    return { success: false, error: `Estoque insuficiente: ${insufficient.map((c) => c.describe()).join('; ')}` }
   }
 
+  // --- Historical cost snapshot (spec §4/§5.4) -- calculated once, from
+  // Printer/Filament/Settings/Product as they stand right now, then never
+  // recalculated again for this run.
+  const printerDepreciationCostPerHour = calculatePrinterDepreciationCostPerHour({
+    purchasePrice: printer.purchasePrice.toNumber(),
+    depreciationHours: printer.depreciationHours.toNumber(),
+  })
+  const printerMaintenanceCostPerHour = calculatePrinterMaintenanceCostPerHour({
+    purchasePrice: printer.purchasePrice.toNumber(),
+    annualMaintenancePercent: settings.annualMaintenancePercent.toNumber(),
+    annualUsageHours: settings.annualUsageHours.toNumber(),
+  })
+  const filamentPricePerKg = calculateFilamentPricePerKg({
+    spoolPrice: filament.spoolPrice.toNumber(),
+    spoolWeightKg: filament.spoolWeightKg.toNumber(),
+  })
+
+  const snapshot = buildProductionCostSnapshot(
+    {
+      includeDepreciation: settings.includeDepreciation,
+      includeEnergyCost: settings.includeEnergyCost,
+      includeMaintenance: settings.includeMaintenance,
+      includeLaborCost: settings.includeLaborCost,
+      includeFailureRate: settings.includeFailureRate,
+      includeFilamentCost: settings.includeFilamentCost,
+      includeAccessoriesCost: settings.includeAccessoriesCost,
+      includeSuppliesCost: settings.includeSuppliesCost,
+      includePackagingCost: settings.includePackagingCost,
+      filamentId: filament.id,
+      weightGrams: product.weightGrams.toNumber(),
+      printTimeHours: product.printTimeHours.toNumber(),
+      laborTimeHours: product.laborTimeHours.toNumber(),
+      filamentPricePerKg,
+      printerAvgPowerConsumptionKwh: printer.avgPowerConsumptionKwh.toNumber(),
+      printerDepreciationCostPerHour,
+      printerMaintenanceCostPerHour,
+      packagingItemId: product.packagingItemId,
+      packagingCost: product.packagingItem?.unitCost.toNumber() ?? 0,
+      accessoryUsages: product.accessoryUsages.map((u) => ({
+        accessoryId: u.accessoryId,
+        quantity: u.quantity.toNumber(),
+        avgUnitCost: u.accessory.avgUnitCost.toNumber(),
+      })),
+      supplyUsages: product.supplyUsages.map((u) => ({
+        supplyId: u.supplyId,
+        quantity: u.quantity.toNumber(),
+        avgUnitCost: u.supply.avgUnitCost.toNumber(),
+      })),
+      quantityPlanned: data.quantityPlanned,
+      quantitySuccess: data.quantitySuccess,
+      quantityFailed: data.quantityFailed,
+      gramsUsed: data.gramsUsed,
+      gramsWasted: data.gramsWasted,
+      timeWastedHours: data.timeWastedHours,
+    },
+    {
+      energyCostPerKwh: settings.energyCostPerKwh.toNumber(),
+      laborCostPerHour: settings.laborCostPerHour.toNumber(),
+      failureRatePercent: settings.failureRatePercent.toNumber(),
+      marketplaceFeePercent: settings.marketplaceFeePercent.toNumber(),
+      taxPercent: settings.taxPercent.toNumber(),
+      marketplaceFixedFee: settings.marketplaceFixedFee.toNumber(),
+      defaultMarkup: settings.defaultMarkup.toNumber(),
+    },
+  )
+
+  const status = computeStatus(data.quantitySuccess, data.quantityFailed, data.quantityPlanned)
+
+  // --- Single transaction: create the run + decrement every resource it
+  // actually consumed. All or nothing (spec §5.3).
   await prisma.$transaction([
-    prisma.productionRun.create({ data: parsed.data }),
-    prisma.filament.update({
-      where: { id: parsed.data.filamentId },
-      data: { currentStockGrams: { decrement: totalConsumed } },
+    prisma.productionRun.create({
+      data: {
+        ...data,
+        costSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+        status,
+      },
     }),
+    prisma.filament.update({
+      where: { id: data.filamentId },
+      data: { currentStockGrams: { decrement: totalFilamentConsumed } },
+    }),
+    ...snapshot.consumedResources.accessories.map((a) =>
+      prisma.accessory.update({ where: { id: a.accessoryId }, data: { currentStock: { decrement: a.quantityConsumed } } }),
+    ),
+    ...snapshot.consumedResources.supplies.map((s) =>
+      prisma.supply.update({ where: { id: s.supplyId }, data: { currentStock: { decrement: s.quantityConsumed } } }),
+    ),
   ])
 
   revalidatePath('/production')
   revalidatePath('/filaments')
+  revalidatePath('/accessories')
+  revalidatePath('/supplies')
   return { success: true }
 }
 
@@ -46,27 +224,120 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
 // so unlike Printer/Filament/PackagingItem/Accessory/Supply/Product there is
 // no soft-delete flag — removing a row (e.g. to fix a typo) really deletes it.
 //
-// createProductionRun decrements Filament.currentStockGrams by
-// gramsUsed + gramsWasted when the run is recorded. Deleting a run is the
-// documented way to correct a mistake (e.g. wrong data entry), so it must
-// reverse that decrement — otherwise using the documented correction path
-// permanently and silently understates stock, with no way to fix it short of
-// a direct DB edit. Read the run's consumption before deleting it, then
-// delete + restore the stock in the same $transaction (same atomicity
-// pattern as createProductionRun) so a failure never partially applies.
+// createProductionRun decrements Filament.currentStockGrams (and, since Task
+// 7, every consumed Accessory/Supply) when the run is recorded. Deleting a
+// run is the documented way to correct a mistake (e.g. wrong data entry), so
+// it must reverse ALL of that -- otherwise using the documented correction
+// path permanently and silently understates stock. Uses costSnapshot's
+// consumedResources (same source cancelProductionRun reads) when present; a
+// legacy pre-Task-7 row (costSnapshot null) only ever consumed filament, so
+// only that is restored for it.
+//
+// Guard against double restoration: a CANCELADA run already had every
+// resource restored by cancelProductionRun, so deleting it afterward (e.g.
+// purging old cancelled history) must NOT touch stock again.
 export async function deleteProductionRun(id: string): Promise<ActionResult> {
   const run = await prisma.productionRun.findUniqueOrThrow({ where: { id } })
-  const totalConsumed = run.gramsUsed.plus(run.gramsWasted)
 
-  await prisma.$transaction([
-    prisma.productionRun.delete({ where: { id } }),
-    prisma.filament.update({
-      where: { id: run.filamentId },
-      data: { currentStockGrams: { increment: totalConsumed } },
-    }),
-  ])
+  const ops: Prisma.PrismaPromise<unknown>[] = [prisma.productionRun.delete({ where: { id } })]
+
+  if (run.status !== 'CANCELADA') {
+    const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+    if (snapshot?.consumedResources) {
+      const { filament, accessories, supplies } = snapshot.consumedResources
+      ops.push(
+        prisma.filament.update({
+          where: { id: filament.filamentId },
+          data: { currentStockGrams: { increment: filament.gramsUsed + filament.gramsWasted } },
+        }),
+      )
+      for (const a of accessories) {
+        ops.push(prisma.accessory.update({ where: { id: a.accessoryId }, data: { currentStock: { increment: a.quantityConsumed } } }))
+      }
+      for (const s of supplies) {
+        ops.push(prisma.supply.update({ where: { id: s.supplyId }, data: { currentStock: { increment: s.quantityConsumed } } }))
+      }
+    } else {
+      // Legacy row predating costSnapshot: only filament was ever consumed.
+      ops.push(
+        prisma.filament.update({
+          where: { id: run.filamentId },
+          data: { currentStockGrams: { increment: run.gramsUsed.plus(run.gramsWasted) } },
+        }),
+      )
+    }
+  }
+
+  await prisma.$transaction(ops)
 
   revalidatePath('/production')
   revalidatePath('/filaments')
+  revalidatePath('/accessories')
+  revalidatePath('/supplies')
+  return { success: true }
+}
+
+// Spec §5.5: cancels a production run WITHOUT deleting it (history is kept —
+// quantityFailed/gramsWasted etc. stay visible as a record of what actually
+// happened), reversing every resource it consumed using the quantities
+// recorded in costSnapshot.consumedResources at creation time — never the
+// product's current ficha técnica, which may have changed since (an
+// accessory swapped out, a quantity edited, a supply removed entirely).
+// Reading from the frozen snapshot instead of re-deriving from Product's
+// live relations is exactly what makes this correct after such an edit.
+//
+// Guarded against being called twice on the same run (which would restore
+// stock a second time) and against an empty reason.
+export async function cancelProductionRun(id: string, reason: string): Promise<ActionResult> {
+  const trimmedReason = reason?.trim()
+  if (!trimmedReason) return { success: false, error: 'Motivo do cancelamento é obrigatório' }
+
+  const run = await prisma.productionRun.findUniqueOrThrow({ where: { id } })
+  if (run.status === 'CANCELADA') {
+    return { success: false, error: 'Esta produção já foi cancelada' }
+  }
+
+  const ops: Prisma.PrismaPromise<unknown>[] = [
+    prisma.productionRun.update({
+      where: { id },
+      data: { status: 'CANCELADA', cancelReason: trimmedReason, cancelDate: new Date() },
+    }),
+  ]
+
+  const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+  if (snapshot?.consumedResources) {
+    const { filament, accessories, supplies } = snapshot.consumedResources
+    ops.push(
+      prisma.filament.update({
+        where: { id: filament.filamentId },
+        data: { currentStockGrams: { increment: filament.gramsUsed + filament.gramsWasted } },
+      }),
+    )
+    for (const a of accessories) {
+      ops.push(prisma.accessory.update({ where: { id: a.accessoryId }, data: { currentStock: { increment: a.quantityConsumed } } }))
+    }
+    for (const s of supplies) {
+      ops.push(prisma.supply.update({ where: { id: s.supplyId }, data: { currentStock: { increment: s.quantityConsumed } } }))
+    }
+    // Packaging is not stock-tracked (see createProductionRun's note above),
+    // so there is nothing to restore for consumedResources.packaging.
+  } else {
+    // Legacy row predating costSnapshot: fall back to what it recorded
+    // directly, same as deleteProductionRun's pre-Task-7 path — only
+    // filament was ever consumed by a run created before this task.
+    ops.push(
+      prisma.filament.update({
+        where: { id: run.filamentId },
+        data: { currentStockGrams: { increment: run.gramsUsed.plus(run.gramsWasted) } },
+      }),
+    )
+  }
+
+  await prisma.$transaction(ops)
+
+  revalidatePath('/production')
+  revalidatePath('/filaments')
+  revalidatePath('/accessories')
+  revalidatePath('/supplies')
   return { success: true }
 }

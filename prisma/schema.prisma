@@ -274,22 +274,61 @@ model ProductAccessoryUsage {
 }
 
 model ProductionRun {
-  id              String   @id @default(cuid())
+  id              String           @id @default(cuid())
   productId       String
-  product         Product  @relation(fields: [productId], references: [id])
+  product         Product          @relation(fields: [productId], references: [id])
   printerId       String
-  printer         Printer  @relation(fields: [printerId], references: [id])
+  printer         Printer          @relation(fields: [printerId], references: [id])
   filamentId      String
-  filament        Filament @relation(fields: [filamentId], references: [id])
+  filament        Filament         @relation(fields: [filamentId], references: [id])
   date            DateTime
   quantityPlanned Int
   quantitySuccess Int
   quantityFailed  Int
-  gramsUsed       Decimal  @db.Decimal(10, 2)
-  gramsWasted     Decimal  @db.Decimal(10, 2)
-  timeWastedHours Decimal  @db.Decimal(10, 3)
+  gramsUsed       Decimal          @db.Decimal(10, 2)
+  gramsWasted     Decimal          @db.Decimal(10, 2)
+  timeWastedHours Decimal          @db.Decimal(10, 3)
   notes           String?
-  createdAt       DateTime @default(now())
+  // Custo histórico (spec §4/§5.4, task-7 brief): calculated ONCE at creation
+  // time via lib/costing.ts#buildProductionCostSnapshot and never rewritten
+  // afterwards -- every later screen reads this instead of recalculating, and
+  // cancelProductionRun's reversal reads consumedResources from here (not the
+  // product's current ficha técnica, which may have since changed). Nullable
+  // because pre-existing runs (created before this column existed) genuinely
+  // have no snapshot -- there's no historical Settings/Printer/Filament state
+  // to reconstruct one retroactively (same "don't invent data" precedent as
+  // Tasks 3/4's Accessory/Supply purchase-history backfill). createProductionRun
+  // always populates it for every new run going forward.
+  costSnapshot    Json?
+  // Ciclo de vida (spec §5.4): computed once at creation (CONCLUIDA/PARCIAL/
+  // COM_FALHAS) or set explicitly by cancelProductionRun (CANCELADA) -- never
+  // recomputed afterwards. @default(CONCLUIDA) exists only to satisfy the
+  // NOT NULL constraint for rows that predate this column (backfilled more
+  // precisely by the migration itself); every write from application code
+  // sets this field explicitly.
+  status          ProductionStatus @default(CONCLUIDA)
+  wasteReason     WasteReason?
+  cancelReason    String?
+  cancelDate      DateTime?
+  createdAt       DateTime         @default(now())
+}
+
+enum WasteReason {
+  FALHA_IMPRESSAO
+  ERRO_CONFIGURACAO
+  SUPORTE_EXCESSIVO
+  QUEBRA
+  TESTE
+  PURGA
+  TROCA_FILAMENTO
+  OUTRO
+}
+
+enum ProductionStatus {
+  CONCLUIDA
+  PARCIAL
+  COM_FALHAS
+  CANCELADA
 }
 
 enum SaleChannel {
