@@ -522,3 +522,49 @@ model ConsignmentSaleReport {
   notes             String?
   createdAt         DateTime            @default(now())
 }
+
+// 2.6 Ajuste de estoque com justificativa: um log único pra Filamentos,
+// Acessórios, Insumos e Meu Estoque (produtos acabados) em vez de 4
+// tabelas quase idênticas. `resourceId` aponta pro id de Filament/
+// Accessory/Supply/Product conforme resourceType -- sem FK física (um
+// campo só não dá pra apontar pra 4 tabelas diferentes sem 4 colunas
+// nullable), é um log de auditoria append-only, nunca a fonte de verdade
+// do estoque em si:
+//   - Filament/Accessory/Supply têm currentStock(Grams) próprio -- o
+//     ajuste ESCREVE nesse campo diretamente (actions/stockAdjustments.ts)
+//     e este registro só guarda o histórico do que mudou e por quê.
+//   - Product não tem contador físico (estoque é sempre derivado,
+//     lib/reports.ts#getOwnStockSummary) -- pra ele, `difference` deste
+//     registro é somado na fórmula de "disponível" em vez de escrever em
+//     algum lugar; "nova quantidade" no formulário só serve pra calcular
+//     esse difference (newQty - quantidade atual calculada no momento).
+enum StockAdjustmentResourceType {
+  FILAMENT
+  ACCESSORY
+  SUPPLY
+  PRODUCT
+}
+
+enum StockAdjustmentReason {
+  INVENTARIO_FISICO
+  PERDA_DANO
+  PERDA_FALHA_IMPRESSAO
+  PRODUTO_VENCIDO
+  CORRECAO_CADASTRO
+  CONSUMO_NAO_REGISTRADO
+  OUTRO
+}
+
+model StockAdjustment {
+  id           String                      @id @default(cuid())
+  resourceType StockAdjustmentResourceType
+  resourceId   String
+  previousQty  Decimal                     @db.Decimal(12, 3)
+  newQty       Decimal                     @db.Decimal(12, 3)
+  difference   Decimal                     @db.Decimal(12, 3)
+  reason       StockAdjustmentReason
+  reasonNote   String?
+  createdAt    DateTime                    @default(now())
+
+  @@index([resourceType, resourceId])
+}

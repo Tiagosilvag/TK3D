@@ -1,4 +1,4 @@
-import type { ProductionStatus, WasteReason, SupplyUnit, OrderStatus, OrderChannel } from '@prisma/client'
+import type { ProductionStatus, WasteReason, SupplyUnit, OrderStatus, OrderChannel, StockAdjustmentReason } from '@prisma/client'
 
 export function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
@@ -60,6 +60,17 @@ export const ORDER_CHANNEL_LABELS: Record<OrderChannel, string> = {
   DIRETA: 'Direta',
   SHOPEE: 'Shopee',
   MERCADO_LIVRE: 'Mercado Livre',
+}
+
+// 2.6 Ajuste de estoque: labels do motivo obrigatório.
+export const STOCK_ADJUSTMENT_REASON_LABELS: Record<StockAdjustmentReason, string> = {
+  INVENTARIO_FISICO: 'Inventário físico',
+  PERDA_DANO: 'Perda por dano',
+  PERDA_FALHA_IMPRESSAO: 'Perda por falha de impressão',
+  PRODUTO_VENCIDO: 'Produto vencido / inutilizável',
+  CORRECAO_CADASTRO: 'Correção de cadastro',
+  CONSUMO_NAO_REGISTRADO: 'Consumo não registrado',
+  OUTRO: 'Outro',
 }
 
 // Human-readable Portuguese labels for WasteReason (prisma/schema.prisma

@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { calculateFilamentPricePerGram, getStockStatus } from '@/lib/costing'
 import { formatCurrency } from '@/lib/format'
 import { FilamentForm } from './FilamentForm'
+import { AdjustStockButton } from '@/components/AdjustStockButton'
 import { deleteFilament } from '@/actions/filaments'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import type { FilamentMaterial } from '@prisma/client'
@@ -175,6 +176,7 @@ export default async function FilamentsPage({
                     <Link href={`/filaments?editId=${f.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
                       Editar
                     </Link>
+                    <AdjustStockButton resourceType="FILAMENT" resourceId={f.id} resourceName={`${f.manufacturer} ${f.colorName}`} currentQuantity={currentStockGrams} unitLabel="g" />
                     <ConfirmDeleteForm action={async () => { 'use server'; await deleteFilament(f.id) }} />
                   </div>
                 </td>

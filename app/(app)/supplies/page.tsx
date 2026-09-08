@@ -6,6 +6,8 @@ import { SupplyForm } from './SupplyForm'
 import { RestockForm } from './RestockForm'
 import { deleteSupply } from '@/actions/supplies'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { AdjustStockButton } from '@/components/AdjustStockButton'
+import { STOCK_ADJUSTMENT_REASON_LABELS } from '@/lib/format'
 import type { SupplyUnit } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -66,6 +68,19 @@ export default async function SuppliesPage({
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
     editId ? prisma.supply.findUnique({ where: { id: editId } }) : null,
   ])
+
+  // 2.6: histórico de ajustes de estoque, agrupado por insumo -- exibido
+  // junto do histórico de reposições já existente na mesma <details>.
+  const adjustments = await prisma.stockAdjustment.findMany({
+    where: { resourceType: 'SUPPLY', resourceId: { in: supplies.map((s) => s.id) } },
+    orderBy: { createdAt: 'desc' },
+  })
+  const adjustmentsBySupply = new Map<string, typeof adjustments>()
+  for (const adj of adjustments) {
+    const list = adjustmentsBySupply.get(adj.resourceId) ?? []
+    list.push(adj)
+    adjustmentsBySupply.set(adj.resourceId, list)
+  }
 
   const editingSupply = editingSupplyRecord
     ? { id: editingSupplyRecord.id, name: editingSupplyRecord.name, unit: editingSupplyRecord.unit }
@@ -202,11 +217,34 @@ export default async function SuppliesPage({
                         ))}
                       </tbody>
                     </table>
+                    {(adjustmentsBySupply.get(s.id) ?? []).length > 0 && (
+                      <table className="mt-2 text-xs">
+                        <thead>
+                          <tr className="tk-table-head-row">
+                            <th className="pr-2">Data</th>
+                            <th className="pr-2">Ajuste</th>
+                            <th className="pr-2">Motivo</th>
+                            <th>Obs.</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(adjustmentsBySupply.get(s.id) ?? []).map((adj) => (
+                            <tr key={adj.id} className="tk-row">
+                              <td className="pr-2">{formatDate(adj.createdAt)}</td>
+                              <td className="pr-2">{adj.difference.toNumber() > 0 ? '+' : ''}{adj.difference.toNumber()}</td>
+                              <td className="pr-2">{STOCK_ADJUSTMENT_REASON_LABELS[adj.reason]}</td>
+                              <td>{adj.reasonNote ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
                   </details>
                   <div className="flex items-center gap-3">
                     <Link href={`/supplies?editId=${s.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
                       Editar
                     </Link>
+                    <AdjustStockButton resourceType="SUPPLY" resourceId={s.id} resourceName={s.name} currentQuantity={currentStock} unitLabel={SUPPLY_UNIT_LABELS[s.unit] === 'Unidade' ? '' : ` ${s.unit.toLowerCase()}`} />
                     <ConfirmDeleteForm action={async () => { 'use server'; await deleteSupply(s.id) }} />
                   </div>
                 </div>

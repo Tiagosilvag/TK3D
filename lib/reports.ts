@@ -238,10 +238,10 @@ export async function getPrinterUsage(filters: ProductionReportFilters = {}): Pr
 // isolada (productPartId setado) não vira estoque de produto acabado até
 // passar pela montagem; só a montagem confirmada conta como "produzido".
 //
-// "Em produção" fica 0: o schema atual não tem noção de "pedido de
-// produção aberto/pendente" (ProductionRun já nasce com resultado
-// conhecido, spec 2.4 ainda não existe) -- 0 é o valor correto pra "não há
-// nenhuma ordem em aberto rastreada", não um placeholder inventado.
+// "Em produção" soma Order.quantity com status != CONCLUIDO (2.4) --
+// qualquer pedido ainda no pipeline (Recebido/Em produção/Pronto/
+// Despachado) conta como "ordem aberta"; ao concluir, vira Sale e some
+// daqui (já não é mais "em produção", é venda).
 export interface OwnStockRow {
   productId: string
   productName: string
@@ -255,7 +255,7 @@ export interface OwnStockRow {
 }
 
 export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
-  const [products, producedByProduct, assembledByProduct, soldByProduct, deliveries] = await Promise.all([
+  const [products, producedByProduct, assembledByProduct, soldByProduct, deliveries, openOrdersByProduct] = await Promise.all([
     prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.productionRun.groupBy({
       by: ['productId'],
@@ -265,11 +265,23 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
     prisma.productAssembly.groupBy({ by: ['productId'], _sum: { quantity: true } }),
     prisma.sale.groupBy({ by: ['productId'], _sum: { quantity: true } }),
     prisma.consignmentDelivery.findMany({ include: { saleReports: true } }),
+    prisma.order.groupBy({ by: ['productId'], where: { status: { not: 'CONCLUIDO' } }, _sum: { quantity: true } }),
   ])
+
+  // 2.6: ajustes de estoque de Product são o único termo que não tem uma
+  // tabela própria pra somar -- StockAdjustment.difference (positivo ou
+  // negativo) entra direto na fórmula de disponível.
+  const productAdjustments = await prisma.stockAdjustment.groupBy({
+    by: ['resourceId'],
+    where: { resourceType: 'PRODUCT' },
+    _sum: { difference: true },
+  })
+  const adjustmentMap = new Map(productAdjustments.map((a) => [a.resourceId, a._sum.difference?.toNumber() ?? 0]))
 
   const producedMap = new Map(producedByProduct.map((p) => [p.productId, p._sum.quantitySuccess ?? 0]))
   const assembledMap = new Map(assembledByProduct.map((a) => [a.productId, a._sum.quantity ?? 0]))
   const soldMap = new Map(soldByProduct.map((s) => [s.productId, s._sum.quantity ?? 0]))
+  const openOrdersMap = new Map(openOrdersByProduct.map((o) => [o.productId, o._sum.quantity ?? 0]))
   const deliveredMap = new Map<string, { delivered: number; consignmentSold: number }>()
   for (const d of deliveries) {
     const entry = deliveredMap.get(d.productId) ?? { delivered: 0, consignmentSold: 0 }
@@ -282,6 +294,7 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
     const produced = p.isComposite ? (assembledMap.get(p.id) ?? 0) : (producedMap.get(p.id) ?? 0)
     const soldDirect = soldMap.get(p.id) ?? 0
     const delivery = deliveredMap.get(p.id) ?? { delivered: 0, consignmentSold: 0 }
+    const adjustment = adjustmentMap.get(p.id) ?? 0
     return {
       productId: p.id,
       productName: p.name,
@@ -290,8 +303,8 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
       soldDirect,
       deliveredToPartners: delivery.delivered,
       consignmentRemaining: delivery.delivered - delivery.consignmentSold,
-      inProduction: 0,
-      available: produced - soldDirect - delivery.delivered,
+      inProduction: openOrdersMap.get(p.id) ?? 0,
+      available: produced - soldDirect - delivery.delivered + adjustment,
     }
   })
 }

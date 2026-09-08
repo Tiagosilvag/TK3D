@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { getOwnStockSummary } from '@/lib/reports'
+import { AdjustStockButton } from '@/components/AdjustStockButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,7 +11,7 @@ export default async function StockPage() {
     <div className="tk-page">
       <h1 className="tk-page-title">Meu Estoque</h1>
       <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
-        Disponível = produzido − vendido diretamente − entregue a parceiros. Produto composto só soma ao estoque depois da montagem (em breve).
+        Disponível = produzido − vendido diretamente − entregue a parceiros (+ ajustes). Produto composto só soma ao estoque depois da montagem.
       </p>
 
       <table className="w-full text-sm">
@@ -28,7 +29,7 @@ export default async function StockPage() {
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.productId} className="tk-row">
+            <tr key={r.productId} className="tk-row align-top">
               <td className="py-2">
                 {r.productName}
                 {r.isComposite && (
@@ -41,7 +42,7 @@ export default async function StockPage() {
               <td>{r.soldDirect}</td>
               <td>{r.deliveredToPartners}</td>
               <td>{r.consignmentRemaining}</td>
-              <td title="Depende do sistema de pedidos (em breve)">{r.inProduction}</td>
+              <td title="Soma de pedidos ainda não concluídos (2.4)">{r.inProduction}</td>
               <td className={`font-medium ${r.available > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'}`}>
                 {r.available}
               </td>
@@ -53,6 +54,7 @@ export default async function StockPage() {
                   <Link href={`/consignment/deliveries?productId=${r.productId}`} className="text-amber-600 hover:underline dark:text-amber-400">
                     Entregar a parceiro
                   </Link>
+                  <AdjustStockButton resourceType="PRODUCT" resourceId={r.productId} resourceName={r.productName} currentQuantity={r.available} />
                 </div>
               </td>
             </tr>

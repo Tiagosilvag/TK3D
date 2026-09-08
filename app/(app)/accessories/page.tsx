@@ -6,6 +6,8 @@ import { AccessoryForm } from './AccessoryForm'
 import { RestockForm } from './RestockForm'
 import { deleteAccessory } from '@/actions/accessories'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { AdjustStockButton } from '@/components/AdjustStockButton'
+import { STOCK_ADJUSTMENT_REASON_LABELS } from '@/lib/format'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,6 +48,19 @@ export default async function AccessoriesPage({
     prisma.accessoryTypeRecord.findMany({ orderBy: { name: 'asc' } }),
     editId ? prisma.accessory.findUnique({ where: { id: editId } }) : null,
   ])
+
+  // 2.6: histórico de ajustes de estoque, agrupado por acessório -- exibido
+  // junto do histórico de reposições já existente na mesma <details>.
+  const adjustments = await prisma.stockAdjustment.findMany({
+    where: { resourceType: 'ACCESSORY', resourceId: { in: accessories.map((a) => a.id) } },
+    orderBy: { createdAt: 'desc' },
+  })
+  const adjustmentsByAccessory = new Map<string, typeof adjustments>()
+  for (const adj of adjustments) {
+    const list = adjustmentsByAccessory.get(adj.resourceId) ?? []
+    list.push(adj)
+    adjustmentsByAccessory.set(adj.resourceId, list)
+  }
 
   const activeType = accessoryTypes.some((t) => t.id === type) ? type : undefined
   const typeLabel = (id: string) => accessoryTypes.find((t) => t.id === id)?.name ?? id
@@ -200,11 +215,34 @@ export default async function AccessoriesPage({
                         ))}
                       </tbody>
                     </table>
+                    {(adjustmentsByAccessory.get(a.id) ?? []).length > 0 && (
+                      <table className="mt-2 text-xs">
+                        <thead>
+                          <tr className="tk-table-head-row">
+                            <th className="pr-2">Data</th>
+                            <th className="pr-2">Ajuste</th>
+                            <th className="pr-2">Motivo</th>
+                            <th>Obs.</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(adjustmentsByAccessory.get(a.id) ?? []).map((adj) => (
+                            <tr key={adj.id} className="tk-row">
+                              <td className="pr-2">{formatDate(adj.createdAt)}</td>
+                              <td className="pr-2">{adj.difference.toNumber() > 0 ? '+' : ''}{adj.difference.toNumber()}</td>
+                              <td className="pr-2">{STOCK_ADJUSTMENT_REASON_LABELS[adj.reason]}</td>
+                              <td>{adj.reasonNote ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
                   </details>
                   <div className="flex items-center gap-3">
                     <Link href={`/accessories?editId=${a.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
                       Editar
                     </Link>
+                    <AdjustStockButton resourceType="ACCESSORY" resourceId={a.id} resourceName={a.name} currentQuantity={currentStock} />
                     <ConfirmDeleteForm action={async () => { 'use server'; await deleteAccessory(a.id) }} />
                   </div>
                 </div>
