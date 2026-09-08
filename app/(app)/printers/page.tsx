@@ -5,6 +5,7 @@ import { formatCurrency } from '@/lib/format'
 import { PrinterForm } from './PrinterForm'
 import { deletePrinter, reactivatePrinter, deletePrinterPermanently } from '@/actions/printers'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { DeletePrinterButton } from '@/components/DeletePrinterButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -88,10 +89,9 @@ export default async function PrintersPage({
                       action={async () => { 'use server'; await deletePrinter(p.id) }}
                       label="Desativar"
                     />
-                    <ConfirmDeleteForm
-                      action={async () => { 'use server'; await deletePrinterPermanently(p.id) }}
-                      label="Excluir permanentemente"
-                      confirmMessage="Excluir esta impressora permanentemente? Essa ação não pode ser desfeita."
+                    <DeletePrinterButton
+                      printerName={p.name}
+                      onDelete={async () => { 'use server'; return deletePrinterPermanently(p.id) }}
                     />
                   </div>
                 </td>
@@ -122,10 +122,9 @@ export default async function PrintersPage({
                       <form action={async () => { 'use server'; await reactivatePrinter(p.id) }}>
                         <button className="tk-link-success">Reativar</button>
                       </form>
-                      <ConfirmDeleteForm
-                        action={async () => { 'use server'; await deletePrinterPermanently(p.id) }}
-                        label="Excluir permanentemente"
-                        confirmMessage="Excluir esta impressora permanentemente? Essa ação não pode ser desfeita."
+                      <DeletePrinterButton
+                        printerName={p.name}
+                        onDelete={async () => { 'use server'; return deletePrinterPermanently(p.id) }}
                       />
                     </div>
                   </td>
