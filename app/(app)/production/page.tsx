@@ -128,7 +128,7 @@ export default async function ProductionPage({
         filaments={filaments.map((f) => ({ id: f.id, name: `${f.manufacturer} ${f.colorName} (${f.material}) — Rolo #${String(f.rollNumber).padStart(3, '0')} (${f.currentStockGrams.toNumber()}g restantes)` }))}
         editingRun={editingRun}
       />
-      <table className="mt-6 w-full text-sm">
+      <table className="tk-table-zebra mt-6 w-full text-sm">
         <thead>
           <tr className="tk-table-head-row">
             <th className="py-2">Data</th>

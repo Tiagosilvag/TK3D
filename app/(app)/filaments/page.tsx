@@ -134,7 +134,7 @@ export default async function FilamentsPage({
         </div>
       )}
 
-      <table className="mt-2 w-full text-sm">
+      <table className="tk-table-zebra mt-2 w-full text-sm">
         <thead>
           <tr className="tk-table-head-row">
             <th className="py-2"></th>
@@ -195,7 +195,7 @@ export default async function FilamentsPage({
       {inactiveFilaments.length > 0 && (
         <details className="mt-8">
           <summary className="tk-summary">Filamentos esgotados ({inactiveFilaments.length})</summary>
-          <table className="mt-3 w-full text-sm">
+          <table className="tk-table-zebra mt-3 w-full text-sm">
             <thead>
               <tr className="tk-table-head-row">
                 <th className="py-2"></th>

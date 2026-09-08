@@ -158,7 +158,7 @@ export default async function AccessoriesPage({
         </Link>
       </div>
 
-      <table className="mt-2 w-full text-sm">
+      <table className="tk-table-zebra mt-2 w-full text-sm">
         <thead>
           <tr className="tk-table-head-row">
             <th className="py-2"></th>
@@ -264,7 +264,7 @@ export default async function AccessoriesPage({
           {/* Fix 1 (task-10 brief): esgotados não podem ser excluídos (guarda em
               deleteAccessory) -- o botão de excluir some desta seção porque a
               ação sempre recusaria, sem oferecer uma opção que nunca funciona. */}
-          <table className="mt-3 w-full text-sm">
+          <table className="tk-table-zebra mt-3 w-full text-sm">
             <thead>
               <tr className="tk-table-head-row">
                 <th className="py-2"></th>
