@@ -4,6 +4,8 @@ import { formatCurrency } from '@/lib/format'
 import { SaleForm } from './SaleForm'
 import { deleteSale, getSaleProfit } from '@/actions/sales'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { DateRangeFilter } from '@/components/DateRangeFilter'
+import { resolveDateRange } from '@/lib/dateRange'
 import type { SaleChannel } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -22,14 +24,15 @@ const CHANNEL_FILTERS: { value: SaleChannel | undefined; label: string }[] = [
 export default async function SalesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ channel?: string; editId?: string; productId?: string }>
+  searchParams: Promise<{ channel?: string; editId?: string; productId?: string; from?: string; to?: string }>
 }) {
-  const { channel, editId, productId } = await searchParams
+  const { channel, editId, productId, from, to } = await searchParams
   const activeChannel = channel === 'DIRETA' || channel === 'MARKETPLACE' ? channel : undefined
+  const range = resolveDateRange({ from, to })
 
   const [sales, products, editingSaleRecord] = await Promise.all([
     prisma.sale.findMany({
-      where: activeChannel ? { channel: activeChannel } : undefined,
+      where: { ...(activeChannel ? { channel: activeChannel } : {}), saleDate: { gte: range.gte, lte: range.lte } },
       orderBy: { saleDate: 'desc' },
       include: { product: true },
     }),
@@ -64,9 +67,15 @@ export default async function SalesPage({
       <h1 className="tk-page-title">Vendas</h1>
       <SaleForm key={editingSale?.id ?? 'new'} products={products} editingSale={editingSale} defaultProductId={productId} />
 
+      <DateRangeFilter action="/sales" from={range.from} to={range.to} hiddenParams={{ channel: activeChannel }} />
+
       <div className="mb-3 mt-6 flex gap-1">
         {CHANNEL_FILTERS.map((f) => {
-          const href = f.value ? `/sales?channel=${f.value}` : '/sales'
+          const qs = new URLSearchParams()
+          if (f.value) qs.set('channel', f.value)
+          qs.set('from', range.from)
+          qs.set('to', range.to)
+          const href = `/sales?${qs.toString()}`
           const isActive = activeChannel === f.value
           return (
             <Link

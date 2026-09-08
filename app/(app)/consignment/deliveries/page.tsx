@@ -3,17 +3,21 @@ import { formatCurrency } from '@/lib/format'
 import { DeliveryForm } from './DeliveryForm'
 import { deleteConsignmentDelivery } from '@/actions/consignmentDeliveries'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { DateRangeFilter } from '@/components/DateRangeFilter'
+import { resolveDateRange } from '@/lib/dateRange'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ConsignmentDeliveriesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ productId?: string }>
+  searchParams: Promise<{ productId?: string; from?: string; to?: string }>
 }) {
-  const { productId } = await searchParams
+  const { productId, from, to } = await searchParams
+  const range = resolveDateRange({ from, to })
   const [deliveries, partners, products] = await Promise.all([
     prisma.consignmentDelivery.findMany({
+      where: { deliveryDate: { gte: range.gte, lte: range.lte } },
       orderBy: { deliveryDate: 'desc' },
       include: { partner: true, product: true, saleReports: true },
     }),
@@ -25,6 +29,7 @@ export default async function ConsignmentDeliveriesPage({
     <div className="tk-page">
       <h1 className="tk-page-title">Entregas em consignação</h1>
       <DeliveryForm partners={partners} products={products} defaultProductId={productId} />
+      <DateRangeFilter action="/consignment/deliveries" from={range.from} to={range.to} />
       <table className="mt-6 w-full text-sm">
         <thead>
           <tr className="tk-table-head-row">

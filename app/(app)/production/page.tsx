@@ -6,18 +6,22 @@ import { deleteProductionRun } from '@/actions/productionRuns'
 import type { ProductionCostSnapshot } from '@/lib/costing'
 import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { DateRangeFilter } from '@/components/DateRangeFilter'
+import { resolveDateRange } from '@/lib/dateRange'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ProductionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ editId?: string }>
+  searchParams: Promise<{ editId?: string; from?: string; to?: string }>
 }) {
-  const { editId } = await searchParams
+  const { editId, from, to } = await searchParams
+  const range = resolveDateRange({ from, to })
 
   const [runs, products, printers, filaments, editingRunRecord] = await Promise.all([
     prisma.productionRun.findMany({
+      where: { date: { gte: range.gte, lte: range.lte } },
       orderBy: { date: 'desc' },
       include: { product: true, printer: true, filament: true },
     }),
@@ -50,6 +54,7 @@ export default async function ProductionPage({
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Produção e desperdício</h1>
+      <DateRangeFilter action="/production" from={range.from} to={range.to} />
       <ProductionRunForm
         key={editingRun?.id ?? 'new'}
         products={products}
