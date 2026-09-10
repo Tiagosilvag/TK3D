@@ -56,6 +56,26 @@ body {
   z-index: 1;
 }
 
+/* Modais em <dialog> nativo (padrão do app -- ver components/
+   AdjustStockButton.tsx, DeletePrinterButton.tsx e os RestockForm de
+   accessories/supplies -- sem lib nova, spec do projeto). O preflight do
+   Tailwind zera margin em todo elemento (`*, ::before, ::after { margin:
+   0 }`) e, por ser regra de origem "autor", sempre vence a regra
+   `dialog:modal { margin: auto }` da UA stylesheet do navegador -- é essa
+   margem automática que centraliza um <dialog> aberto via showModal().
+   Sem ela o navegador só aplica position:fixed; inset:0 do UA sem
+   margin:auto, então o dialog fica encostado no canto superior esquerdo
+   em vez de centralizado. Restaurado aqui pra toda <dialog> do app, com
+   largura/altura máxima responsiva (a largura em si continua vindo da
+   classe Tailwind de cada componente, ex. w-80/w-96) pra nunca estourar
+   a tela em telas estreitas nem ficar cortado em telas baixas. */
+dialog {
+  margin: auto;
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+}
+
 /* ---------------------------------------------------------------------- */
 /* Small shared design-system primitives, applied consistently across the  */
 /* catalog/CRUD pages (printers, filaments, packaging, accessories,        */
