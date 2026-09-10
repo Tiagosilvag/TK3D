@@ -7,10 +7,14 @@ export const dynamic = 'force-dynamic'
 
 export default async function StockPage() {
   const rows = await getOwnStockSummary()
-  // Ajuste "cor na montagem": só busca o breakdown por variante pros
-  // produtos compostos (só eles têm ProductAssembly/colorChoices).
+  // Bug "cor no produto simples": breakdown por variante busca pra TODO
+  // produto agora, não só composto -- peça única também pode ter sido
+  // produzida em mais de uma cor (getProductVariantBreakdown decide a
+  // fonte certa a partir de needsAssembly: ProductAssembly.colorChoices
+  // quando passa por Montagem, ProductionRun.filamentId direto quando
+  // vai reto de Produção pro estoque).
   const variantBreakdowns = await Promise.all(
-    rows.filter((r) => r.isComposite).map(async (r) => [r.productId, await getProductVariantBreakdown(r.productId)] as const),
+    rows.map(async (r) => [r.productId, await getProductVariantBreakdown(r.productId, r.needsAssembly)] as const),
   )
   const variantBreakdownMap = new Map(variantBreakdowns)
 
@@ -55,7 +59,7 @@ export default async function StockPage() {
               </td>
               <td>
                 {r.produced}
-                {r.isComposite && (variantBreakdownMap.get(r.productId)?.length ?? 0) > 0 && (
+                {(variantBreakdownMap.get(r.productId)?.length ?? 0) > 0 && (
                   <details className="mt-1">
                     <summary className="cursor-pointer text-xs text-slate-500 dark:text-slate-400">Por variante</summary>
                     <ul className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">

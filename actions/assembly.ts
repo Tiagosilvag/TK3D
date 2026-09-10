@@ -74,8 +74,15 @@ export interface AssemblyStatus {
 // Ajuste "produção → montagem → estoque": um produto SIMPLES (sem
 // ProductPart nenhuma) que tenha insumo/acessório cadastrado também
 // precisa passar por aqui -- ele vira uma "peça sintética" única (o
-// próprio produto impresso, produzido via ProductionRun direto), sem cor
-// variável (isso é conceito só de ProductPart de produto composto).
+// próprio produto impresso, produzido via ProductionRun direto).
+//
+// Bug "cor no produto simples": essa peça sintética TAMBÉM tem cor
+// variável, igual peça de produto composto de 1 filamento -- o produto
+// pode ter sido impresso em lotes de cores diferentes (ex.: 2 unidades
+// azul + 1 vermelho), e antes disso ficava escondido (agrupava tudo numa
+// cor só). Mesmo tratamento por combo do caso composto abaixo, só que
+// chaveado pelo id do próprio produto em vez de um productPartId (não
+// existe ProductPart aqui pra servir de chave).
 export async function getAssemblyStatus(productId: string): Promise<AssemblyStatus> {
   const product = await prisma.product.findUniqueOrThrow({
     where: { id: productId },
@@ -192,14 +199,55 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
   } else {
     // Produto simples que precisa de montagem (tem insumo/acessório
     // cadastrado): uma única "peça sintética" = o produto impresso em si.
-    const producedAgg = await prisma.productionRun.aggregate({
+    // Bug "cor no produto simples": mesmo peça única pode ter sido
+    // produzida em mais de uma cor (lotes de produção distintos com
+    // filamento diferente) -- disponível por combo aqui é o mesmo
+    // tratamento do caso composto acima, simplificado pra sempre 1
+    // filamento (produto simples nunca tem ProductPartFilament/
+    // filamentUsages, só o campo escalar ProductionRun.filamentId).
+    const runs = await prisma.productionRun.findMany({
       where: { productId, productPartId: null, status: { not: 'CANCELADA' } },
-      _sum: { quantitySuccess: true },
+      select: { filamentId: true, quantitySuccess: true },
     })
-    const produced = producedAgg._sum.quantitySuccess ?? 0
+    const producedByCombo = new Map<string, number>()
+    for (const run of runs) {
+      producedByCombo.set(run.filamentId, (producedByCombo.get(run.filamentId) ?? 0) + run.quantitySuccess)
+    }
+
+    // Consumido por combo: colorChoices de montagens anteriores, chaveado
+    // pelo próprio id do produto -- não existe ProductPart aqui pra servir
+    // de chave (peça sintética), então usa o mesmo id usado como `partId`
+    // abaixo (ver AssemblyStatus/confirmAssembly, que grava
+    // colorChoicesToStore[part.partId]).
+    const consumedByCombo = new Map<string, number>()
+    for (const a of product.assemblies) {
+      const choices = a.colorChoices as Record<string, string> | null
+      const key = choices?.[product.id]
+      if (!key) continue
+      consumedByCombo.set(key, (consumedByCombo.get(key) ?? 0) + a.quantity)
+    }
+
+    const allFilamentIds = new Set([...producedByCombo.keys(), ...consumedByCombo.keys()])
+    const filaments = allFilamentIds.size > 0
+      ? await prisma.filament.findMany({ where: { id: { in: [...allFilamentIds] } } })
+      : []
+    const filamentById = new Map(filaments.map((f) => [f.id, f]))
+
+    const produced = [...producedByCombo.values()].reduce((sum, q) => sum + q, 0)
     const consumed = alreadyAssembled
     // Nunca negativo -- mesmo motivo do caso composto acima.
     const available = Math.max(0, produced - consumed)
+
+    const colorOptions: AssemblyPartColorOption[] = Array.from(allFilamentIds).map((filamentId) => {
+      const f = filamentById.get(filamentId)
+      return {
+        key: filamentId,
+        filamentIds: [filamentId],
+        label: f ? filamentLabel(f) : filamentId,
+        available: Math.max(0, (producedByCombo.get(filamentId) ?? 0) - (consumedByCombo.get(filamentId) ?? 0)),
+      }
+    })
+
     parts = [
       {
         partId: product.id,
@@ -209,7 +257,7 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
         consumed,
         available,
         maxUnitsFromThisPart: available,
-        colorOptions: null,
+        colorOptions,
       },
     ]
   }

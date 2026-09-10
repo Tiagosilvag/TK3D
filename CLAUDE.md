@@ -91,6 +91,11 @@ Deploy em produção: `tk3d.coffetech.com.br` via Coolify.
   consumida numa leva de montagem, qual COMBO de filamento foi escolhido
   -- `{ [productPartId]: comboKey }`, onde `comboKey` é 1+ filamentIds
   ordenados e unidos por vírgula (`actions/assembly.ts#AssemblyPartColorOption`).
+  Produto simples que precisa de montagem (sem `ProductPart`, mas com
+  insumo/acessório cadastrado) vira uma "peça sintética" única em
+  `getAssemblyStatus` -- a chave usada aqui é o próprio `productId` (não
+  existe `ProductPart` pra servir de chave), mesmo mecanismo de cor
+  variável por combo que peça de produto composto já tinha.
   Disponível por combo é calculado a partir do que cada lote de produção
   REALMENTE usou (`ProductionRunFilamentUsage` quando a peça é
   multi-filamento, senão só o `ProductionRun.filamentId` escalar) --
@@ -108,7 +113,12 @@ Deploy em produção: `tk3d.coffetech.com.br` via Coolify.
   anteriores a qualquer um desses ajustes -- nunca inventado
   retroativamente. Sale/ConsignmentDelivery NÃO diferenciam variante
   (fora do escopo atual), então só "produzido por variante" é confiável,
-  nunca "disponível por variante". `confirmAssembly` também decrementa
+  nunca "disponível por variante". `getProductVariantBreakdown` também
+  cobre produto simples SEM nenhum componente (vai direto de Produção pro
+  estoque, nunca passa por `ProductAssembly`) -- nesse caso a variante
+  vem direto de `ProductionRun.filamentId` agrupado por produto, já que
+  "produzido" ali já É o que está em estoque (sem "consumido" a
+  descontar). `confirmAssembly` também decrementa
   `Accessory.currentStock`/`Supply.currentStock` a partir de uma lista
   editável enviada pelo formulário (pré-preenchida da ficha técnica do
   produto, mas ajustável só pra aquela leva -- nunca reescreve a ficha

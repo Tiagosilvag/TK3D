@@ -293,7 +293,34 @@ export interface ProductVariantBreakdownRow {
 // não dá pra calcular "disponível por variante" com segurança (só
 // "produzido por variante" é sustentado pelos dados) -- nunca inventa
 // esse número.
-export async function getProductVariantBreakdown(productId: string): Promise<ProductVariantBreakdownRow[]> {
+//
+// Bug "cor no produto simples": `needsAssembly` decide a fonte --
+// - true (composto, ou simples com insumo/acessório): lê
+//   ProductAssembly.colorChoices, igual antes. Pra produto simples a
+//   chave do combo é o próprio productId (ver
+//   actions/assembly.ts#getAssemblyStatus), que não existe em
+//   partNameById -- o label cai pro `else` abaixo e mostra só a cor, sem
+//   prefixo de nome de peça (não faz sentido "peça" pra produto simples).
+// - false (peça única sem nenhum componente, vai direto de Produção pro
+//   estoque, nunca passa por ProductAssembly): "produzido" JÁ é o que
+//   está em estoque, então a cor de cada lote (ProductionRun.filamentId)
+//   é diretamente a variante em estoque -- sem "consumido" a descontar,
+//   nada consome antes do estoque nesse caso.
+export async function getProductVariantBreakdown(productId: string, needsAssembly: boolean): Promise<ProductVariantBreakdownRow[]> {
+  if (!needsAssembly) {
+    const runs = await prisma.productionRun.groupBy({
+      by: ['filamentId'],
+      where: { productId, productPartId: null, status: { not: 'CANCELADA' } },
+      _sum: { quantitySuccess: true },
+    })
+    if (runs.length === 0) return []
+    const filaments = await prisma.filament.findMany({ where: { id: { in: runs.map((r) => r.filamentId) } } })
+    const filamentById = new Map(filaments.map((f) => [f.id, f]))
+    return runs
+      .map((r) => ({ label: filamentById.get(r.filamentId)?.colorName ?? r.filamentId, quantity: r._sum.quantitySuccess ?? 0 }))
+      .sort((a, b) => b.quantity - a.quantity)
+  }
+
   const [assemblies, parts] = await Promise.all([
     prisma.productAssembly.findMany({ where: { productId }, orderBy: { assembledAt: 'asc' } }),
     prisma.productPart.findMany({ where: { productId } }),
@@ -322,7 +349,9 @@ export async function getProductVariantBreakdown(productId: string): Promise<Pro
       : Object.entries(choices)
           .map(([partId, rawKey]) => {
             const colorNames = rawKey.split(',').map((id) => filamentById.get(id)?.colorName ?? id)
-            return `${partNameById.get(partId) ?? partId}: ${colorNames.join(' + ')}`
+            const colorLabel = colorNames.join(' + ')
+            const partName = partNameById.get(partId)
+            return partName ? `${partName}: ${colorLabel}` : colorLabel
           })
           .sort()
           .join(', ')
