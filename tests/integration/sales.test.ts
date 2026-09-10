@@ -170,7 +170,7 @@ describe('Sale cost snapshot (task-10 brief, new feature)', () => {
   })
 
   it('lucro de uma venda já registrada NÃO muda depois que o preço de um acessório ou de Settings muda (mesma garantia de ProductionRun/Task 7)', async () => {
-    const { accessory, product } = await createProductWithAccessory()
+    const { accessory, printer, product } = await createProductWithAccessory()
     await prisma.settings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } })
 
     const result = await createSale(fd({
@@ -187,10 +187,13 @@ describe('Sale cost snapshot (task-10 brief, new feature)', () => {
     expect(profitBefore.estimated).toBe(false)
 
     // Change the accessory's avgUnitCost (e.g. a new, more expensive
-    // AccessoryPurchase recalculated it) AND a Settings cost input, both
-    // AFTER the sale was already recorded.
+    // AccessoryPurchase recalculated it), a Settings cost input, AND the
+    // product's printer's own tariff/maintenance (melhoria "Impressoras":
+    // these two moved from Settings to Printer) -- all AFTER the sale was
+    // already recorded.
     await prisma.accessory.update({ where: { id: accessory.id }, data: { avgUnitCost: 99 } })
-    await prisma.settings.update({ where: { id: 1 }, data: { energyCostPerKwh: 999, laborCostPerHour: 999 } })
+    await prisma.settings.update({ where: { id: 1 }, data: { laborCostPerHour: 999 } })
+    await prisma.printer.update({ where: { id: printer.id }, data: { energyCostPerKwh: 999, maintenanceCostPerHour: 999 } })
 
     const profitAfter = await getSaleProfit(sale.id)
     expect(profitAfter.profit).toBeCloseTo(profitBefore.profit, 6)

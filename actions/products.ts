@@ -7,7 +7,6 @@ import {
   calculateProductCost,
   calculateCompositeProductCost,
   calculatePrinterDepreciationCostPerHour,
-  calculatePrinterMaintenanceCostPerHour,
   calculateFilamentPricePerKg,
   sumUsageCost,
   applyRounding,
@@ -232,7 +231,6 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
     includePackagingCost: settings.includePackagingCost,
   }
   const settingsInput = {
-    energyCostPerKwh: settings.energyCostPerKwh.toNumber(),
     laborCostPerHour: settings.laborCostPerHour.toNumber(),
     failureRatePercent: settings.failureRatePercent.toNumber(),
     marketplaceFeePercent: settings.marketplaceFeePercent.toNumber(),
@@ -253,15 +251,12 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
       })),
       printTimeHours: part.printTimeHours.toNumber(),
       printerAvgPowerConsumptionKwh: part.printer.avgPowerConsumptionKwh.toNumber(),
+      printerEnergyCostPerKwh: part.printer.energyCostPerKwh.toNumber(),
       printerDepreciationCostPerHour: calculatePrinterDepreciationCostPerHour({
         purchasePrice: part.printer.purchasePrice.toNumber(),
         depreciationHours: part.printer.depreciationHours.toNumber(),
       }),
-      printerMaintenanceCostPerHour: calculatePrinterMaintenanceCostPerHour({
-        purchasePrice: part.printer.purchasePrice.toNumber(),
-        annualMaintenancePercent: settings.annualMaintenancePercent.toNumber(),
-        annualUsageHours: settings.annualUsageHours.toNumber(),
-      }),
+      printerMaintenanceCostPerHour: part.printer.maintenanceCostPerHour.toNumber(),
     }))
 
     return calculateCompositeProductCost(
@@ -282,11 +277,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
     depreciationHours: product.printer.depreciationHours.toNumber(),
   })
 
-  const printerMaintenanceCostPerHour = calculatePrinterMaintenanceCostPerHour({
-    purchasePrice: product.printer.purchasePrice.toNumber(),
-    annualMaintenancePercent: settings.annualMaintenancePercent.toNumber(),
-    annualUsageHours: settings.annualUsageHours.toNumber(),
-  })
+  const printerMaintenanceCostPerHour = product.printer.maintenanceCostPerHour.toNumber()
 
   const filamentPricePerKg = calculateFilamentPricePerKg({
     spoolPrice: product.filament.spoolPrice.toNumber(),
@@ -300,6 +291,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
       laborTimeHours: product.laborTimeHours.toNumber(),
       filamentPricePerKg,
       printerAvgPowerConsumptionKwh: product.printer.avgPowerConsumptionKwh.toNumber(),
+      printerEnergyCostPerKwh: product.printer.energyCostPerKwh.toNumber(),
       printerDepreciationCostPerHour,
       printerMaintenanceCostPerHour,
       suppliesCost,

@@ -60,9 +60,30 @@ enum RoundingMode {
 model Printer {
   id                     String          @id @default(cuid())
   name                   String          @unique
+  // Apelido opcional (spec "melhorias Impressoras"): nome do modelo (`name`,
+  // único, usado em toda referência/FK) fica separado do apelido informal
+  // que o usuário dá pra máquina física (ex.: name="Anycubic Kobra X",
+  // nickname="Cassiopéia") -- antes só existia `name`, que acumulava os
+  // dois papéis.
+  nickname               String?
   purchasePrice          Decimal         @db.Decimal(10, 2)
   depreciationHours      Decimal         @db.Decimal(10, 2)
   avgPowerConsumptionKwh Decimal         @db.Decimal(6, 4)
+  // Tarifa de energia (R$/kWh) e manutenção (R$/h) por impressora (spec
+  // "melhorias Impressoras"): antes vinham de Settings.energyCostPerKwh
+  // (global, todas as impressoras pagavam a mesma tarifa) e de
+  // purchasePrice * Settings.annualMaintenancePercent /
+  // Settings.annualUsageHours (fórmula genérica calculada, não um valor
+  // real por máquina). Cada impressora pode estar numa tomada/circuito
+  // diferente e ter uma manutenção real diferente, então os dois viram
+  // input direto por impressora -- Settings mantém os 3 campos antigos no
+  // schema (fora do escopo mudar a tela de Configurações), só param de
+  // alimentar o custo de impressora a partir daqui. `@default` só existe
+  // pra impressora criada fora do formulário (seed, fixture de teste) --
+  // createPrinter/updatePrinter (lib/validation/printer.ts) sempre exigem
+  // os dois campos explicitamente do usuário, nunca dependem do default.
+  energyCostPerKwh       Decimal         @default(1.00) @db.Decimal(10, 4)
+  maintenanceCostPerHour Decimal         @default(0) @db.Decimal(10, 4)
   active                 Boolean         @default(true)
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
   calculatePrinterDepreciationCostPerHour,
-  calculatePrinterMaintenanceCostPerHour,
   calculateFilamentPricePerKg,
   calculateFilamentPricePerGram,
   calculateProductCost,
@@ -29,15 +28,6 @@ describe('calculatePrinterDepreciationCostPerHour (no maintenance folded in)', (
   })
   it('Anycubic Kobra X: 3600 / 10000h', () => {
     expect(calculatePrinterDepreciationCostPerHour({ purchasePrice: 3600, depreciationHours: 10000 })).toBeCloseTo(0.36, 4)
-  })
-})
-
-describe('calculatePrinterMaintenanceCostPerHour', () => {
-  it('exemplo da spec: 3000 * 10% / 8000h', () => {
-    expect(calculatePrinterMaintenanceCostPerHour({ purchasePrice: 3000, annualMaintenancePercent: 0.10, annualUsageHours: 8000 })).toBeCloseTo(0.0375, 4)
-  })
-  it('Anycubic Kobra X com defaults de Settings (10% / 2000h)', () => {
-    expect(calculatePrinterMaintenanceCostPerHour({ purchasePrice: 3600, annualMaintenancePercent: 0.10, annualUsageHours: 2000 })).toBeCloseTo(0.18, 4)
   })
 })
 
@@ -251,7 +241,6 @@ describe('calculateWeightedAverageCost', () => {
 
 describe('calculateProductCost', () => {
   const settings = {
-    energyCostPerKwh: 1,
     laborCostPerHour: 10,
     failureRatePercent: 0.10,
     marketplaceFeePercent: 0.20,
@@ -286,6 +275,7 @@ describe('calculateProductCost', () => {
       laborTimeHours: 0.05,
       filamentPricePerKg: 80,
       printerAvgPowerConsumptionKwh: 0.27,
+      printerEnergyCostPerKwh: 1,
       printerDepreciationCostPerHour: 0.36,
       printerMaintenanceCostPerHour: 0.18,
       suppliesCost: 0.3,
@@ -319,6 +309,7 @@ describe('calculateProductCost', () => {
       laborTimeHours: 1,
       filamentPricePerKg: 100,
       printerAvgPowerConsumptionKwh: 0.27,
+      printerEnergyCostPerKwh: 1,
       printerDepreciationCostPerHour: 0.36,
       printerMaintenanceCostPerHour: 0.18,
       suppliesCost: 0,
@@ -352,6 +343,7 @@ describe('calculateProductCost', () => {
       laborTimeHours: 0.25,
       filamentPricePerKg: 80,
       printerAvgPowerConsumptionKwh: 0.27,
+      printerEnergyCostPerKwh: 1,
       printerDepreciationCostPerHour: 0.36,
       printerMaintenanceCostPerHour: 0.18,
       suppliesCost: 0.3,
@@ -372,18 +364,17 @@ describe('calculateProductCost', () => {
 // somar weightGrams*pricePerKg de CADA componente antes de multiplicar por
 // quantityPerUnit.
 describe('sumProductPartsCost (peça multi-filamento)', () => {
-  const settings = { energyCostPerKwh: 1 }
-
   it('peça de um único componente de filamento (caso comum)', () => {
     const part: ProductPartCostInput = {
       quantityPerUnit: 1,
       filamentComponents: [{ weightGrams: 30, filamentPricePerKg: 80 }],
       printTimeHours: 2,
       printerAvgPowerConsumptionKwh: 0.27,
+      printerEnergyCostPerKwh: 1,
       printerDepreciationCostPerHour: 0.36,
       printerMaintenanceCostPerHour: 0.18,
     }
-    const result = sumProductPartsCost([part], settings)
+    const result = sumProductPartsCost([part])
     // filamentCost = 30 * (80/1000) = 2.4
     expect(result.filamentCost).toBeCloseTo(2.4, 4)
     expect(result.electricityCost).toBeCloseTo(0.54, 4)
@@ -401,10 +392,11 @@ describe('sumProductPartsCost (peça multi-filamento)', () => {
       ],
       printTimeHours: 2,
       printerAvgPowerConsumptionKwh: 0.27,
+      printerEnergyCostPerKwh: 1,
       printerDepreciationCostPerHour: 0.36,
       printerMaintenanceCostPerHour: 0.18,
     }
-    const result = sumProductPartsCost([part], settings)
+    const result = sumProductPartsCost([part])
     // filamentCost = 15*(80/1000) + 8*(100/1000) + 3*(120/1000) = 1.2 + 0.8 + 0.36 = 2.36
     expect(result.filamentCost).toBeCloseTo(2.36, 4)
     // Termos por impressora/energia não dependem de filamento -- inalterados.
@@ -420,20 +412,21 @@ describe('sumProductPartsCost (peça multi-filamento)', () => {
       ],
       printTimeHours: 1,
       printerAvgPowerConsumptionKwh: 0.1,
+      printerEnergyCostPerKwh: 1,
       printerDepreciationCostPerHour: 0.1,
       printerMaintenanceCostPerHour: 0.1,
     }
-    const result = sumProductPartsCost([part], settings)
+    const result = sumProductPartsCost([part])
     // (1.2 + 0.8) * 3 = 6.0
     expect(result.filamentCost).toBeCloseTo(6.0, 4)
   })
 
   it('soma corretamente entre múltiplas peças, cada uma com sua própria receita', () => {
     const parts: ProductPartCostInput[] = [
-      { quantityPerUnit: 1, filamentComponents: [{ weightGrams: 10, filamentPricePerKg: 80 }], printTimeHours: 1, printerAvgPowerConsumptionKwh: 0, printerDepreciationCostPerHour: 0, printerMaintenanceCostPerHour: 0 },
-      { quantityPerUnit: 2, filamentComponents: [{ weightGrams: 5, filamentPricePerKg: 80 }, { weightGrams: 5, filamentPricePerKg: 80 }], printTimeHours: 1, printerAvgPowerConsumptionKwh: 0, printerDepreciationCostPerHour: 0, printerMaintenanceCostPerHour: 0 },
+      { quantityPerUnit: 1, filamentComponents: [{ weightGrams: 10, filamentPricePerKg: 80 }], printTimeHours: 1, printerAvgPowerConsumptionKwh: 0, printerEnergyCostPerKwh: 1, printerDepreciationCostPerHour: 0, printerMaintenanceCostPerHour: 0 },
+      { quantityPerUnit: 2, filamentComponents: [{ weightGrams: 5, filamentPricePerKg: 80 }, { weightGrams: 5, filamentPricePerKg: 80 }], printTimeHours: 1, printerAvgPowerConsumptionKwh: 0, printerEnergyCostPerKwh: 1, printerDepreciationCostPerHour: 0, printerMaintenanceCostPerHour: 0 },
     ]
-    const result = sumProductPartsCost(parts, settings)
+    const result = sumProductPartsCost(parts)
     // peça 1: 10*0.08 = 0.8 ; peça 2: (5*0.08 + 5*0.08) * 2 = 0.8 * 2 = 1.6 -> total 2.4
     expect(result.filamentCost).toBeCloseTo(2.4, 4)
   })
@@ -441,7 +434,6 @@ describe('sumProductPartsCost (peça multi-filamento)', () => {
 
 describe('calculateCompositeProductCost (peça multi-filamento, integração)', () => {
   const settings = {
-    energyCostPerKwh: 1,
     laborCostPerHour: 10,
     failureRatePercent: 0.10,
     marketplaceFeePercent: 0.20,
@@ -473,6 +465,7 @@ describe('calculateCompositeProductCost (peça multi-filamento, integração)', 
             ],
             printTimeHours: 2,
             printerAvgPowerConsumptionKwh: 0.27,
+            printerEnergyCostPerKwh: 1,
             printerDepreciationCostPerHour: 0.36,
             printerMaintenanceCostPerHour: 0.18,
           },
@@ -492,7 +485,6 @@ describe('calculateCompositeProductCost (peça multi-filamento, integração)', 
 
 describe('calculateProductCost — flags include* (Configurações §3)', () => {
   const settings = {
-    energyCostPerKwh: 1,
     laborCostPerHour: 10,
     failureRatePercent: 0.10,
     marketplaceFeePercent: 0.20,
@@ -522,6 +514,7 @@ describe('calculateProductCost — flags include* (Configurações §3)', () => 
     laborTimeHours: 0.05,
     filamentPricePerKg: 80,
     printerAvgPowerConsumptionKwh: 0.27,
+    printerEnergyCostPerKwh: 1,
     printerDepreciationCostPerHour: 0.36,
     printerMaintenanceCostPerHour: 0.18,
     suppliesCost: 0.3,
@@ -685,7 +678,6 @@ describe('sumUsageCost (spec §2, task-5 brief — soma quantity * avgUnitCost p
 
 describe('buildProductionCostSnapshot (spec §4/§5, task-5 brief)', () => {
   const settings = {
-    energyCostPerKwh: 1,
     laborCostPerHour: 10,
     failureRatePercent: 0.10,
     marketplaceFeePercent: 0.20,
@@ -720,6 +712,7 @@ describe('buildProductionCostSnapshot (spec §4/§5, task-5 brief)', () => {
     laborTimeHours: 0.05,
     filamentPricePerKg: 80,
     printerAvgPowerConsumptionKwh: 0.27,
+    printerEnergyCostPerKwh: 1,
     printerDepreciationCostPerHour: 0.36,
     printerMaintenanceCostPerHour: 0.18,
     packagingItemId: 'pkg1',
@@ -751,6 +744,7 @@ describe('buildProductionCostSnapshot (spec §4/§5, task-5 brief)', () => {
         laborTimeHours: 0.05,
         filamentPricePerKg: 80,
         printerAvgPowerConsumptionKwh: 0.27,
+        printerEnergyCostPerKwh: 1,
         printerDepreciationCostPerHour: 0.36,
         printerMaintenanceCostPerHour: 0.18,
         suppliesCost: sumUsageCost(baseInput.supplyUsages),

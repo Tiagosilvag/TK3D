@@ -7,15 +7,11 @@ export function calculatePrinterDepreciationCostPerHour(input: PrinterDepreciati
   return input.purchasePrice / input.depreciationHours
 }
 
-export interface PrinterMaintenanceInput {
-  purchasePrice: number
-  annualMaintenancePercent: number
-  annualUsageHours: number
-}
-
-export function calculatePrinterMaintenanceCostPerHour(input: PrinterMaintenanceInput): number {
-  return (input.purchasePrice * input.annualMaintenancePercent) / input.annualUsageHours
-}
+// Melhoria "Impressoras": manutenção deixou de ser uma fórmula genérica
+// (purchasePrice * Settings.annualMaintenancePercent / Settings.annualUsageHours,
+// igual pra toda impressora) e virou input direto por impressora
+// (Printer.maintenanceCostPerHour) -- não há mais nada a "calcular" aqui,
+// cada chamador lê o valor já pronto direto do Printer. Função removida.
 
 export interface FilamentPriceInput {
   spoolPrice: number
@@ -119,8 +115,12 @@ export function calculateWeightedAverageCost(input: WeightedAverageCostInput): n
   )
 }
 
+// Melhoria "Impressoras": energyCostPerKwh saiu daqui -- tarifa de energia
+// virou input por impressora (Printer.energyCostPerKwh, ver
+// ProductCostInput/ProductPartCostInput/ProductionCostSnapshotInput
+// abaixo) em vez de um valor global de Settings compartilhado por toda
+// impressora.
 export interface Settings {
-  energyCostPerKwh: number
   laborCostPerHour: number
   failureRatePercent: number
   marketplaceFeePercent: number
@@ -152,6 +152,9 @@ export interface ProductCostInput extends ProductCostFlags {
   laborTimeHours: number
   filamentPricePerKg: number
   printerAvgPowerConsumptionKwh: number
+  // Melhoria "Impressoras": tarifa da impressora usada nesta peça/produto
+  // (Printer.energyCostPerKwh), não mais Settings.energyCostPerKwh.
+  printerEnergyCostPerKwh: number
   printerDepreciationCostPerHour: number
   printerMaintenanceCostPerHour: number
   suppliesCost: number
@@ -314,7 +317,7 @@ export function calculateProductCost(input: ProductCostInput, settings: Settings
   // disabled instead of hiding it). Only the contribution to subtotal below
   // is gated by the flag.
   const filamentCost = input.weightGrams * (input.filamentPricePerKg / 1000)
-  const electricityCost = input.printerAvgPowerConsumptionKwh * settings.energyCostPerKwh * input.printTimeHours
+  const electricityCost = input.printerAvgPowerConsumptionKwh * input.printerEnergyCostPerKwh * input.printTimeHours
   const printerCost = input.printerDepreciationCostPerHour * input.printTimeHours
   const maintenanceCost = input.printerMaintenanceCostPerHour * input.printTimeHours
   const laborCost = settings.laborCostPerHour * input.laborTimeHours
@@ -352,6 +355,11 @@ export interface ProductPartCostInput {
   filamentComponents: ProductPartFilamentComponent[]
   printTimeHours: number
   printerAvgPowerConsumptionKwh: number
+  // Melhoria "Impressoras": tarifa da impressora DESSA peça -- um composto
+  // pode ter peças em impressoras diferentes, cada uma com sua própria
+  // tarifa própria agora (não mais um único Settings.energyCostPerKwh
+  // compartilhado por todas).
+  printerEnergyCostPerKwh: number
   printerDepreciationCostPerHour: number
   printerMaintenanceCostPerHour: number
 }
@@ -363,14 +371,14 @@ export interface ProductPartsCostSum {
   maintenanceCost: number
 }
 
-export function sumProductPartsCost(parts: ProductPartCostInput[], settings: Pick<Settings, 'energyCostPerKwh'>): ProductPartsCostSum {
+export function sumProductPartsCost(parts: ProductPartCostInput[]): ProductPartsCostSum {
   return parts.reduce<ProductPartsCostSum>(
     (acc, part) => {
       const qty = part.quantityPerUnit
       const partFilamentCost = part.filamentComponents.reduce((sum, c) => sum + c.weightGrams * (c.filamentPricePerKg / 1000), 0)
       return {
         filamentCost: acc.filamentCost + partFilamentCost * qty,
-        electricityCost: acc.electricityCost + part.printerAvgPowerConsumptionKwh * settings.energyCostPerKwh * part.printTimeHours * qty,
+        electricityCost: acc.electricityCost + part.printerAvgPowerConsumptionKwh * part.printerEnergyCostPerKwh * part.printTimeHours * qty,
         printerCost: acc.printerCost + part.printerDepreciationCostPerHour * part.printTimeHours * qty,
         maintenanceCost: acc.maintenanceCost + part.printerMaintenanceCostPerHour * part.printTimeHours * qty,
       }
@@ -388,7 +396,7 @@ export interface CompositeProductCostInput extends ProductCostFlags {
 }
 
 export function calculateCompositeProductCost(input: CompositeProductCostInput, settings: Settings): ProductCostBreakdown {
-  const partsSum = sumProductPartsCost(input.parts, settings)
+  const partsSum = sumProductPartsCost(input.parts)
   const laborCost = settings.laborCostPerHour * input.laborTimeHours
 
   return combineProductCost(
@@ -492,6 +500,9 @@ export interface ProductionCostSnapshotInput extends ProductCostFlags {
   laborTimeHours: number
   filamentPricePerKg: number
   printerAvgPowerConsumptionKwh: number
+  // Melhoria "Impressoras": tarifa da impressora usada nesta produção
+  // (Printer.energyCostPerKwh), não mais Settings.energyCostPerKwh.
+  printerEnergyCostPerKwh: number
   printerDepreciationCostPerHour: number
   printerMaintenanceCostPerHour: number
   packagingCost: number
@@ -558,6 +569,7 @@ export function buildProductionCostSnapshot(
       laborTimeHours: input.laborTimeHours,
       filamentPricePerKg: input.filamentPricePerKg,
       printerAvgPowerConsumptionKwh: input.printerAvgPowerConsumptionKwh,
+      printerEnergyCostPerKwh: input.printerEnergyCostPerKwh,
       printerDepreciationCostPerHour: input.printerDepreciationCostPerHour,
       printerMaintenanceCostPerHour: input.printerMaintenanceCostPerHour,
       suppliesCost,
@@ -583,7 +595,7 @@ export function buildProductionCostSnapshot(
     printerDepreciationCostPerHour: input.printerDepreciationCostPerHour,
     printerMaintenanceCostPerHour: input.printerMaintenanceCostPerHour,
     printerAvgPowerConsumptionKwh: input.printerAvgPowerConsumptionKwh,
-    energyCostPerKwh: settings.energyCostPerKwh,
+    energyCostPerKwh: input.printerEnergyCostPerKwh,
   })
 
   const total = unitCost.finalCost * input.quantitySuccess + wasteCost

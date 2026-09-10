@@ -51,13 +51,18 @@ function fd(obj: Record<string, string>): FormData {
 describe('products actions', () => {
   it('cria um produto e calcula o custo corretamente', async () => {
     await prisma.settings.create({ data: { id: 1 } })
-    const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+    // energyCostPerKwh/maintenanceCostPerHour explícitos (melhoria
+    // "Impressoras": viraram input por impressora, não vêm mais de
+    // Settings) -- mesmos valores que essa impressora já tinha sob a
+    // fórmula antiga (Settings default: tarifa 1.00 R$/kWh, maintenance
+    // 3600*0.10/2000=0.18 R$/h), pra manter o suggestedPrice esperado
+    // abaixo idêntico ao de antes da mudança.
+    const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27, energyCostPerKwh: 1, maintenanceCostPerHour: 0.18 } })
     const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
     // Matches the costing.test.ts fixture exactly (suppliesCost: 0.3, packagingCost: 0,
-    // accessoryCost: 0), with printer costing now driven by Settings defaults
-    // (annualMaintenancePercent 0.10, annualUsageHours 2000): depreciation
-    // 3600/10000=0.36 R$/h, maintenance 3600*0.10/2000=0.18 R$/h. suggestedPrice
-    // (15.004) is reproduced here end-to-end through real DB records.
+    // accessoryCost: 0): depreciation 3600/10000=0.36 R$/h, maintenance 0.18 R$/h
+    // (both from the printer above). suggestedPrice (15.004) is reproduced here
+    // end-to-end through real DB records.
     const supply = await prisma.supply.create({ data: { name: 'Cola Teste', unit: 'ML', currentStock: 10, avgUnitCost: 0.3 } })
 
     const result = await createProduct(fd({

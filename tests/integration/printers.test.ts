@@ -36,6 +36,8 @@ describe('printers actions', () => {
       purchasePrice: '3000',
       depreciationHours: '10000',
       avgPowerConsumptionKwh: '0.15',
+      energyCostPerKwh: '1',
+      maintenanceCostPerHour: '0.15',
     }))
     expect(result.success).toBe(true)
     const printer = await prisma.printer.findFirst({ where: { name: 'Teste X1' } })
@@ -48,19 +50,21 @@ describe('printers actions', () => {
       purchasePrice: '3000',
       depreciationHours: '10000',
       avgPowerConsumptionKwh: '0.15',
+      energyCostPerKwh: '1',
+      maintenanceCostPerHour: '0.15',
     }))
     expect(result.success).toBe(false)
   })
 
   it('atualiza e depois remove', async () => {
     const created = await createPrinter(fd({
-      name: 'Teste Y1', purchasePrice: '1000', depreciationHours: '5000', avgPowerConsumptionKwh: '0.2',
+      name: 'Teste Y1', purchasePrice: '1000', depreciationHours: '5000', avgPowerConsumptionKwh: '0.2', energyCostPerKwh: '1', maintenanceCostPerHour: '0.05',
     }))
     expect(created.success).toBe(true)
     const printer = await prisma.printer.findFirstOrThrow({ where: { name: 'Teste Y1' } })
 
     const updated = await updatePrinter(printer.id, fd({
-      name: 'Teste Y1 Atualizada', purchasePrice: '1100', depreciationHours: '5000', avgPowerConsumptionKwh: '0.2',
+      name: 'Teste Y1 Atualizada', purchasePrice: '1100', depreciationHours: '5000', avgPowerConsumptionKwh: '0.2', energyCostPerKwh: '1', maintenanceCostPerHour: '0.05',
     }))
     expect(updated.success).toBe(true)
 
@@ -75,7 +79,7 @@ describe('printers actions', () => {
 
   it('reativa uma impressora removida (soft-deleted)', async () => {
     const created = await createPrinter(fd({
-      name: 'Teste Z1', purchasePrice: '1000', depreciationHours: '5000', avgPowerConsumptionKwh: '0.2',
+      name: 'Teste Z1', purchasePrice: '1000', depreciationHours: '5000', avgPowerConsumptionKwh: '0.2', energyCostPerKwh: '1', maintenanceCostPerHour: '0.05',
     }))
     expect(created.success).toBe(true)
     const printer = await prisma.printer.findFirstOrThrow({ where: { name: 'Teste Z1' } })
@@ -90,13 +94,13 @@ describe('printers actions', () => {
 
   it('atualiza os campos de uma impressora existente ao editar', async () => {
     const created = await createPrinter(fd({
-      name: 'Teste Edit1', purchasePrice: '1000', depreciationHours: '5000', avgPowerConsumptionKwh: '0.2',
+      name: 'Teste Edit1', purchasePrice: '1000', depreciationHours: '5000', avgPowerConsumptionKwh: '0.2', energyCostPerKwh: '1', maintenanceCostPerHour: '0.05',
     }))
     expect(created.success).toBe(true)
     const printer = await prisma.printer.findFirstOrThrow({ where: { name: 'Teste Edit1' } })
 
     const updated = await updatePrinter(printer.id, fd({
-      name: 'Teste Edit1 Nova', purchasePrice: '2500', depreciationHours: '8000', avgPowerConsumptionKwh: '0.33',
+      name: 'Teste Edit1 Nova', purchasePrice: '2500', depreciationHours: '8000', avgPowerConsumptionKwh: '0.33', energyCostPerKwh: '1.2', maintenanceCostPerHour: '0.2',
     }))
     expect(updated.success).toBe(true)
 
@@ -105,11 +109,13 @@ describe('printers actions', () => {
     expect(reloaded.purchasePrice.toNumber()).toBe(2500)
     expect(reloaded.depreciationHours.toNumber()).toBe(8000)
     expect(reloaded.avgPowerConsumptionKwh.toNumber()).toBe(0.33)
+    expect(reloaded.energyCostPerKwh.toNumber()).toBe(1.2)
+    expect(reloaded.maintenanceCostPerHour.toNumber()).toBe(0.2)
   })
 
   it('exclui permanentemente uma impressora sem vínculos', async () => {
     const created = await createPrinter(fd({
-      name: 'Teste Del1', purchasePrice: '1000', depreciationHours: '5000', avgPowerConsumptionKwh: '0.2',
+      name: 'Teste Del1', purchasePrice: '1000', depreciationHours: '5000', avgPowerConsumptionKwh: '0.2', energyCostPerKwh: '1', maintenanceCostPerHour: '0.05',
     }))
     expect(created.success).toBe(true)
     const printer = await prisma.printer.findFirstOrThrow({ where: { name: 'Teste Del1' } })

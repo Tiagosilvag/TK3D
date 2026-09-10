@@ -4,7 +4,6 @@ import { productionRunSchema, productionRunWasteUpdateSchema } from '@/lib/valid
 import {
   buildProductionCostSnapshot,
   calculatePrinterDepreciationCostPerHour,
-  calculatePrinterMaintenanceCostPerHour,
   calculateFilamentPricePerKg,
   calculateWasteCost,
   type ProductionCostSnapshot,
@@ -178,11 +177,7 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
     purchasePrice: printer.purchasePrice.toNumber(),
     depreciationHours: printer.depreciationHours.toNumber(),
   })
-  const printerMaintenanceCostPerHour = calculatePrinterMaintenanceCostPerHour({
-    purchasePrice: printer.purchasePrice.toNumber(),
-    annualMaintenancePercent: settings.annualMaintenancePercent.toNumber(),
-    annualUsageHours: settings.annualUsageHours.toNumber(),
-  })
+  const printerMaintenanceCostPerHour = printer.maintenanceCostPerHour.toNumber()
 
   // Ajuste "peça multi-filamento": peso e preço/kg da RECEITA da peça (não
   // do que foi realmente usado nesta produção) -- weightGrams = soma dos
@@ -239,6 +234,7 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
       laborTimeHours: skipProductLevelConsumption ? 0 : product.laborTimeHours.toNumber(),
       filamentPricePerKg,
       printerAvgPowerConsumptionKwh: printer.avgPowerConsumptionKwh.toNumber(),
+      printerEnergyCostPerKwh: printer.energyCostPerKwh.toNumber(),
       printerDepreciationCostPerHour,
       printerMaintenanceCostPerHour,
       packagingItemId: skipProductLevelConsumption ? null : product.packagingItemId,
@@ -265,7 +261,6 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
       timeWastedHours: data.timeWastedHours,
     },
     {
-      energyCostPerKwh: settings.energyCostPerKwh.toNumber(),
       laborCostPerHour: settings.laborCostPerHour.toNumber(),
       failureRatePercent: settings.failureRatePercent.toNumber(),
       marketplaceFeePercent: settings.marketplaceFeePercent.toNumber(),
@@ -341,10 +336,9 @@ export async function updateProductionRun(id: string, formData: FormData): Promi
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
   const { gramsWasted, timeWastedHours, wasteReason, notes } = parsed.data
 
-  const [printer, filament, settings] = await Promise.all([
+  const [printer, filament] = await Promise.all([
     prisma.printer.findUniqueOrThrow({ where: { id: run.printerId } }),
     prisma.filament.findUniqueOrThrow({ where: { id: run.filamentId } }),
-    prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
   ])
 
   const oldGramsWasted = run.gramsWasted.toNumber()
@@ -361,11 +355,7 @@ export async function updateProductionRun(id: string, formData: FormData): Promi
     purchasePrice: printer.purchasePrice.toNumber(),
     depreciationHours: printer.depreciationHours.toNumber(),
   })
-  const printerMaintenanceCostPerHour = calculatePrinterMaintenanceCostPerHour({
-    purchasePrice: printer.purchasePrice.toNumber(),
-    annualMaintenancePercent: settings.annualMaintenancePercent.toNumber(),
-    annualUsageHours: settings.annualUsageHours.toNumber(),
-  })
+  const printerMaintenanceCostPerHour = printer.maintenanceCostPerHour.toNumber()
   const filamentPricePerKg = calculateFilamentPricePerKg({
     spoolPrice: filament.spoolPrice.toNumber(),
     spoolWeightKg: filament.spoolWeightKg.toNumber(),
@@ -377,7 +367,7 @@ export async function updateProductionRun(id: string, formData: FormData): Promi
     printerDepreciationCostPerHour,
     printerMaintenanceCostPerHour,
     printerAvgPowerConsumptionKwh: printer.avgPowerConsumptionKwh.toNumber(),
-    energyCostPerKwh: settings.energyCostPerKwh.toNumber(),
+    energyCostPerKwh: printer.energyCostPerKwh.toNumber(),
   })
 
   const oldSnapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null

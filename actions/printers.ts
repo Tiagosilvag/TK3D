@@ -7,7 +7,8 @@ import { revalidatePath } from 'next/cache'
 type ActionResult = { success: boolean; error?: string }
 
 function parse(formData: FormData) {
-  return printerSchema.safeParse(Object.fromEntries(formData))
+  const raw = Object.fromEntries(formData)
+  return printerSchema.safeParse({ ...raw, nickname: raw.nickname || null })
 }
 
 function isUniqueConstraintError(err: unknown): boolean {

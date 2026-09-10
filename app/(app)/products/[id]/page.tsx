@@ -5,7 +5,6 @@ import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
 import { StatusBadge } from '@/components/StatusBadge'
 import {
   calculatePrinterDepreciationCostPerHour,
-  calculatePrinterMaintenanceCostPerHour,
   type ProductCostFlags,
 } from '@/lib/costing'
 import { ProductForm } from '../ProductForm'
@@ -72,17 +71,13 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     }
   }
 
-  const annualMaintenancePercent = settings.annualMaintenancePercent.toNumber()
-  const annualUsageHours = settings.annualUsageHours.toNumber()
-  const energyCostPerKwh = settings.energyCostPerKwh.toNumber()
-
   const printerOptions = printers.map((p) => {
     const purchasePrice = p.purchasePrice.toNumber()
     const depreciationHours = p.depreciationHours.toNumber()
     const costPerHour =
       calculatePrinterDepreciationCostPerHour({ purchasePrice, depreciationHours }) +
-      calculatePrinterMaintenanceCostPerHour({ purchasePrice, annualMaintenancePercent, annualUsageHours }) +
-      p.avgPowerConsumptionKwh.toNumber() * energyCostPerKwh
+      p.maintenanceCostPerHour.toNumber() +
+      p.avgPowerConsumptionKwh.toNumber() * p.energyCostPerKwh.toNumber()
     return { id: p.id, name: p.name, costPerHour }
   })
 
