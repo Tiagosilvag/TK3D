@@ -13,6 +13,18 @@ export const wasteReasonEnum = z.enum([
   'OUTRO',
 ])
 
+// Ajuste "peça multi-filamento": consumo real de UM componente de filamento
+// da receita, quando a peça produzida tem mais de 1 (impressão
+// multi-material). filamentId/gramsUsed/gramsWasted no nível do
+// ProductionRun (abaixo) recebem o AGREGADO desta lista (1º componente pro
+// filamentId "principal", soma pra gramsUsed/gramsWasted) -- actions/
+// productionRuns.ts é quem monta esse agregado antes de validar.
+export const productionRunFilamentUsageSchema = z.object({
+  filamentId: z.string().min(1),
+  gramsUsed: z.coerce.number({ invalid_type_error: 'Peso inválido' }).nonnegative('Não pode ser negativo'),
+  gramsWasted: z.coerce.number().nonnegative('Gramas desperdiçadas não pode ser negativo'),
+})
+
 export const productionRunSchema = z.object({
   productId: z.string().min(1),
   // 2.1 Produto composto: presente quando esta produção é de uma peça
@@ -29,6 +41,9 @@ export const productionRunSchema = z.object({
   timeWastedHours: z.coerce.number().nonnegative('Tempo desperdiçado não pode ser negativo'),
   wasteReason: wasteReasonEnum.nullable().optional(),
   notes: z.string().optional().nullable(),
+  // Presente só quando a peça produzida tem >1 componente de filamento --
+  // ver comentário acima.
+  filamentUsages: z.array(productionRunFilamentUsageSchema).min(1).optional(),
 }).refine((data) => data.quantitySuccess + data.quantityFailed <= data.quantityPlanned, {
   message: 'Sucesso + falhas não pode ser maior que o planejado',
   path: ['quantityFailed'],

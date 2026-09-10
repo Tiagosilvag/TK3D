@@ -16,8 +16,11 @@ import {
   buildProductionCostSnapshot,
   buildSaleCostSnapshot,
   simulateProductPrice,
+  sumProductPartsCost,
+  calculateCompositeProductCost,
   type ProductionCostSnapshotInput,
   type ProductCostBreakdown,
+  type ProductPartCostInput,
 } from '@/lib/costing'
 
 describe('calculatePrinterDepreciationCostPerHour (no maintenance folded in)', () => {
@@ -361,6 +364,129 @@ describe('calculateProductCost', () => {
     // marketplacePrice = 15.004 / (1 - 0.20 - 0.055) + 4 = 15.004 / 0.745 + 4 ≈ 24.1396
     expect(result.suggestedPrice).toBeCloseTo(15.004, 3)
     expect(result.marketplacePrice).toBeCloseTo(24.1396, 2)
+  })
+})
+
+// Ajuste "peça multi-filamento": uma peça pode ter mais de 1 componente de
+// filamento (impressão multi-material simultânea) -- filamentCost passa a
+// somar weightGrams*pricePerKg de CADA componente antes de multiplicar por
+// quantityPerUnit.
+describe('sumProductPartsCost (peça multi-filamento)', () => {
+  const settings = { energyCostPerKwh: 1 }
+
+  it('peça de um único componente de filamento (caso comum)', () => {
+    const part: ProductPartCostInput = {
+      quantityPerUnit: 1,
+      filamentComponents: [{ weightGrams: 30, filamentPricePerKg: 80 }],
+      printTimeHours: 2,
+      printerAvgPowerConsumptionKwh: 0.27,
+      printerDepreciationCostPerHour: 0.36,
+      printerMaintenanceCostPerHour: 0.18,
+    }
+    const result = sumProductPartsCost([part], settings)
+    // filamentCost = 30 * (80/1000) = 2.4
+    expect(result.filamentCost).toBeCloseTo(2.4, 4)
+    expect(result.electricityCost).toBeCloseTo(0.54, 4)
+    expect(result.printerCost).toBeCloseTo(0.72, 4)
+    expect(result.maintenanceCost).toBeCloseTo(0.36, 4)
+  })
+
+  it('peça com 3 componentes de filamento simultâneos (preto+verde+branco)', () => {
+    const part: ProductPartCostInput = {
+      quantityPerUnit: 1,
+      filamentComponents: [
+        { weightGrams: 15, filamentPricePerKg: 80 },
+        { weightGrams: 8, filamentPricePerKg: 100 },
+        { weightGrams: 3, filamentPricePerKg: 120 },
+      ],
+      printTimeHours: 2,
+      printerAvgPowerConsumptionKwh: 0.27,
+      printerDepreciationCostPerHour: 0.36,
+      printerMaintenanceCostPerHour: 0.18,
+    }
+    const result = sumProductPartsCost([part], settings)
+    // filamentCost = 15*(80/1000) + 8*(100/1000) + 3*(120/1000) = 1.2 + 0.8 + 0.36 = 2.36
+    expect(result.filamentCost).toBeCloseTo(2.36, 4)
+    // Termos por impressora/energia não dependem de filamento -- inalterados.
+    expect(result.electricityCost).toBeCloseTo(0.54, 4)
+  })
+
+  it('multiplica o custo de filamento da peça (todos os componentes) por quantityPerUnit', () => {
+    const part: ProductPartCostInput = {
+      quantityPerUnit: 3,
+      filamentComponents: [
+        { weightGrams: 15, filamentPricePerKg: 80 },
+        { weightGrams: 8, filamentPricePerKg: 100 },
+      ],
+      printTimeHours: 1,
+      printerAvgPowerConsumptionKwh: 0.1,
+      printerDepreciationCostPerHour: 0.1,
+      printerMaintenanceCostPerHour: 0.1,
+    }
+    const result = sumProductPartsCost([part], settings)
+    // (1.2 + 0.8) * 3 = 6.0
+    expect(result.filamentCost).toBeCloseTo(6.0, 4)
+  })
+
+  it('soma corretamente entre múltiplas peças, cada uma com sua própria receita', () => {
+    const parts: ProductPartCostInput[] = [
+      { quantityPerUnit: 1, filamentComponents: [{ weightGrams: 10, filamentPricePerKg: 80 }], printTimeHours: 1, printerAvgPowerConsumptionKwh: 0, printerDepreciationCostPerHour: 0, printerMaintenanceCostPerHour: 0 },
+      { quantityPerUnit: 2, filamentComponents: [{ weightGrams: 5, filamentPricePerKg: 80 }, { weightGrams: 5, filamentPricePerKg: 80 }], printTimeHours: 1, printerAvgPowerConsumptionKwh: 0, printerDepreciationCostPerHour: 0, printerMaintenanceCostPerHour: 0 },
+    ]
+    const result = sumProductPartsCost(parts, settings)
+    // peça 1: 10*0.08 = 0.8 ; peça 2: (5*0.08 + 5*0.08) * 2 = 0.8 * 2 = 1.6 -> total 2.4
+    expect(result.filamentCost).toBeCloseTo(2.4, 4)
+  })
+})
+
+describe('calculateCompositeProductCost (peça multi-filamento, integração)', () => {
+  const settings = {
+    energyCostPerKwh: 1,
+    laborCostPerHour: 10,
+    failureRatePercent: 0.10,
+    marketplaceFeePercent: 0.20,
+    taxPercent: 0.055,
+    marketplaceFixedFee: 4,
+    defaultMarkup: 2,
+  }
+  const allIncludeTrue = {
+    includeDepreciation: true,
+    includeEnergyCost: true,
+    includeMaintenance: true,
+    includeLaborCost: true,
+    includeFailureRate: true,
+    includeFilamentCost: true,
+    includeAccessoriesCost: true,
+    includeSuppliesCost: true,
+    includePackagingCost: true,
+  }
+
+  it('produto composto com uma peça multi-filamento soma o custo de todas as cores', () => {
+    const result = calculateCompositeProductCost(
+      {
+        parts: [
+          {
+            quantityPerUnit: 1,
+            filamentComponents: [
+              { weightGrams: 15, filamentPricePerKg: 80 },
+              { weightGrams: 8, filamentPricePerKg: 100 },
+            ],
+            printTimeHours: 2,
+            printerAvgPowerConsumptionKwh: 0.27,
+            printerDepreciationCostPerHour: 0.36,
+            printerMaintenanceCostPerHour: 0.18,
+          },
+        ],
+        laborTimeHours: 0,
+        suppliesCost: 0,
+        packagingCost: 0,
+        accessoryCost: 0,
+        ...allIncludeTrue,
+      },
+      settings,
+    )
+    // filamentCost = 15*0.08 + 8*0.1 = 1.2 + 0.8 = 2.0
+    expect(result.filamentCost).toBeCloseTo(2.0, 4)
   })
 })
 

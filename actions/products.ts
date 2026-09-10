@@ -46,11 +46,13 @@ function parse(formData: FormData) {
 // quantityPerUnit). Nunca usados no cálculo de custo de um composto (isso
 // é feito por peça, ver getProductCostBreakdown abaixo) -- servem só pra
 // manter a coluna preenchida e dar uma noção agregada em listagens futuras.
+// Ajuste "peça multi-filamento": peso agregado soma TODOS os componentes de
+// filamento de cada peça; filamentId do resumo usa o 1º componente da 1ª peça.
 function deriveCompositeAggregate(parts: ProductPartInput[]) {
   const [first] = parts
-  const weightGrams = parts.reduce((sum, p) => sum + p.weightGrams * p.quantityPerUnit, 0)
+  const weightGrams = parts.reduce((sum, p) => sum + p.filaments.reduce((s, f) => s + f.weightGrams, 0) * p.quantityPerUnit, 0)
   const printTimeHours = parts.reduce((sum, p) => sum + p.printTimeHours * p.quantityPerUnit, 0)
-  return { printerId: first.printerId, filamentId: first.filamentId, weightGrams, printTimeHours }
+  return { printerId: first.printerId, filamentId: first.filaments[0].filamentId, weightGrams, printTimeHours }
 }
 
 export async function createProduct(formData: FormData): Promise<ActionResult> {
@@ -76,17 +78,20 @@ export async function createProduct(formData: FormData): Promise<ActionResult> {
       const product = await tx.product.create({
         data: { ...baseData, ...derived },
       })
-      await tx.productPart.createMany({
-        data: parts.map((p) => ({
-          productId: product.id,
-          name: p.name,
-          printerId: p.printerId,
-          filamentId: p.filamentId,
-          weightGrams: p.weightGrams,
-          printTimeHours: p.printTimeHours,
-          quantityPerUnit: p.quantityPerUnit,
-        })),
-      })
+      // createMany não aceita write aninhado (filamentComponents), então
+      // cada peça é criada individualmente com seus componentes juntos.
+      for (const p of parts) {
+        await tx.productPart.create({
+          data: {
+            productId: product.id,
+            name: p.name,
+            printerId: p.printerId,
+            printTimeHours: p.printTimeHours,
+            quantityPerUnit: p.quantityPerUnit,
+            filamentComponents: { create: p.filaments.map((f) => ({ filamentId: f.filamentId, weightGrams: f.weightGrams })) },
+          },
+        })
+      }
     })
   } else {
     await prisma.product.create({
@@ -136,15 +141,22 @@ export async function updateProduct(id: string, formData: FormData): Promise<Act
             productId: id,
             name: part.name,
             printerId: part.printerId,
-            filamentId: part.filamentId,
-            weightGrams: part.weightGrams,
             printTimeHours: part.printTimeHours,
             quantityPerUnit: part.quantityPerUnit,
           }
+          const filamentComponents = part.filaments.map((f) => ({ filamentId: f.filamentId, weightGrams: f.weightGrams }))
           if (part.id) {
-            await tx.productPart.update({ where: { id: part.id }, data: partData })
+            // ProductPartFilament não tem nada referenciando ela por FK (ao
+            // contrário da própria ProductPart, que ProductionRun.
+            // productPartId trava com RESTRICT) -- apagar e recriar os
+            // componentes é seguro e mais simples que diffar item a item.
+            await tx.productPartFilament.deleteMany({ where: { productPartId: part.id } })
+            await tx.productPart.update({
+              where: { id: part.id },
+              data: { ...partData, filamentComponents: { create: filamentComponents } },
+            })
           } else {
-            await tx.productPart.create({ data: partData })
+            await tx.productPart.create({ data: { ...partData, filamentComponents: { create: filamentComponents } } })
           }
         }
       })
@@ -191,7 +203,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
         packagingItem: true,
         accessoryUsages: { include: { accessory: true } },
         supplyUsages: { include: { supply: true } },
-        parts: { include: { printer: true, filament: true } },
+        parts: { include: { printer: true, filamentComponents: { include: { filament: true } } } },
       },
     }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
@@ -232,12 +244,14 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
   if (product.isComposite) {
     const parts: ProductPartCostInput[] = product.parts.map((part) => ({
       quantityPerUnit: part.quantityPerUnit,
-      weightGrams: part.weightGrams.toNumber(),
+      filamentComponents: part.filamentComponents.map((c) => ({
+        weightGrams: c.weightGrams.toNumber(),
+        filamentPricePerKg: calculateFilamentPricePerKg({
+          spoolPrice: c.filament.spoolPrice.toNumber(),
+          spoolWeightKg: c.filament.spoolWeightKg.toNumber(),
+        }),
+      })),
       printTimeHours: part.printTimeHours.toNumber(),
-      filamentPricePerKg: calculateFilamentPricePerKg({
-        spoolPrice: part.filament.spoolPrice.toNumber(),
-        spoolWeightKg: part.filament.spoolWeightKg.toNumber(),
-      }),
       printerAvgPowerConsumptionKwh: part.printer.avgPowerConsumptionKwh.toNumber(),
       printerDepreciationCostPerHour: calculatePrinterDepreciationCostPerHour({
         purchasePrice: part.printer.purchasePrice.toNumber(),
@@ -303,12 +317,21 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
 // invés disso devolve a lista de peças, e a tela pede pra escolher qual
 // peça está sendo produzida antes de autopreencher impressora/filamento
 // (a partir da peça, não do produto).
+export interface ProductProductionPartFilamentDefault {
+  filamentId: string
+  weightGrams: number
+}
+
+// Ajuste "peça multi-filamento": uma peça de 1 componente só (a maioria)
+// autopreenche filamento+peso normalmente em ProductionRunForm, igual
+// antes. Uma peça com >1 componentes precisa de um input de gramas por
+// cor em vez de um só -- ProductionRunForm decide isso a partir do
+// tamanho de `filaments`.
 export interface ProductProductionPartDefault {
   id: string
   name: string
   printerId: string
-  filamentId: string
-  weightGrams: number
+  filaments: ProductProductionPartFilamentDefault[]
   printTimeHours: number
 }
 
@@ -322,7 +345,10 @@ export interface ProductProductionDefaults {
 }
 
 export async function getProductProductionDefaults(productId: string): Promise<ProductProductionDefaults> {
-  const product = await prisma.product.findUniqueOrThrow({ where: { id: productId }, include: { parts: true } })
+  const product = await prisma.product.findUniqueOrThrow({
+    where: { id: productId },
+    include: { parts: { include: { filamentComponents: true } } },
+  })
   if (product.isComposite) {
     return {
       isComposite: true,
@@ -330,8 +356,7 @@ export async function getProductProductionDefaults(productId: string): Promise<P
         id: p.id,
         name: p.name,
         printerId: p.printerId,
-        filamentId: p.filamentId,
-        weightGrams: p.weightGrams.toNumber(),
+        filaments: p.filamentComponents.map((f) => ({ filamentId: f.filamentId, weightGrams: f.weightGrams.toNumber() })),
         printTimeHours: p.printTimeHours.toNumber(),
       })),
     }

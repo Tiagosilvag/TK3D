@@ -40,7 +40,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
       supplyUsages: { include: { supply: true } },
       accessoryUsages: { include: { accessory: true } },
       photos: { orderBy: { createdAt: 'asc' }, select: { id: true } },
-      parts: { orderBy: { createdAt: 'asc' } },
+      parts: { orderBy: { createdAt: 'asc' }, include: { filamentComponents: true } },
     },
   })
   if (!product) notFound()
@@ -136,8 +136,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               id: p.id,
               name: p.name,
               printerId: p.printerId,
-              filamentId: p.filamentId,
-              weightGrams: p.weightGrams.toNumber(),
+              filaments: p.filamentComponents.map((f) => ({ filamentId: f.filamentId, weightGrams: f.weightGrams.toNumber() })),
               printTimeHours: p.printTimeHours.toNumber(),
               quantityPerUnit: p.quantityPerUnit,
             }))}

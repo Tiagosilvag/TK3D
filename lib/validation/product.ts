@@ -9,6 +9,16 @@ export const finishingTypeEnum = z.enum(['NENHUM', 'CANETA_VERNIZ', 'RESINA_UV',
 // count as true; everything else, including absence, is false.
 const checkboxBoolean = z.string().optional().transform((v) => v === 'true' || v === 'on')
 
+// Ajuste "peça multi-filamento": um componente de filamento da receita de
+// uma peça -- a maioria das peças tem só 1, mas uma impressão
+// multi-material pode precisar de várias cores ao mesmo tempo.
+export const productPartFilamentSchema = z.object({
+  filamentId: z.string().min(1, 'Selecione um filamento'),
+  weightGrams: z.coerce.number().positive('Peso deve ser maior que zero'),
+})
+
+export type ProductPartFilamentInput = z.infer<typeof productPartFilamentSchema>
+
 // 2.1 Produto composto (BOM): uma peça da lista de partes de um produto
 // composto. `id` presente = editar essa peça existente; ausente = peça
 // nova (actions/products.ts decide create vs update por isso).
@@ -16,8 +26,7 @@ export const productPartSchema = z.object({
   id: z.string().optional(),
   name: z.string().min(1, 'Nome da peça é obrigatório'),
   printerId: z.string().min(1, 'Selecione uma impressora'),
-  filamentId: z.string().min(1, 'Selecione um filamento'),
-  weightGrams: z.coerce.number().positive('Peso deve ser maior que zero'),
+  filaments: z.array(productPartFilamentSchema).min(1, 'Adicione ao menos um filamento'),
   printTimeHours: z.coerce.number().positive('Tempo de impressão deve ser maior que zero'),
   quantityPerUnit: z.coerce.number().int('Quantidade deve ser um número inteiro').positive('Quantidade deve ser maior que zero'),
 })
