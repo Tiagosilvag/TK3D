@@ -87,20 +87,32 @@ Deploy em produção: `tk3d.coffetech.com.br` via Coolify.
   só leem o campo escalar. Editar desperdício depois de criada só
   funciona pra peça de 1 filamento (updateProductionRun recusa pra
   multi-filamento -- não dá pra saber qual cor mudou).
-- **ProductAssembly.colorChoices** (Json?, opcional): pra cada peça de
-  cor variável consumida numa leva de montagem, qual cor foi escolhida
-  (`{ [productPartId]: filamentId }`) -- usado por
-  `getAssemblyStatus`/`confirmAssembly` (actions/assembly.ts) pra
-  calcular disponível POR COR de cada peça, e por
+- **ProductAssembly.colorChoices** (Json?, opcional): pra cada peça
+  consumida numa leva de montagem, qual COMBO de filamento foi escolhido
+  -- `{ [productPartId]: comboKey }`, onde `comboKey` é 1+ filamentIds
+  ordenados e unidos por vírgula (`actions/assembly.ts#AssemblyPartColorOption`).
+  Disponível por combo é calculado a partir do que cada lote de produção
+  REALMENTE usou (`ProductionRunFilamentUsage` quando a peça é
+  multi-filamento, senão só o `ProductionRun.filamentId` escalar) --
+  nunca da contagem de componentes na ficha técnica atual, porque ela
+  pode ter mudado desde então e a combinação de cores de uma peça
+  multi-filamento pode variar de lote pra lote (não é necessariamente
+  fixa, ex.: TAMPA marrom+rosa num lote, roxo+lavanda no seguinte) --
+  usado por `getAssemblyStatus`/`confirmAssembly` (actions/assembly.ts)
+  pra calcular disponível POR COMBO de cada peça, e por
   `getProductVariantBreakdown` (lib/reports.ts) pra mostrar em /stock
-  quanto já foi montado de cada combinação de cores. Nulo em montagens
-  anteriores a esse ajuste -- nunca inventado retroativamente. Sale/
-  ConsignmentDelivery NÃO diferenciam variante (fora do escopo atual),
-  então só "produzido por variante" é confiável, nunca "disponível por
-  variante". `confirmAssembly` também decrementa `Accessory.currentStock`/
-  `Supply.currentStock` a partir de uma lista editável enviada pelo
-  formulário (pré-preenchida da ficha técnica do produto, mas ajustável
-  só pra aquela leva -- nunca reescreve a ficha técnica cadastrada).
+  quanto já foi montado de cada combinação de cores. Pra peça de 1
+  filamento só, `comboKey` é literalmente o filamentId sozinho -- dado
+  gravado antes desse ajuste (ou antes do ajuste anterior de cor
+  variável) continua lendo certo sem migração. Nulo em montagens
+  anteriores a qualquer um desses ajustes -- nunca inventado
+  retroativamente. Sale/ConsignmentDelivery NÃO diferenciam variante
+  (fora do escopo atual), então só "produzido por variante" é confiável,
+  nunca "disponível por variante". `confirmAssembly` também decrementa
+  `Accessory.currentStock`/`Supply.currentStock` a partir de uma lista
+  editável enviada pelo formulário (pré-preenchida da ficha técnica do
+  produto, mas ajustável só pra aquela leva -- nunca reescreve a ficha
+  técnica cadastrada).
 - **Sale**: canal (`SaleChannel`: `DIRETA | SHOPEE | MERCADO_LIVRE`,
   mais `MARKETPLACE` só como valor legado — não oferecido em vendas
   novas desde 3.6), `costSnapshot`.

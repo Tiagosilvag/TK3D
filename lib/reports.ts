@@ -283,10 +283,15 @@ export async function getProductVariantBreakdown(productId: string): Promise<Pro
   if (assemblies.length === 0) return []
 
   const partNameById = new Map(parts.map((p) => [p.id, p.name]))
+  // Ajuste "cor multi-filamento na montagem": cada valor de colorChoices
+  // agora é um comboKey (1+ filamentIds unidos por vírgula, ver
+  // actions/assembly.ts#AssemblyPartColorOption) -- dado antigo (peça de
+  // 1 filamento só) já era literalmente o filamentId sozinho, então
+  // split(',') lê os dois formatos sem distinção.
   const filamentIds = new Set<string>()
   for (const a of assemblies) {
     const choices = a.colorChoices as Record<string, string> | null
-    if (choices) for (const filamentId of Object.values(choices)) filamentIds.add(filamentId)
+    if (choices) for (const rawKey of Object.values(choices)) for (const id of rawKey.split(',')) filamentIds.add(id)
   }
   const filaments = filamentIds.size > 0 ? await prisma.filament.findMany({ where: { id: { in: [...filamentIds] } } }) : []
   const filamentById = new Map(filaments.map((f) => [f.id, f]))
@@ -297,7 +302,10 @@ export async function getProductVariantBreakdown(productId: string): Promise<Pro
     const label = !choices || Object.keys(choices).length === 0
       ? 'Sem variante registrada'
       : Object.entries(choices)
-          .map(([partId, filamentId]) => `${partNameById.get(partId) ?? partId}: ${filamentById.get(filamentId)?.colorName ?? filamentId}`)
+          .map(([partId, rawKey]) => {
+            const colorNames = rawKey.split(',').map((id) => filamentById.get(id)?.colorName ?? id)
+            return `${partNameById.get(partId) ?? partId}: ${colorNames.join(' + ')}`
+          })
           .sort()
           .join(', ')
     totals.set(label, (totals.get(label) ?? 0) + a.quantity)

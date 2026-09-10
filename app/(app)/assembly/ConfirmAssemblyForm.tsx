@@ -11,7 +11,7 @@ import { SubmitButton } from '@/components/SubmitButton'
 function defaultColorChoice(part: AssemblyPartStatus): string {
   if (!part.colorOptions || part.colorOptions.length === 0) return ''
   const best = part.colorOptions.reduce((a, b) => (b.available > a.available ? b : a))
-  return best.filamentId
+  return best.key
 }
 
 type ResourceOption = { id: string; name: string; available: number; unit?: string }
@@ -120,7 +120,7 @@ export function ConfirmAssemblyForm({
   const effectiveMax = useMemo(() => {
     const partLimits = parts.map((part) => {
       if (!part.colorOptions) return part.maxUnitsFromThisPart
-      const chosen = part.colorOptions.find((o) => o.filamentId === colorChoices[part.partId])
+      const chosen = part.colorOptions.find((o) => o.key === colorChoices[part.partId])
       return chosen ? Math.floor(chosen.available / part.quantityPerUnit) : 0
     })
     const resourceLimits = [
@@ -183,8 +183,8 @@ export function ConfirmAssemblyForm({
               >
                 <option value="" disabled>Selecione a cor</option>
                 {part.colorOptions!.map((o) => (
-                  <option key={o.filamentId} value={o.filamentId} disabled={o.available <= 0}>
-                    {o.filamentLabel} ({o.available} disponível{o.available === 1 ? '' : 'is'})
+                  <option key={o.key} value={o.key} disabled={o.available <= 0}>
+                    {o.label} ({o.available} disponível{o.available === 1 ? '' : 'is'})
                   </option>
                 ))}
               </select>

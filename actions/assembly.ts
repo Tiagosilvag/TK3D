@@ -9,15 +9,24 @@ function filamentLabel(f: { manufacturer: string; colorName: string; rollNumber:
   return `${f.manufacturer} ${f.colorName} — Rolo #${String(f.rollNumber).padStart(3, '0')}`
 }
 
-// Ajuste "cor na montagem": disponível por cor, só faz sentido pra uma
-// peça de EXATAMENTE 1 componente de filamento na receita (a cor pode
-// variar de um lote de produção pro outro -- ver ProductPart.
-// filamentComponents). Uma peça com receita multi-filamento fixa (2+
-// componentes sempre juntos) não tem "cor variável" nenhuma pra escolher,
-// então fica de fora (colorOptions null, comportamento de sempre).
+// Ajuste "cor multi-filamento na montagem": disponível por COMBO de
+// filamentos, calculado a partir do que cada lote de produção realmente
+// usou (ProductionRunFilamentUsage quando a peça é multi-filamento,
+// senão só o ProductionRun.filamentId escalar) -- não da contagem de
+// componentes na ficha técnica ATUAL da peça. Isso cobre tanto peça de 1
+// cor só (combo de 1 filamento) quanto peça multi-filamento cuja
+// combinação de cores muda de lote pra lote (combo de N filamentos,
+// ex.: TAMPA marrom+rosa num lote, roxo+lavanda no lote seguinte) -- a
+// suposição antiga de que "peça com 2+ componentes é sempre a mesma
+// combinação fixa" não se sustentava na prática. `key` é os filamentIds
+// do combo ordenados e unidos por vírgula -- estável, usado como valor
+// de <option> e gravado em ProductAssembly.colorChoices; pra peça de 1
+// filamento é literalmente o filamentId sozinho, então montagem
+// registrada antes desse ajuste continua lendo certo sem migração.
 export interface AssemblyPartColorOption {
-  filamentId: string
-  filamentLabel: string
+  key: string
+  filamentIds: string[]
+  label: string
   available: number
 }
 
@@ -71,7 +80,7 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
   const product = await prisma.product.findUniqueOrThrow({
     where: { id: productId },
     include: {
-      parts: { include: { filamentComponents: true } },
+      parts: true,
       assemblies: true,
       accessoryUsages: { include: { accessory: true } },
       supplyUsages: { include: { supply: true } },
@@ -83,70 +92,85 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
   let parts: AssemblyPartStatus[]
 
   if (product.isComposite) {
+    const partIds = product.parts.map((p) => p.id)
     const producedByPart = await prisma.productionRun.groupBy({
       by: ['productPartId'],
-      where: { productPartId: { in: product.parts.map((p) => p.id) }, status: { not: 'CANCELADA' } },
+      where: { productPartId: { in: partIds }, status: { not: 'CANCELADA' } },
       _sum: { quantitySuccess: true },
     })
     const producedMap = new Map(producedByPart.map((p) => [p.productPartId as string, p._sum.quantitySuccess ?? 0]))
 
-    const singleFilamentPartIds = product.parts.filter((p) => p.filamentComponents.length === 1).map((p) => p.id)
-    const producedByPartAndColor = singleFilamentPartIds.length > 0
-      ? await prisma.productionRun.groupBy({
-          by: ['productPartId', 'filamentId'],
-          where: { productPartId: { in: singleFilamentPartIds }, status: { not: 'CANCELADA' } },
-          _sum: { quantitySuccess: true },
-        })
-      : []
+    function comboKey(filamentIds: string[]): string {
+      return [...new Set(filamentIds)].sort().join(',')
+    }
 
-    // Consumido por cor: soma quantity×quantityPerUnit de cada montagem
-    // anterior que registrou colorChoices pra esta peça. Uma montagem de
-    // antes desse ajuste (colorChoices nulo) não sabe dizer qual cor
-    // consumiu -- fica de fora da conta por cor, mas nunca afeta o
-    // `available` total acima (que soma tudo, sem distinguir cor).
-    const consumedByPartAndColor = new Map<string, Map<string, number>>()
+    // Disponível por combo: cada lote de produção dessa peça contribui
+    // pro combo que ele REALMENTE usou (ProductionRunFilamentUsage se a
+    // peça é multi-filamento, senão só o filamentId escalar do run) --
+    // não pelo que a ficha técnica diz agora, já que a receita pode ter
+    // mudado desde então.
+    const runs = await prisma.productionRun.findMany({
+      where: { productPartId: { in: partIds }, status: { not: 'CANCELADA' } },
+      select: { productPartId: true, filamentId: true, quantitySuccess: true, filamentUsages: { select: { filamentId: true } } },
+    })
+    const producedByPartAndCombo = new Map<string, Map<string, { filamentIds: string[]; quantity: number }>>()
+    for (const run of runs) {
+      const partId = run.productPartId as string
+      const ids = run.filamentUsages.length > 0 ? run.filamentUsages.map((u) => u.filamentId) : [run.filamentId]
+      const key = comboKey(ids)
+      const byCombo = producedByPartAndCombo.get(partId) ?? new Map<string, { filamentIds: string[]; quantity: number }>()
+      const entry = byCombo.get(key) ?? { filamentIds: key.split(','), quantity: 0 }
+      entry.quantity += run.quantitySuccess
+      byCombo.set(key, entry)
+      producedByPartAndCombo.set(partId, byCombo)
+    }
+
+    // Consumido por combo: soma quantity×quantityPerUnit de cada montagem
+    // anterior que registrou colorChoices pra esta peça (chave gravada =
+    // comboKey, compatível com o registro antigo de peça de 1 filamento
+    // só, que já era literalmente o filamentId sozinho). Montagem de
+    // antes desse ajuste (colorChoices nulo) não sabe dizer qual combo
+    // consumiu -- fica de fora da conta por combo, mas nunca afeta o
+    // `available` total acima (que soma tudo, sem distinguir combo).
+    const consumedByPartAndCombo = new Map<string, Map<string, number>>()
     for (const a of product.assemblies) {
       const choices = a.colorChoices as Record<string, string> | null
       if (!choices) continue
-      for (const [partId, filamentId] of Object.entries(choices)) {
+      for (const [partId, rawKey] of Object.entries(choices)) {
         const part = product.parts.find((p) => p.id === partId)
         if (!part) continue
-        const byColor = consumedByPartAndColor.get(partId) ?? new Map<string, number>()
-        byColor.set(filamentId, (byColor.get(filamentId) ?? 0) + a.quantity * part.quantityPerUnit)
-        consumedByPartAndColor.set(partId, byColor)
+        const key = comboKey(rawKey.split(','))
+        const byCombo = consumedByPartAndCombo.get(partId) ?? new Map<string, number>()
+        byCombo.set(key, (byCombo.get(key) ?? 0) + a.quantity * part.quantityPerUnit)
+        consumedByPartAndCombo.set(partId, byCombo)
       }
     }
 
-    const allColorFilamentIds = new Set<string>()
-    for (const row of producedByPartAndColor) allColorFilamentIds.add(row.filamentId)
-    for (const byColor of consumedByPartAndColor.values()) for (const id of byColor.keys()) allColorFilamentIds.add(id)
-    const colorFilaments = allColorFilamentIds.size > 0
-      ? await prisma.filament.findMany({ where: { id: { in: [...allColorFilamentIds] } } })
+    const allFilamentIds = new Set<string>()
+    for (const byCombo of producedByPartAndCombo.values()) for (const e of byCombo.values()) for (const id of e.filamentIds) allFilamentIds.add(id)
+    const filaments = allFilamentIds.size > 0
+      ? await prisma.filament.findMany({ where: { id: { in: [...allFilamentIds] } } })
       : []
-    const colorFilamentById = new Map(colorFilaments.map((f) => [f.id, f]))
+    const filamentById = new Map(filaments.map((f) => [f.id, f]))
 
     parts = product.parts.map((part) => {
       const produced = producedMap.get(part.id) ?? 0
       const consumed = alreadyAssembled * part.quantityPerUnit
       const available = produced - consumed
 
-      let colorOptions: AssemblyPartColorOption[] | null = null
-      if (part.filamentComponents.length === 1) {
-        const producedByColor = new Map<string, number>()
-        for (const row of producedByPartAndColor) {
-          if (row.productPartId === part.id) producedByColor.set(row.filamentId, row._sum.quantitySuccess ?? 0)
+      const producedByCombo = producedByPartAndCombo.get(part.id) ?? new Map<string, { filamentIds: string[]; quantity: number }>()
+      const consumedByCombo = consumedByPartAndCombo.get(part.id) ?? new Map<string, number>()
+      const comboKeys = new Set([...producedByCombo.keys(), ...consumedByCombo.keys()])
+      const colorOptions: AssemblyPartColorOption[] = Array.from(comboKeys).map((key) => {
+        const filamentIds = producedByCombo.get(key)?.filamentIds ?? key.split(',')
+        const label = filamentIds.map((id) => { const f = filamentById.get(id); return f ? filamentLabel(f) : id }).join(' + ')
+        return {
+          key,
+          filamentIds,
+          label,
+          available: (producedByCombo.get(key)?.quantity ?? 0) - (consumedByCombo.get(key) ?? 0),
         }
-        const consumedByColor = consumedByPartAndColor.get(part.id) ?? new Map<string, number>()
-        const colorIds = new Set([...producedByColor.keys(), ...consumedByColor.keys()])
-        colorOptions = Array.from(colorIds).map((filamentId) => {
-          const filament = colorFilamentById.get(filamentId)
-          return {
-            filamentId,
-            filamentLabel: filament ? filamentLabel(filament) : filamentId,
-            available: (producedByColor.get(filamentId) ?? 0) - (consumedByColor.get(filamentId) ?? 0),
-          }
-        })
-      }
+      })
 
       return {
         partId: part.id,
@@ -291,18 +315,18 @@ export async function confirmAssembly(formData: FormData): Promise<ActionResult>
       }
       continue
     }
-    const chosenFilamentId = submittedColorChoices[part.partId]
-    const chosenOption = part.colorOptions.find((o) => o.filamentId === chosenFilamentId)
+    const chosenKey = submittedColorChoices[part.partId]
+    const chosenOption = part.colorOptions.find((o) => o.key === chosenKey)
     if (!chosenOption) {
       insufficient.push(`${part.name} (selecione a cor)`)
       continue
     }
     const maxUnitsForColor = Math.floor(chosenOption.available / part.quantityPerUnit)
     if (maxUnitsForColor < quantity) {
-      insufficient.push(`${part.name} ${chosenOption.filamentLabel} (dá pra montar só ${maxUnitsForColor})`)
+      insufficient.push(`${part.name} ${chosenOption.label} (dá pra montar só ${maxUnitsForColor})`)
       continue
     }
-    colorChoicesToStore[part.partId] = chosenFilamentId
+    colorChoicesToStore[part.partId] = chosenKey
   }
 
   // Revalida insumo/acessório contra o estoque ATUAL (não o já carregado
