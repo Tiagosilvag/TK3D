@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import type { ProductionCostSnapshot } from '@/lib/costing'
+import { productNeedsAssembly } from '@/lib/products'
 import type { Prisma, ProductionStatus, WasteReason } from '@prisma/client'
 
 // 3.6 estendeu SaleChannel com SHOPEE/MERCADO_LIVRE (além do MARKETPLACE
@@ -250,6 +251,10 @@ export interface OwnStockRow {
   productId: string
   productName: string
   isComposite: boolean
+  // Ajuste "produção → montagem → estoque": true pra composto OU pra
+  // simples com insumo/acessório cadastrado -- usado na UI pra explicar
+  // por que "produzido" só sobe depois de confirmar a montagem.
+  needsAssembly: boolean
   produced: number
   soldDirect: number
   deliveredToPartners: number
@@ -258,9 +263,58 @@ export interface OwnStockRow {
   available: number
 }
 
+export interface ProductVariantBreakdownRow {
+  label: string
+  quantity: number
+}
+
+// Ajuste "cor na montagem": quanto já foi montado de cada variante
+// (combinação de cores escolhidas por peça, via ProductAssembly.
+// colorChoices) -- puramente informativo/histórico. Como Sale/
+// ConsignmentDelivery não diferenciam qual variante foi vendida/entregue,
+// não dá pra calcular "disponível por variante" com segurança (só
+// "produzido por variante" é sustentado pelos dados) -- nunca inventa
+// esse número.
+export async function getProductVariantBreakdown(productId: string): Promise<ProductVariantBreakdownRow[]> {
+  const [assemblies, parts] = await Promise.all([
+    prisma.productAssembly.findMany({ where: { productId }, orderBy: { assembledAt: 'asc' } }),
+    prisma.productPart.findMany({ where: { productId } }),
+  ])
+  if (assemblies.length === 0) return []
+
+  const partNameById = new Map(parts.map((p) => [p.id, p.name]))
+  const filamentIds = new Set<string>()
+  for (const a of assemblies) {
+    const choices = a.colorChoices as Record<string, string> | null
+    if (choices) for (const filamentId of Object.values(choices)) filamentIds.add(filamentId)
+  }
+  const filaments = filamentIds.size > 0 ? await prisma.filament.findMany({ where: { id: { in: [...filamentIds] } } }) : []
+  const filamentById = new Map(filaments.map((f) => [f.id, f]))
+
+  const totals = new Map<string, number>()
+  for (const a of assemblies) {
+    const choices = a.colorChoices as Record<string, string> | null
+    const label = !choices || Object.keys(choices).length === 0
+      ? 'Sem variante registrada'
+      : Object.entries(choices)
+          .map(([partId, filamentId]) => `${partNameById.get(partId) ?? partId}: ${filamentById.get(filamentId)?.colorName ?? filamentId}`)
+          .sort()
+          .join(', ')
+    totals.set(label, (totals.get(label) ?? 0) + a.quantity)
+  }
+
+  return Array.from(totals.entries())
+    .map(([label, quantity]) => ({ label, quantity }))
+    .sort((a, b) => b.quantity - a.quantity)
+}
+
 export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
   const [products, producedByProduct, assembledByProduct, soldByProduct, deliveries, openOrdersByProduct] = await Promise.all([
-    prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+    prisma.product.findMany({
+      where: { active: true },
+      orderBy: { name: 'asc' },
+      include: { _count: { select: { accessoryUsages: true, supplyUsages: true } } },
+    }),
     prisma.productionRun.groupBy({
       by: ['productId'],
       where: { productPartId: null, status: { not: 'CANCELADA' } },
@@ -295,7 +349,16 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
   }
 
   return products.map((p) => {
-    const produced = p.isComposite ? (assembledMap.get(p.id) ?? 0) : (producedMap.get(p.id) ?? 0)
+    // Ajuste "produção → montagem → estoque": "produzido" só vem direto de
+    // ProductionRun pro produto sem NENHUM componente (peça única) -- todo
+    // produto que precisa de montagem (composto ou simples com insumo/
+    // acessório) só soma ao estoque depois que a montagem for confirmada.
+    const needsAssembly = productNeedsAssembly({
+      isComposite: p.isComposite,
+      accessoryUsagesCount: p._count.accessoryUsages,
+      supplyUsagesCount: p._count.supplyUsages,
+    })
+    const produced = needsAssembly ? (assembledMap.get(p.id) ?? 0) : (producedMap.get(p.id) ?? 0)
     const soldDirect = soldMap.get(p.id) ?? 0
     const delivery = deliveredMap.get(p.id) ?? { delivered: 0, consignmentSold: 0 }
     const adjustment = adjustmentMap.get(p.id) ?? 0
@@ -303,6 +366,7 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
       productId: p.id,
       productName: p.name,
       isComposite: p.isComposite,
+      needsAssembly,
       produced,
       soldDirect,
       deliveredToPartners: delivery.delivered,

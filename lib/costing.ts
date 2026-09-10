@@ -338,11 +338,19 @@ export function calculateProductCost(input: ProductCostInput, settings: Settings
 // accessoryCost já somados.
 // ---------------------------------------------------------------------------
 
+// Ajuste "peça multi-filamento": uma peça pode precisar de várias cores
+// AO MESMO TEMPO (impressão multi-material -- ex.: corpo preto 15g +
+// detalhe verde 8g). filamentCost de uma peça é a soma de weightGrams *
+// pricePerKg de CADA componente da receita (a maioria das peças tem só 1).
+export interface ProductPartFilamentComponent {
+  weightGrams: number
+  filamentPricePerKg: number
+}
+
 export interface ProductPartCostInput {
   quantityPerUnit: number
-  weightGrams: number
+  filamentComponents: ProductPartFilamentComponent[]
   printTimeHours: number
-  filamentPricePerKg: number
   printerAvgPowerConsumptionKwh: number
   printerDepreciationCostPerHour: number
   printerMaintenanceCostPerHour: number
@@ -359,8 +367,9 @@ export function sumProductPartsCost(parts: ProductPartCostInput[], settings: Pic
   return parts.reduce<ProductPartsCostSum>(
     (acc, part) => {
       const qty = part.quantityPerUnit
+      const partFilamentCost = part.filamentComponents.reduce((sum, c) => sum + c.weightGrams * (c.filamentPricePerKg / 1000), 0)
       return {
-        filamentCost: acc.filamentCost + part.weightGrams * (part.filamentPricePerKg / 1000) * qty,
+        filamentCost: acc.filamentCost + partFilamentCost * qty,
         electricityCost: acc.electricityCost + part.printerAvgPowerConsumptionKwh * settings.energyCostPerKwh * part.printTimeHours * qty,
         printerCost: acc.printerCost + part.printerDepreciationCostPerHour * part.printTimeHours * qty,
         maintenanceCost: acc.maintenanceCost + part.printerMaintenanceCostPerHour * part.printTimeHours * qty,

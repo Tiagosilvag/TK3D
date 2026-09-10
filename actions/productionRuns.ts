@@ -11,15 +11,32 @@ import {
 } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 import { Prisma, type ProductionStatus, type SupplyUnit } from '@prisma/client'
+import { productNeedsAssembly } from '@/lib/products'
 
 type ActionResult = { success: boolean; error?: string }
 
+// Ajuste "peça multi-filamento": quando a peça produzida tem >1 componente
+// de filamento, ProductionRunForm submete um filamentUsagesJson (1 entrada
+// por cor da receita) em vez dos campos escalares filamentId/gramsUsed/
+// gramsWasted direto. Aqui isso vira o array `filamentUsages` que o schema
+// espera -- os campos escalares continuam sendo enviados também (o form já
+// os preenche com o 1º componente), então nada muda pro caso de 1
+// filamento só (não populam filamentUsagesJson).
 function parse(formData: FormData) {
   const raw = Object.fromEntries(formData)
+  let filamentUsages: unknown
+  if (raw.filamentUsagesJson) {
+    try {
+      filamentUsages = JSON.parse(String(raw.filamentUsagesJson))
+    } catch {
+      filamentUsages = undefined
+    }
+  }
   return productionRunSchema.safeParse({
     ...raw,
     notes: raw.notes || null,
     wasteReason: raw.wasteReason || null,
+    ...(Array.isArray(filamentUsages) ? { filamentUsages } : {}),
   })
 }
 
@@ -79,9 +96,18 @@ interface ResourceCheck {
 export async function createProductionRun(formData: FormData): Promise<ActionResult> {
   const parsed = parse(formData)
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
-  const data = parsed.data
+  const { filamentUsages, ...data } = parsed.data
 
-  const [product, printer, filament, settings, productPart] = await Promise.all([
+  // Ajuste "peça multi-filamento": os componentes REAIS consumidos nesta
+  // produção -- filamentUsages (1 por cor da receita) quando a peça tem
+  // mais de 1, senão um array de 1 item com os campos escalares de sempre.
+  // Todo o resto da função opera sobre esta lista em vez de um filamentId/
+  // gramsUsed/gramsWasted único, então o caso de 1 filamento (produto
+  // simples ou peça de cor única) é só o caso degenerado N=1.
+  const components = filamentUsages ?? [{ filamentId: data.filamentId, gramsUsed: data.gramsUsed, gramsWasted: data.gramsWasted }]
+  const filamentIds = [...new Set(components.map((c) => c.filamentId))]
+
+  const [product, printer, filaments, settings, productPart] = await Promise.all([
     prisma.product.findUniqueOrThrow({
       where: { id: data.productId },
       include: {
@@ -91,28 +117,46 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
       },
     }),
     prisma.printer.findUniqueOrThrow({ where: { id: data.printerId } }),
-    prisma.filament.findUniqueOrThrow({ where: { id: data.filamentId } }),
+    prisma.filament.findMany({ where: { id: { in: filamentIds } } }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
-    data.productPartId ? prisma.productPart.findUniqueOrThrow({ where: { id: data.productPartId } }) : null,
+    data.productPartId
+      ? prisma.productPart.findUniqueOrThrow({ where: { id: data.productPartId }, include: { filamentComponents: { include: { filament: true } } } })
+      : null,
   ])
+  const filamentById = new Map(filaments.map((f) => [f.id, f]))
 
-  // --- Pre-transaction check across ALL resources (spec §5.2) ---
-  const totalFilamentConsumed = data.gramsUsed + data.gramsWasted
-  const filamentAvailable = filament.currentStockGrams.toNumber()
+  // Ajuste "produção → montagem → estoque": uma produção de PEÇA nunca
+  // consome insumo/acessório (sempre foi assim -- isso é conceito de
+  // produto MONTADO). Agora um produto SIMPLES que tenha insumo/acessório
+  // cadastrado também precisa passar pela Montagem antes de virar estoque
+  // -- então sua produção também não consome esses recursos na hora, só
+  // quando a montagem for confirmada (actions/assembly.ts). Só o produto
+  // simples SEM nenhum componente continua consumindo tudo direto aqui.
+  const skipProductLevelConsumption = Boolean(productPart) || productNeedsAssembly({
+    isComposite: product.isComposite,
+    accessoryUsagesCount: product.accessoryUsages.length,
+    supplyUsagesCount: product.supplyUsages.length,
+  })
+
+  // --- Pre-transaction check across ALL resources (spec §5.2) -- um check
+  // por componente de filamento realmente consumido.
   const checks: ResourceCheck[] = [
-    {
-      needed: totalFilamentConsumed,
-      available: filamentAvailable,
-      describe: () => `${filament.manufacturer} ${filament.material} ${filament.colorName} (necessário ${totalFilamentConsumed}g, disponível ${filamentAvailable}g)`,
-    },
-    // 2.1: uma produção de PEÇA não consome insumos/acessórios do produto
-    // montado -- esses só são consumidos na montagem (spec 2.3).
-    ...(productPart ? [] : product.accessoryUsages.map((u): ResourceCheck => {
+    ...components.map((c): ResourceCheck => {
+      const filament = filamentById.get(c.filamentId)!
+      const needed = c.gramsUsed + c.gramsWasted
+      const available = filament.currentStockGrams.toNumber()
+      return {
+        needed,
+        available,
+        describe: () => `${filament.manufacturer} ${filament.material} ${filament.colorName} (necessário ${needed}g, disponível ${available}g)`,
+      }
+    }),
+    ...(skipProductLevelConsumption ? [] : product.accessoryUsages.map((u): ResourceCheck => {
       const needed = u.quantity.toNumber() * data.quantitySuccess
       const available = u.accessory.currentStock.toNumber()
       return { needed, available, describe: () => `${u.accessory.name} (necessário ${needed}, disponível ${available})` }
     })),
-    ...(productPart ? [] : product.supplyUsages.map((u): ResourceCheck => {
+    ...(skipProductLevelConsumption ? [] : product.supplyUsages.map((u): ResourceCheck => {
       const needed = u.quantity.toNumber() * data.quantitySuccess
       const available = u.supply.currentStock.toNumber()
       return {
@@ -139,10 +183,34 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
     annualMaintenancePercent: settings.annualMaintenancePercent.toNumber(),
     annualUsageHours: settings.annualUsageHours.toNumber(),
   })
-  const filamentPricePerKg = calculateFilamentPricePerKg({
-    spoolPrice: filament.spoolPrice.toNumber(),
-    spoolWeightKg: filament.spoolWeightKg.toNumber(),
-  })
+
+  // Ajuste "peça multi-filamento": peso e preço/kg da RECEITA da peça (não
+  // do que foi realmente usado nesta produção) -- weightGrams = soma dos
+  // componentes, filamentPricePerKg = média ponderada por peso. Pra N=1
+  // isso é exatamente peso/preço daquele único componente, igual antes.
+  // Produto simples continua usando seu próprio filamento/peso direto, sem
+  // mudança nenhuma.
+  let weightGrams: number
+  let filamentPricePerKg: number
+  if (productPart) {
+    const recipe = productPart.filamentComponents.map((c) => ({
+      weightGrams: c.weightGrams.toNumber(),
+      pricePerKg: calculateFilamentPricePerKg({ spoolPrice: c.filament.spoolPrice.toNumber(), spoolWeightKg: c.filament.spoolWeightKg.toNumber() }),
+    }))
+    weightGrams = recipe.reduce((sum, c) => sum + c.weightGrams, 0)
+    filamentPricePerKg = weightGrams > 0 ? recipe.reduce((sum, c) => sum + c.weightGrams * c.pricePerKg, 0) / weightGrams : 0
+  } else {
+    weightGrams = product.weightGrams.toNumber()
+    filamentPricePerKg = calculateFilamentPricePerKg({
+      spoolPrice: filamentById.get(data.filamentId)!.spoolPrice.toNumber(),
+      spoolWeightKg: filamentById.get(data.filamentId)!.spoolWeightKg.toNumber(),
+    })
+  }
+
+  // gramsUsed/gramsWasted do snapshot = soma real de todos os componentes
+  // (o que fisicamente foi consumido nesta produção, N=1 ou N>1).
+  const totalGramsUsed = components.reduce((s, c) => s + c.gramsUsed, 0)
+  const totalGramsWasted = components.reduce((s, c) => s + c.gramsWasted, 0)
 
   const snapshot = buildProductionCostSnapshot(
     {
@@ -155,30 +223,34 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
       includeAccessoriesCost: settings.includeAccessoriesCost,
       includeSuppliesCost: settings.includeSuppliesCost,
       includePackagingCost: settings.includePackagingCost,
-      filamentId: filament.id,
+      filamentId: data.filamentId,
       // 2.1 Produto composto: uma produção de PEÇA usa o peso/tempo dessa
       // peça (não o resumo agregado do produto composto, que somaria TODAS
       // as peças e infla o custo de imprimir só uma). Embalagem/insumos/
       // acessórios/mão de obra são conceito de produto MONTADO -- ficam
       // zerados aqui e entram no custo só na montagem (spec 2.3, ainda não
       // implementada), nunca duplicados na impressão de cada peça avulsa.
-      weightGrams: productPart ? productPart.weightGrams.toNumber() : product.weightGrams.toNumber(),
+      weightGrams,
       printTimeHours: productPart ? productPart.printTimeHours.toNumber() : product.printTimeHours.toNumber(),
-      laborTimeHours: productPart ? 0 : product.laborTimeHours.toNumber(),
+      // Mão de obra/embalagem/insumos/acessórios são conceito de produto
+      // MONTADO -- ficam zerados aqui e entram no custo só na montagem,
+      // tanto pra peça de produto composto quanto pra produto simples que
+      // precise de montagem (skipProductLevelConsumption acima).
+      laborTimeHours: skipProductLevelConsumption ? 0 : product.laborTimeHours.toNumber(),
       filamentPricePerKg,
       printerAvgPowerConsumptionKwh: printer.avgPowerConsumptionKwh.toNumber(),
       printerDepreciationCostPerHour,
       printerMaintenanceCostPerHour,
-      packagingItemId: productPart ? null : product.packagingItemId,
-      packagingCost: productPart ? 0 : (product.packagingItem?.unitCost.toNumber() ?? 0),
-      accessoryUsages: productPart
+      packagingItemId: skipProductLevelConsumption ? null : product.packagingItemId,
+      packagingCost: skipProductLevelConsumption ? 0 : (product.packagingItem?.unitCost.toNumber() ?? 0),
+      accessoryUsages: skipProductLevelConsumption
         ? []
         : product.accessoryUsages.map((u) => ({
             accessoryId: u.accessoryId,
             quantity: u.quantity.toNumber(),
             avgUnitCost: u.accessory.avgUnitCost.toNumber(),
           })),
-      supplyUsages: productPart
+      supplyUsages: skipProductLevelConsumption
         ? []
         : product.supplyUsages.map((u) => ({
             supplyId: u.supplyId,
@@ -188,8 +260,8 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
       quantityPlanned: data.quantityPlanned,
       quantitySuccess: data.quantitySuccess,
       quantityFailed: data.quantityFailed,
-      gramsUsed: data.gramsUsed,
-      gramsWasted: data.gramsWasted,
+      gramsUsed: totalGramsUsed,
+      gramsWasted: totalGramsWasted,
       timeWastedHours: data.timeWastedHours,
     },
     {
@@ -211,14 +283,21 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
     prisma.productionRun.create({
       data: {
         ...data,
+        gramsUsed: totalGramsUsed,
+        gramsWasted: totalGramsWasted,
         costSnapshot: snapshot as unknown as Prisma.InputJsonValue,
         status,
+        // Só gravado quando a peça tem >1 componente -- ver comentário no
+        // schema (ProductionRun.filamentUsages).
+        ...(filamentUsages ? { filamentUsages: { create: filamentUsages } } : {}),
       },
     }),
-    prisma.filament.update({
-      where: { id: data.filamentId },
-      data: { currentStockGrams: { decrement: totalFilamentConsumed } },
-    }),
+    ...components.map((c) =>
+      prisma.filament.update({
+        where: { id: c.filamentId },
+        data: { currentStockGrams: { decrement: c.gramsUsed + c.gramsWasted } },
+      }),
+    ),
     ...snapshot.consumedResources.accessories.map((a) =>
       prisma.accessory.update({ where: { id: a.accessoryId }, data: { currentStock: { decrement: a.quantityConsumed } } }),
     ),
@@ -245,9 +324,17 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
 // reconstruir o wasteCost exatamente como era no momento da criação.
 // Cancelada nunca é editável (já revertida, nada a preservar).
 export async function updateProductionRun(id: string, formData: FormData): Promise<ActionResult> {
-  const run = await prisma.productionRun.findUniqueOrThrow({ where: { id } })
+  const run = await prisma.productionRun.findUniqueOrThrow({ where: { id }, include: { filamentUsages: true } })
   if (run.status === 'CANCELADA') {
     return { success: false, error: 'Uma produção cancelada não pode ser editada.' }
+  }
+  // Ajuste "peça multi-filamento": esta edição só sabe ajustar UM filamento
+  // pela diferença de gramas desperdiçadas -- uma produção com várias cores
+  // reais (filamentUsages) precisaria dizer qual cor mudou, o que este
+  // formulário simples não coleta. Corrigir esse caso é cancelar a
+  // produção e registrar de novo com os valores certos.
+  if (run.filamentUsages.length > 0) {
+    return { success: false, error: 'Produções com mais de um filamento não podem ser editadas aqui -- cancele e registre de novo com os valores corretos.' }
   }
 
   const parsed = productionRunWasteUpdateSchema.safeParse(Object.fromEntries(formData))
@@ -327,6 +414,35 @@ export async function updateProductionRun(id: string, formData: FormData): Promi
   return { success: true }
 }
 
+// Ajuste "peça multi-filamento": reverte o filamento consumido por uma
+// produção -- usa run.filamentUsages (as cores reais, quando a peça tinha
+// mais de 1) em vez do único consumedResources.filament do snapshot, que
+// só cobre o componente "principal" e reverteria errado (creditaria tudo
+// numa cor só, nunca restaurando as outras). Caso de 1 filamento só
+// (imensa maioria das produções) continua lendo o snapshot/campo escalar
+// exatamente como antes.
+function buildFilamentRestoreOps(
+  run: { filamentId: string; gramsUsed: Prisma.Decimal; gramsWasted: Prisma.Decimal; filamentUsages: { filamentId: string; gramsUsed: Prisma.Decimal; gramsWasted: Prisma.Decimal }[] },
+  snapshot: ProductionCostSnapshot | null,
+): Prisma.PrismaPromise<unknown>[] {
+  if (run.filamentUsages.length > 0) {
+    return run.filamentUsages.map((u) =>
+      prisma.filament.update({ where: { id: u.filamentId }, data: { currentStockGrams: { increment: u.gramsUsed.plus(u.gramsWasted) } } }),
+    )
+  }
+  if (snapshot?.consumedResources) {
+    const { filament } = snapshot.consumedResources
+    return [
+      prisma.filament.update({
+        where: { id: filament.filamentId },
+        data: { currentStockGrams: { increment: filament.gramsUsed + filament.gramsWasted } },
+      }),
+    ]
+  }
+  // Legacy row predating costSnapshot: only filament was ever consumed.
+  return [prisma.filament.update({ where: { id: run.filamentId }, data: { currentStockGrams: { increment: run.gramsUsed.plus(run.gramsWasted) } } })]
+}
+
 // Physical delete: ProductionRun is a historical log, not a catalog entity,
 // so unlike Printer/Filament/PackagingItem/Accessory/Supply/Product there is
 // no soft-delete flag — removing a row (e.g. to fix a typo) really deletes it.
@@ -344,34 +460,21 @@ export async function updateProductionRun(id: string, formData: FormData): Promi
 // resource restored by cancelProductionRun, so deleting it afterward (e.g.
 // purging old cancelled history) must NOT touch stock again.
 export async function deleteProductionRun(id: string): Promise<ActionResult> {
-  const run = await prisma.productionRun.findUniqueOrThrow({ where: { id } })
+  const run = await prisma.productionRun.findUniqueOrThrow({ where: { id }, include: { filamentUsages: true } })
 
   const ops: Prisma.PrismaPromise<unknown>[] = [prisma.productionRun.delete({ where: { id } })]
 
   if (run.status !== 'CANCELADA') {
     const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+    ops.push(...buildFilamentRestoreOps(run, snapshot))
     if (snapshot?.consumedResources) {
-      const { filament, accessories, supplies } = snapshot.consumedResources
-      ops.push(
-        prisma.filament.update({
-          where: { id: filament.filamentId },
-          data: { currentStockGrams: { increment: filament.gramsUsed + filament.gramsWasted } },
-        }),
-      )
+      const { accessories, supplies } = snapshot.consumedResources
       for (const a of accessories) {
         ops.push(prisma.accessory.update({ where: { id: a.accessoryId }, data: { currentStock: { increment: a.quantityConsumed } } }))
       }
       for (const s of supplies) {
         ops.push(prisma.supply.update({ where: { id: s.supplyId }, data: { currentStock: { increment: s.quantityConsumed } } }))
       }
-    } else {
-      // Legacy row predating costSnapshot: only filament was ever consumed.
-      ops.push(
-        prisma.filament.update({
-          where: { id: run.filamentId },
-          data: { currentStockGrams: { increment: run.gramsUsed.plus(run.gramsWasted) } },
-        }),
-      )
     }
   }
 
@@ -399,7 +502,7 @@ export async function cancelProductionRun(id: string, reason: string): Promise<A
   const trimmedReason = reason?.trim()
   if (!trimmedReason) return { success: false, error: 'Motivo do cancelamento é obrigatório' }
 
-  const run = await prisma.productionRun.findUniqueOrThrow({ where: { id } })
+  const run = await prisma.productionRun.findUniqueOrThrow({ where: { id }, include: { filamentUsages: true } })
   if (run.status === 'CANCELADA') {
     return { success: false, error: 'Esta produção já foi cancelada' }
   }
@@ -412,14 +515,9 @@ export async function cancelProductionRun(id: string, reason: string): Promise<A
   ]
 
   const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+  ops.push(...buildFilamentRestoreOps(run, snapshot))
   if (snapshot?.consumedResources) {
-    const { filament, accessories, supplies } = snapshot.consumedResources
-    ops.push(
-      prisma.filament.update({
-        where: { id: filament.filamentId },
-        data: { currentStockGrams: { increment: filament.gramsUsed + filament.gramsWasted } },
-      }),
-    )
+    const { accessories, supplies } = snapshot.consumedResources
     for (const a of accessories) {
       ops.push(prisma.accessory.update({ where: { id: a.accessoryId }, data: { currentStock: { increment: a.quantityConsumed } } }))
     }
@@ -428,16 +526,6 @@ export async function cancelProductionRun(id: string, reason: string): Promise<A
     }
     // Packaging is not stock-tracked (see createProductionRun's note above),
     // so there is nothing to restore for consumedResources.packaging.
-  } else {
-    // Legacy row predating costSnapshot: fall back to what it recorded
-    // directly, same as deleteProductionRun's pre-Task-7 path — only
-    // filament was ever consumed by a run created before this task.
-    ops.push(
-      prisma.filament.update({
-        where: { id: run.filamentId },
-        data: { currentStockGrams: { increment: run.gramsUsed.plus(run.gramsWasted) } },
-      }),
-    )
   }
 
   await prisma.$transaction(ops)

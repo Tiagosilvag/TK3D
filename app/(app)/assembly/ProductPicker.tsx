@@ -6,7 +6,7 @@ export function ProductPicker({ productId, products }: { productId?: string; pro
 
   return (
     <label className="mb-4 block text-sm">
-      Produto composto *
+      Produto *
       <select
         defaultValue={productId ?? ''}
         onChange={(e) => router.push(e.target.value ? `/assembly?productId=${e.target.value}` : '/assembly')}

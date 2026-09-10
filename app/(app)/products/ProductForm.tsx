@@ -33,6 +33,11 @@ type ProductValues = {
   notes: string | null
 }
 
+// Ajuste "peça multi-filamento": uma peça pode precisar de mais de uma
+// cor/filamento AO MESMO TEMPO (impressão multi-material -- ex.: corpo
+// preto 15g + detalhe verde 8g). A maioria das peças tem só 1 componente.
+type PartFilamentRow = { filamentId: string; weightGrams: string }
+
 // 2.1 Produto composto: uma linha da lista de peças. `id` presente = peça
 // já salva (edição); ausente = peça nova. Campos numéricos ficam como
 // string pra serem inputs controlados sem briga de formatação.
@@ -40,8 +45,7 @@ type PartRow = {
   id?: string
   name: string
   printerId: string
-  filamentId: string
-  weightGrams: string
+  filaments: PartFilamentRow[]
   printTimeHours: string
   quantityPerUnit: string
 }
@@ -50,8 +54,7 @@ type ExistingPart = {
   id: string
   name: string
   printerId: string
-  filamentId: string
-  weightGrams: number
+  filaments: { filamentId: string; weightGrams: number }[]
   printTimeHours: number
   quantityPerUnit: number
 }
@@ -60,8 +63,12 @@ function money(value: number): string {
   return formatCurrency(value)
 }
 
+function emptyPartFilamentRow(): PartFilamentRow {
+  return { filamentId: '', weightGrams: '' }
+}
+
 function emptyPartRow(): PartRow {
-  return { name: '', printerId: '', filamentId: '', weightGrams: '', printTimeHours: '', quantityPerUnit: '1' }
+  return { name: '', printerId: '', filaments: [emptyPartFilamentRow()], printTimeHours: '', quantityPerUnit: '1' }
 }
 
 export function ProductForm({
@@ -110,8 +117,7 @@ export function ProductForm({
           id: p.id,
           name: p.name,
           printerId: p.printerId,
-          filamentId: p.filamentId,
-          weightGrams: String(p.weightGrams),
+          filaments: p.filaments.map((f) => ({ filamentId: f.filamentId, weightGrams: String(f.weightGrams) })),
           printTimeHours: String(p.printTimeHours),
           quantityPerUnit: String(p.quantityPerUnit),
         }))
@@ -126,11 +132,31 @@ export function ProductForm({
     setParts((rows) => (rows.length > 1 ? rows.filter((_, i) => i !== index) : rows))
   }
 
+  function updatePartFilamentRow(partIndex: number, filamentIndex: number, patch: Partial<PartFilamentRow>) {
+    setParts((rows) =>
+      rows.map((r, i) => (i === partIndex ? { ...r, filaments: r.filaments.map((f, j) => (j === filamentIndex ? { ...f, ...patch } : f)) } : r)),
+    )
+  }
+
+  function addPartFilamentRow(partIndex: number) {
+    setParts((rows) => rows.map((r, i) => (i === partIndex ? { ...r, filaments: [...r.filaments, emptyPartFilamentRow()] } : r)))
+  }
+
+  function removePartFilamentRow(partIndex: number, filamentIndex: number) {
+    setParts((rows) =>
+      rows.map((r, i) =>
+        i === partIndex ? { ...r, filaments: r.filaments.length > 1 ? r.filaments.filter((_, j) => j !== filamentIndex) : r.filaments } : r,
+      ),
+    )
+  }
+
   async function action(formData: FormData) {
     if (isComposite) {
-      const validParts = parts.filter((p) => p.name && p.printerId && p.filamentId && p.weightGrams && p.printTimeHours && p.quantityPerUnit)
+      const validParts = parts.filter(
+        (p) => p.name && p.printerId && p.printTimeHours && p.quantityPerUnit && p.filaments.length > 0 && p.filaments.every((f) => f.filamentId && f.weightGrams),
+      )
       if (validParts.length === 0) {
-        alert('Adicione ao menos uma peça completa (nome, impressora, filamento, peso, tempo e quantidade).')
+        alert('Adicione ao menos uma peça completa (nome, impressora, ao menos um filamento com peso, tempo e quantidade).')
         return
       }
       formData.set(
@@ -140,14 +166,13 @@ export function ProductForm({
             id: p.id,
             name: p.name,
             printerId: p.printerId,
-            filamentId: p.filamentId,
-            weightGrams: parseFloat(p.weightGrams),
+            filaments: p.filaments.map((f) => ({ filamentId: f.filamentId, weightGrams: parseFloat(f.weightGrams) })),
             printTimeHours: parseFloat(p.printTimeHours),
             quantityPerUnit: parseInt(p.quantityPerUnit, 10),
           })),
         ),
       )
-      const zeroPriceParts = validParts.filter((p) => (filaments.find((f) => f.id === p.filamentId)?.pricePerGram ?? 0) <= 0)
+      const zeroPriceParts = validParts.filter((p) => p.filaments.some((f) => (filaments.find((x) => x.id === f.filamentId)?.pricePerGram ?? 0) <= 0))
       if (zeroPriceParts.length > 0) {
         const proceed = window.confirm(
           `A peça "${zeroPriceParts[0].name}" usa um filamento sem preço cadastrado. O custo do produto ficará incorreto.\n\nDeseja continuar mesmo assim?`,
@@ -194,11 +219,14 @@ export function ProductForm({
   // continuam nível-produto (entram na montagem, não em cada peça).
   const partsWithCost = parts.map((row) => {
     const partPrinter = printers.find((p) => p.id === row.printerId)
-    const partFilament = filaments.find((f) => f.id === row.filamentId)
-    const partWeight = parseFloat(row.weightGrams) || 0
     const partTime = parseFloat(row.printTimeHours) || 0
     const partQty = parseFloat(row.quantityPerUnit) || 0
-    const filamentCost = partWeight * (partFilament?.pricePerGram ?? 0) * partQty
+    const partFilamentCostPerUnit = row.filaments.reduce((sum, f) => {
+      const filament = filaments.find((x) => x.id === f.filamentId)
+      const weight = parseFloat(f.weightGrams) || 0
+      return sum + weight * (filament?.pricePerGram ?? 0)
+    }, 0)
+    const filamentCost = partFilamentCostPerUnit * partQty
     const printCost = partTime * (partPrinter?.costPerHour ?? 0) * partQty
     return { filamentCost, printCost }
   })
@@ -275,66 +303,99 @@ export function ProductForm({
         {isComposite && (
           <div className="col-span-full space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Peças do produto</h3>
-            {parts.map((row, i) => {
-              const rowFilament = filaments.find((f) => f.id === row.filamentId)
-              return (
-                <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50 md:grid-cols-6">
-                  <label className="text-xs md:col-span-2">
-                    Nome da peça *
-                    <input
-                      value={row.name}
-                      onChange={(e) => updatePartRow(i, { name: e.target.value })}
-                      placeholder="Ex.: Corpo"
-                      className="tk-input-full"
-                      required
-                    />
-                  </label>
-                  <label className="text-xs">
-                    Impressora *
-                    <select value={row.printerId} onChange={(e) => updatePartRow(i, { printerId: e.target.value })} className="tk-input-full" required>
-                      <option value="" disabled>Selecione</option>
-                      {printers.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="text-xs">
-                    Filamento *
-                    <select value={row.filamentId} onChange={(e) => updatePartRow(i, { filamentId: e.target.value })} className="tk-input-full" required>
-                      <option value="" disabled>Selecione</option>
-                      {filaments.map((f) => (
-                        <option key={f.id} value={f.id}>{f.name}</option>
-                      ))}
-                    </select>
-                    {rowFilament && rowFilament.pricePerGram <= 0 && (
-                      <span className="mt-1 block text-amber-600 dark:text-amber-400">⚠️ sem preço</span>
-                    )}
-                  </label>
-                  <label className="text-xs">
-                    Peso (g) *
-                    <input type="number" step="0.01" value={row.weightGrams} onChange={(e) => updatePartRow(i, { weightGrams: e.target.value })} className="tk-input-full" required />
-                  </label>
-                  <label className="text-xs">
-                    Tempo impr. (HH:MM) *
-                    <HoursInput
-                      value={parseFloat(row.printTimeHours) || 0}
-                      onChange={(hours) => updatePartRow(i, { printTimeHours: String(hours) })}
-                      required
-                      className="tk-input-full"
-                    />
-                  </label>
-                  <label className="text-xs">
-                    Qtd. por unidade *
-                    <input type="number" step="1" min="1" value={row.quantityPerUnit} onChange={(e) => updatePartRow(i, { quantityPerUnit: e.target.value })} className="tk-input-full" required />
-                  </label>
-                  {parts.length > 1 && (
-                    <button type="button" onClick={() => removePartRow(i)} className="tk-link-danger col-span-full text-left text-xs">
-                      Remover peça
-                    </button>
-                  )}
+            {parts.map((row, i) => (
+              <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50 md:grid-cols-6">
+                <label className="text-xs md:col-span-2">
+                  Nome da peça *
+                  <input
+                    value={row.name}
+                    onChange={(e) => updatePartRow(i, { name: e.target.value })}
+                    placeholder="Ex.: Corpo"
+                    className="tk-input-full"
+                    required
+                  />
+                </label>
+                <label className="text-xs">
+                  Impressora *
+                  <select value={row.printerId} onChange={(e) => updatePartRow(i, { printerId: e.target.value })} className="tk-input-full" required>
+                    <option value="" disabled>Selecione</option>
+                    {printers.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-xs">
+                  Tempo impr. (HH:MM) *
+                  <HoursInput
+                    value={parseFloat(row.printTimeHours) || 0}
+                    onChange={(hours) => updatePartRow(i, { printTimeHours: String(hours) })}
+                    required
+                    className="tk-input-full"
+                  />
+                </label>
+                <label className="text-xs">
+                  Qtd. por unidade *
+                  <input type="number" step="1" min="1" value={row.quantityPerUnit} onChange={(e) => updatePartRow(i, { quantityPerUnit: e.target.value })} className="tk-input-full" required />
+                </label>
+                {parts.length > 1 && (
+                  <button type="button" onClick={() => removePartRow(i)} className="tk-link-danger col-span-full text-left text-xs">
+                    Remover peça
+                  </button>
+                )}
+
+                {/* Ajuste "peça multi-filamento": normalmente 1 cor só, mas
+                    uma impressão multi-material pode precisar de várias ao
+                    mesmo tempo (ex.: corpo preto + detalhe verde). */}
+                <div className="col-span-full space-y-2 rounded-lg border border-dashed border-slate-300 p-2 dark:border-slate-700">
+                  <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    Filamento(s) desta peça
+                  </span>
+                  {row.filaments.map((frow, fi) => {
+                    const rowFilament = filaments.find((f) => f.id === frow.filamentId)
+                    return (
+                      <div key={fi} className="grid grid-cols-2 gap-2 md:grid-cols-5">
+                        <label className="text-xs md:col-span-2">
+                          Filamento *
+                          <select
+                            value={frow.filamentId}
+                            onChange={(e) => updatePartFilamentRow(i, fi, { filamentId: e.target.value })}
+                            className="tk-input-full"
+                            required
+                          >
+                            <option value="" disabled>Selecione</option>
+                            {filaments.map((f) => (
+                              <option key={f.id} value={f.id}>{f.name}</option>
+                            ))}
+                          </select>
+                          {rowFilament && rowFilament.pricePerGram <= 0 && (
+                            <span className="mt-1 block text-amber-600 dark:text-amber-400">⚠️ sem preço</span>
+                          )}
+                        </label>
+                        <label className="text-xs">
+                          Peso (g) *
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={frow.weightGrams}
+                            onChange={(e) => updatePartFilamentRow(i, fi, { weightGrams: e.target.value })}
+                            className="tk-input-full"
+                            required
+                          />
+                        </label>
+                        {row.filaments.length > 1 && (
+                          <button type="button" onClick={() => removePartFilamentRow(i, fi)} className="tk-link-danger self-end text-xs">
+                            Remover cor
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                  <button type="button" onClick={() => addPartFilamentRow(i)} className="text-xs font-medium text-amber-600 hover:underline dark:text-amber-400">
+                    + Adicionar outra cor (impressão multi-material)
+                  </button>
                 </div>
-              )
-            })}
+              </div>
+            ))}
             <button type="button" onClick={() => setParts((rows) => [...rows, emptyPartRow()])} className="text-xs font-medium text-amber-600 hover:underline dark:text-amber-400">
               + Adicionar peça
             </button>

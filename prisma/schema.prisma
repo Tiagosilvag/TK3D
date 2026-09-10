@@ -101,7 +101,8 @@ model Filament {
   updatedAt         DateTime         @updatedAt
   products          Product[]
   productionRuns    ProductionRun[]
-  productParts      ProductPart[]
+  productPartFilaments ProductPartFilament[]
+  productionRunFilamentUsages ProductionRunFilamentUsage[]
 
   @@unique([manufacturer, material, colorName, rollNumber])
 }
@@ -275,23 +276,45 @@ model Product {
 // com esse histórico (mesma guarda de FK-restrict já usada em
 // Accessory/Supply nesta base).
 model ProductPart {
-  id              String          @id @default(cuid())
+  id              String                @id @default(cuid())
   productId       String
-  product         Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product         Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
   name            String
   printerId       String
-  printer         Printer         @relation(fields: [printerId], references: [id])
-  filamentId      String
-  filament        Filament        @relation(fields: [filamentId], references: [id])
-  weightGrams     Decimal         @db.Decimal(10, 2)
-  printTimeHours  Decimal         @db.Decimal(10, 3)
+  printer         Printer               @relation(fields: [printerId], references: [id])
+  // Ajuste "peça multi-filamento": uma peça pode precisar de mais de uma
+  // cor/filamento AO MESMO TEMPO (impressão multi-material -- ex.: corpo
+  // preto 15g + detalhe verde 8g + olho branco 3g na MESMA impressão).
+  // filamentId/weightGrams únicos viraram ProductPartFilament (1 linha por
+  // componente da receita); pelo menos 1 componente sempre existe --
+  // "peça de cor única" é só o caso de 1 componente só. weightGrams total
+  // da peça (usado em ProductionRunForm/relatórios que só precisam do
+  // peso agregado) é a soma dos componentes, nunca guardado aqui pra não
+  // duplicar fonte de verdade.
+  filamentComponents ProductPartFilament[]
+  printTimeHours  Decimal               @db.Decimal(10, 3)
   // Quantidade dessa peça necessária pra montar 1 unidade do produto final.
-  quantityPerUnit Int             @default(1)
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  quantityPerUnit Int                   @default(1)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
   productionRuns  ProductionRun[]
 
   @@unique([productId, name])
+}
+
+// Um componente de filamento da receita de uma ProductPart -- 1 linha por
+// cor usada simultaneamente naquela peça (a maioria das peças tem só 1).
+// onDelete Cascade no lado da peça (só existe pra descrever a receita
+// dela); sem cascade no lado do Filament -- um filamento usado numa
+// receita não pode ser excluído fisicamente sem antes tirá-lo da receita
+// (mesma guarda de FK-restrict já usada em Accessory/Supply).
+model ProductPartFilament {
+  id            String      @id @default(cuid())
+  productPartId String
+  productPart   ProductPart @relation(fields: [productPartId], references: [id], onDelete: Cascade)
+  filamentId    String
+  filament      Filament    @relation(fields: [filamentId], references: [id], onDelete: Restrict)
+  weightGrams   Decimal     @db.Decimal(10, 2)
 }
 
 // 2.3 Montagem: cada confirmação de montagem vira UMA linha aqui --
@@ -308,6 +331,16 @@ model ProductAssembly {
   productId   String
   product     Product  @relation(fields: [productId], references: [id])
   quantity    Int
+  // Ajuste "cor na montagem": pra cada peça de UM componente de filamento
+  // (cor pode variar entre lotes -- ver ProductPart.filamentComponents),
+  // a cor efetivamente escolhida nesta leva de montagem: um objeto
+  // { [productPartId]: filamentId }. Peças com receita multi-filamento
+  // fixa (>1 componente) nunca entram aqui -- não têm cor variável, então
+  // não há escolha a registrar. Congelado no momento da montagem, igual
+  // costSnapshot -- nunca reescrito depois. Nulo em montagens anteriores a
+  // esse ajuste (histórico sem informação de cor, nunca inventada
+  // retroativamente).
+  colorChoices Json?
   assembledAt DateTime @default(now())
   notes       String?
   createdAt   DateTime @default(now())
@@ -397,6 +430,30 @@ model ProductionRun {
   cancelReason    String?
   cancelDate      DateTime?
   createdAt       DateTime         @default(now())
+  // Ajuste "peça multi-filamento": só populado quando a peça produzida
+  // (productPart) tem MAIS DE 1 componente de filamento -- nesse caso
+  // filamentId/gramsUsed/gramsWasted acima guardam o PRIMEIRO componente
+  // (compat com telas/relatórios que só leem o campo escalar) e esta
+  // lista guarda o consumo real de CADA cor da receita. Vazio pra toda
+  // produção de produto simples ou de peça de 1 filamento só -- que
+  // continuam decrementando estoque só pelos campos escalares acima,
+  // sem nenhuma mudança de comportamento.
+  filamentUsages  ProductionRunFilamentUsage[]
+}
+
+// Consumo real de UM componente de filamento de uma produção de peça
+// multi-filamento (ver ProductionRun.filamentUsages acima). Sem cascade
+// pro lado do ProductionRun por padrão (Restrict) seria estranho já que
+// isso é conteúdo interno do próprio run -- cascade explícito: some junto
+// se o run for apagado (deleteProductionRun já reverte estoque antes).
+model ProductionRunFilamentUsage {
+  id              String        @id @default(cuid())
+  productionRunId String
+  productionRun   ProductionRun @relation(fields: [productionRunId], references: [id], onDelete: Cascade)
+  filamentId      String
+  filament        Filament      @relation(fields: [filamentId], references: [id], onDelete: Restrict)
+  gramsUsed       Decimal       @db.Decimal(10, 2)
+  gramsWasted     Decimal       @db.Decimal(10, 2)
 }
 
 enum WasteReason {

@@ -24,8 +24,14 @@ function formatHours(hours: number): string {
 type EditingRun = {
   id: string
   productName: string
+  productPartName: string | null
   printerName: string
   filamentName: string
+  // Ajuste "peça multi-filamento": updateProductionRun recusa editar
+  // desperdício de uma produção com várias cores reais (o formulário
+  // simples de "gramas desperdiçadas" não sabe dizer qual cor mudou) --
+  // ver esse motivo exibido em vez dos campos de edição.
+  isMultiFilament: boolean
   date: string
   quantityPlanned: number
   quantitySuccess: number
@@ -68,6 +74,15 @@ export function ProductionRunForm({
   const [isCompositeProduct, setIsCompositeProduct] = useState(false)
   const [productParts, setProductParts] = useState<ProductProductionPartDefault[]>([])
   const [productPartId, setProductPartId] = useState('')
+  // Ajuste "peça multi-filamento": preenchido só quando a peça escolhida
+  // tem >1 componente de filamento na receita -- nesse caso o único
+  // seletor de filamento/peso vira N linhas (uma por cor), e o formulário
+  // envia um filamentUsagesJson em vez dos campos escalares filamentId/
+  // gramsUsed. Vazio (a maioria dos casos) = formulário de sempre, sem
+  // mudança nenhuma.
+  const [partFilamentRows, setPartFilamentRows] = useState<
+    { filamentId: string; unitWeightGrams: number; gramsUsed: string; gramsWasted: string }[]
+  >([])
 
   function applyWeightAndTime(weightGrams: number, printTimeHours: number) {
     setExpectedPrintTimeHours(printTimeHours)
@@ -112,15 +127,36 @@ export function ProductionRunForm({
     const part = productParts.find((p) => p.id === newPartId)
     if (!part) return
     setPrinterId(part.printerId)
-    setFilamentId(part.filamentId)
-    applyWeightAndTime(part.weightGrams, part.printTimeHours)
+    setExpectedPrintTimeHours(part.printTimeHours)
+    const qty = parseFloat(quantityPlanned) || 1
+    if (part.filaments.length <= 1) {
+      const only = part.filaments[0]
+      setFilamentId(only?.filamentId ?? '')
+      setProductWeightGrams(only?.weightGrams ?? 0)
+      setGramsUsed(String((only?.weightGrams ?? 0) * qty))
+      setPartFilamentRows([])
+    } else {
+      setFilamentId('')
+      setProductWeightGrams(null)
+      setGramsUsed('')
+      setPartFilamentRows(
+        part.filaments.map((f) => ({ filamentId: f.filamentId, unitWeightGrams: f.weightGrams, gramsUsed: String(f.weightGrams * qty), gramsWasted: '0' })),
+      )
+    }
+  }
+
+  function updatePartFilamentRow(index: number, patch: Partial<{ filamentId: string; gramsUsed: string; gramsWasted: string }>) {
+    setPartFilamentRows((rows) => rows.map((r, i) => (i === index ? { ...r, ...patch } : r)))
   }
 
   function handleQuantityPlannedChange(value: string) {
     setQuantityPlanned(value)
+    const qty = parseFloat(value) || 0
     if (productWeightGrams != null) {
-      const qty = parseFloat(value) || 0
       setGramsUsed(String(productWeightGrams * qty))
+    }
+    if (partFilamentRows.length > 0) {
+      setPartFilamentRows((rows) => rows.map((r) => ({ ...r, gramsUsed: String(r.unitWeightGrams * qty) })))
     }
   }
 
@@ -134,6 +170,20 @@ export function ProductionRunForm({
       router.push('/production')
       return
     }
+    if (isCompositeProduct && productParts.find((p) => p.id === productPartId) && partFilamentRows.length > 0) {
+      if (partFilamentRows.some((r) => !r.filamentId || !r.gramsUsed)) {
+        alert('Preencha o filamento e o peso usado de cada cor da peça.')
+        return
+      }
+      formData.set('filamentId', partFilamentRows[0].filamentId)
+      formData.set('gramsUsed', '0')
+      formData.set('gramsWasted', '0')
+      formData.set(
+        'filamentUsagesJson',
+        JSON.stringify(partFilamentRows.map((r) => ({ filamentId: r.filamentId, gramsUsed: parseFloat(r.gramsUsed) || 0, gramsWasted: parseFloat(r.gramsWasted) || 0 }))),
+      )
+    }
+
     const result = await createProductionRun(formData)
     if (result.success) {
       formRef.current?.reset()
@@ -148,6 +198,7 @@ export function ProductionRunForm({
       setIsCompositeProduct(false)
       setProductParts([])
       setProductPartId('')
+      setPartFilamentRows([])
     } else {
       alert(result.error)
     }
@@ -163,6 +214,12 @@ export function ProductionRunForm({
           <span className="block text-slate-500 dark:text-slate-400">Produto</span>
           <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.productName}</span>
         </div>
+        {editingRun.productPartName && (
+          <div className="text-sm">
+            <span className="block text-slate-500 dark:text-slate-400">Peça</span>
+            <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.productPartName}</span>
+          </div>
+        )}
         <div className="text-sm">
           <span className="block text-slate-500 dark:text-slate-400">Impressora</span>
           <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.printerName}</span>
@@ -184,32 +241,41 @@ export function ProductionRunForm({
           <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.gramsUsed}g</span>
         </div>
 
-        <label className="text-sm">
-          Filamento desperdiçado (g)
-          <input name="gramsWasted" type="number" step="0.01" min="0" defaultValue={editingRun.gramsWasted} className="tk-input-full" />
-        </label>
-        <label className="text-sm">
-          Tempo desperdiçado (HH:MM)
-          <HoursInput name="timeWastedHours" value={parseFloat(timeWastedHours) || 0} onChange={(hours) => setTimeWastedHours(String(hours))} />
-        </label>
-        <label className="text-sm">
-          Motivo do desperdício (opcional)
-          <select name="wasteReason" defaultValue={editingRun.wasteReason ?? ''} className="tk-input-full">
-            <option value="">Nenhum</option>
-            {WASTE_REASON_OPTIONS.map((reason) => (
-              <option key={reason} value={reason}>{WASTE_REASON_LABELS[reason]}</option>
-            ))}
-          </select>
-        </label>
-        <label className="col-span-full text-sm md:col-span-3">
-          Observações (opcional)
-          <textarea name="notes" defaultValue={editingRun.notes ?? ''} className="tk-input-full" rows={2} />
-        </label>
+        {editingRun.isMultiFilament ? (
+          <p className="col-span-full text-sm text-amber-600 dark:text-amber-400">
+            Esta produção usou mais de um filamento -- não é possível corrigir o desperdício aqui, porque não dá pra saber qual cor mudou.
+            Cancele esta produção e registre de novo com os valores corretos.
+          </p>
+        ) : (
+          <>
+            <label className="text-sm">
+              Filamento desperdiçado (g)
+              <input name="gramsWasted" type="number" step="0.01" min="0" defaultValue={editingRun.gramsWasted} className="tk-input-full" />
+            </label>
+            <label className="text-sm">
+              Tempo desperdiçado (HH:MM)
+              <HoursInput name="timeWastedHours" value={parseFloat(timeWastedHours) || 0} onChange={(hours) => setTimeWastedHours(String(hours))} />
+            </label>
+            <label className="text-sm">
+              Motivo do desperdício (opcional)
+              <select name="wasteReason" defaultValue={editingRun.wasteReason ?? ''} className="tk-input-full">
+                <option value="">Nenhum</option>
+                {WASTE_REASON_OPTIONS.map((reason) => (
+                  <option key={reason} value={reason}>{WASTE_REASON_LABELS[reason]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="col-span-full text-sm md:col-span-3">
+              Observações (opcional)
+              <textarea name="notes" defaultValue={editingRun.notes ?? ''} className="tk-input-full" rows={2} />
+            </label>
+          </>
+        )}
 
         <div className="col-span-full mt-2 flex items-center gap-3">
-          <SubmitButton pendingLabel="Salvando…">Salvar alterações</SubmitButton>
+          {!editingRun.isMultiFilament && <SubmitButton pendingLabel="Salvando…">Salvar alterações</SubmitButton>}
           <Link href="/production" className="text-xs text-slate-500 hover:underline dark:text-slate-400">
-            Cancelar
+            {editingRun.isMultiFilament ? 'Voltar' : 'Cancelar'}
           </Link>
         </div>
       </form>
@@ -261,15 +327,17 @@ export function ProductionRunForm({
           ))}
         </select>
       </label>
-      <label className="text-sm">
-        Filamento *
-        <select name="filamentId" value={filamentId} onChange={(e) => setFilamentId(e.target.value)} className="tk-input-full" required>
-          <option value="" disabled>Selecione</option>
-          {filaments.map((f) => (
-            <option key={f.id} value={f.id}>{f.name}</option>
-          ))}
-        </select>
-      </label>
+      {partFilamentRows.length === 0 && (
+        <label className="text-sm">
+          Filamento *
+          <select name="filamentId" value={filamentId} onChange={(e) => setFilamentId(e.target.value)} className="tk-input-full" required>
+            <option value="" disabled>Selecione</option>
+            {filaments.map((f) => (
+              <option key={f.id} value={f.id}>{f.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
       <label className="text-sm">
         Data *
         <input name="date" type="date" defaultValue={today()} className="tk-input-full" required />
@@ -309,29 +377,79 @@ export function ProductionRunForm({
           required
         />
       </label>
-      <label className="text-sm">
-        Filamento usado (g) *
-        <input
-          name="gramsUsed"
-          type="number"
-          step="0.01"
-          min="0"
-          value={gramsUsed}
-          onChange={(e) => setGramsUsed(e.target.value)}
-          className="tk-input-full"
-          required
-        />
-      </label>
+      {partFilamentRows.length === 0 && (
+        <label className="text-sm">
+          Filamento usado (g) *
+          <input
+            name="gramsUsed"
+            type="number"
+            step="0.01"
+            min="0"
+            value={gramsUsed}
+            onChange={(e) => setGramsUsed(e.target.value)}
+            className="tk-input-full"
+            required
+          />
+        </label>
+      )}
+
+      {/* Ajuste "peça multi-filamento": a peça escolhida tem >1 cor na
+          receita -- uma linha de filamento+peso usado (e desperdiçado) por
+          componente, em vez do único par acima. */}
+      {partFilamentRows.length > 0 && (
+        <div className="col-span-full grid grid-cols-2 gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700 md:grid-cols-4">
+          <h3 className="col-span-full text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Filamento usado por cor
+          </h3>
+          {partFilamentRows.map((row, i) => (
+            <label key={i} className="text-sm">
+              Cor {i + 1} — usado (g) / desperdiçado (g) *
+              <select
+                value={row.filamentId}
+                onChange={(e) => updatePartFilamentRow(i, { filamentId: e.target.value })}
+                className="tk-input-full"
+                required
+              >
+                <option value="" disabled>Selecione</option>
+                {filaments.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+              <div className="mt-1 flex gap-2">
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={row.gramsUsed}
+                  onChange={(e) => updatePartFilamentRow(i, { gramsUsed: e.target.value })}
+                  className="tk-input w-1/2"
+                  required
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={row.gramsWasted}
+                  onChange={(e) => updatePartFilamentRow(i, { gramsWasted: e.target.value })}
+                  className="tk-input w-1/2"
+                />
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
 
       {failed > 0 && (
         <div className="col-span-full grid grid-cols-2 gap-3 rounded-lg border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-900/50 dark:bg-amber-500/5 md:grid-cols-4">
           <h3 className="col-span-full text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
             Detalhes do desperdício
           </h3>
-          <label className="text-sm">
-            Filamento desperdiçado (g)
-            <input name="gramsWasted" type="number" step="0.01" min="0" defaultValue="0" className="tk-input-full" />
-          </label>
+          {partFilamentRows.length === 0 && (
+            <label className="text-sm">
+              Filamento desperdiçado (g)
+              <input name="gramsWasted" type="number" step="0.01" min="0" defaultValue="0" className="tk-input-full" />
+            </label>
+          )}
           <label className="text-sm">
             Tempo desperdiçado (HH:MM)
             <HoursInput name="timeWastedHours" value={parseFloat(timeWastedHours) || 0} onChange={(hours) => setTimeWastedHours(String(hours))} />
