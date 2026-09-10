@@ -71,8 +71,8 @@ export default async function AssemblyPage({
                     {part.colorOptions && part.colorOptions.length > 0 && (
                       <ul className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
                         {part.colorOptions.map((c) => (
-                          <li key={c.filamentId} className={c.available <= 0 ? 'text-red-500 dark:text-red-400' : undefined}>
-                            {c.filamentLabel}: {c.available}
+                          <li key={c.key} className={c.available <= 0 ? 'text-red-500 dark:text-red-400' : undefined}>
+                            {c.label}: {c.available}
                           </li>
                         ))}
                       </ul>
