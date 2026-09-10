@@ -58,12 +58,37 @@ Deploy em produção: `tk3d.coffetech.com.br` via Coolify.
 - **Product**: pode ser `isComposite` (produto montado a partir de
   peças) ou simples (1 impressora/filamento/peso/tempo direto). Composto
   tem `ProductPart[]` (cada peça com sua própria
-  impressora/filamento/peso/tempo/quantidade-por-unidade) e
-  `ProductAssembly[]` (ledger de conversão peça produzida → estoque de
-  produto acabado, tela `/assembly`).
+  impressora/tempo/quantidade-por-unidade) e `ProductAssembly[]` (ledger
+  de conversão peça produzida → estoque de produto acabado, tela
+  `/assembly`).
+- **ProductPart / ProductPartFilament**: uma peça pode precisar de MAIS
+  DE UM filamento simultaneamente (impressão multi-material -- ex.:
+  corpo preto 15g + detalhe verde 8g); cada componente da receita é uma
+  linha em `ProductPartFilament` (filamentId + weightGrams). Peça de
+  exatamente 1 componente tem "cor variável" (pode mudar de um lote de
+  produção pro outro); peça com 2+ componentes é uma receita FIXA (as
+  mesmas cores sempre juntas, sem variação).
 - **ProductionRun**: registra uma produção (de um Product simples OU de
   um `ProductPart` específico via `productPartId`), com
-  planejado/sucesso/falhas, desperdício, `costSnapshot`.
+  planejado/sucesso/falhas, desperdício, `costSnapshot`. Quando a peça
+  produzida tem >1 componente de filamento, o consumo real de cada cor
+  fica em `ProductionRunFilamentUsage` (opcional) -- os campos escalares
+  `filamentId`/`gramsUsed`/`gramsWasted` continuam preenchidos (1º
+  componente / soma total) pra compatibilidade com telas/relatórios que
+  só leem o campo escalar. Editar desperdício depois de criada só
+  funciona pra peça de 1 filamento (updateProductionRun recusa pra
+  multi-filamento -- não dá pra saber qual cor mudou).
+- **ProductAssembly.colorChoices** (Json?, opcional): pra cada peça de
+  cor variável consumida numa leva de montagem, qual cor foi escolhida
+  (`{ [productPartId]: filamentId }`) -- usado por
+  `getAssemblyStatus`/`confirmAssembly` (actions/assembly.ts) pra
+  calcular disponível POR COR de cada peça, e por
+  `getProductVariantBreakdown` (lib/reports.ts) pra mostrar em /stock
+  quanto já foi montado de cada combinação de cores. Nulo em montagens
+  anteriores a esse ajuste -- nunca inventado retroativamente. Sale/
+  ConsignmentDelivery NÃO diferenciam variante (fora do escopo atual),
+  então só "produzido por variante" é confiável, nunca "disponível por
+  variante".
 - **Sale**: canal (`SaleChannel`: `DIRETA | SHOPEE | MERCADO_LIVRE`,
   mais `MARKETPLACE` só como valor legado — não oferecido em vendas
   novas desde 3.6), `costSnapshot`.
