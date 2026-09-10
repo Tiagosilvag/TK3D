@@ -48,12 +48,25 @@ export default async function AssemblyPage({
             </thead>
             <tbody>
               {status.parts.map((part) => (
-                <tr key={part.partId} className={`tk-row ${part.maxUnitsFromThisPart <= 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
+                <tr key={part.partId} className={`tk-row align-top ${part.maxUnitsFromThisPart <= 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
                   <td className="py-2">{part.name}</td>
                   <td>{part.quantityPerUnit}</td>
                   <td>{part.produced}</td>
                   <td>{part.consumed}</td>
-                  <td>{part.available}</td>
+                  <td>
+                    {part.available}
+                    {/* Ajuste "cor na montagem": peça de cor variável mostra
+                        o total disponível quebrado por cor. */}
+                    {part.colorOptions && part.colorOptions.length > 0 && (
+                      <ul className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                        {part.colorOptions.map((c) => (
+                          <li key={c.filamentId} className={c.available <= 0 ? 'text-red-500 dark:text-red-400' : undefined}>
+                            {c.filamentLabel}: {c.available}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </td>
                   <td>{part.maxUnitsFromThisPart} unidade{part.maxUnitsFromThisPart === 1 ? '' : 's'}</td>
                 </tr>
               ))}
@@ -70,7 +83,7 @@ export default async function AssemblyPage({
             </p>
           )}
 
-          <ConfirmAssemblyForm productId={status.productId} maxAssemblableUnits={status.maxAssemblableUnits} />
+          <ConfirmAssemblyForm productId={status.productId} parts={status.parts} />
 
           <Link href="/stock" className="inline-block text-sm text-amber-600 hover:underline dark:text-amber-400">
             Ver Meu Estoque &rarr;
