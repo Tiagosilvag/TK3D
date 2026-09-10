@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { getOwnStockSummary } from '@/lib/reports'
+import { getOwnStockSummary, getProductVariantBreakdown } from '@/lib/reports'
 import { AdjustStockButton } from '@/components/AdjustStockButton'
 import { ActionsMenu } from '@/components/ActionsMenu'
 
@@ -7,6 +7,12 @@ export const dynamic = 'force-dynamic'
 
 export default async function StockPage() {
   const rows = await getOwnStockSummary()
+  // Ajuste "cor na montagem": só busca o breakdown por variante pros
+  // produtos compostos (só eles têm ProductAssembly/colorChoices).
+  const variantBreakdowns = await Promise.all(
+    rows.filter((r) => r.isComposite).map(async (r) => [r.productId, await getProductVariantBreakdown(r.productId)] as const),
+  )
+  const variantBreakdownMap = new Map(variantBreakdowns)
 
   return (
     <div className="tk-page">
@@ -39,7 +45,19 @@ export default async function StockPage() {
                   </span>
                 )}
               </td>
-              <td>{r.produced}</td>
+              <td>
+                {r.produced}
+                {r.isComposite && (variantBreakdownMap.get(r.productId)?.length ?? 0) > 0 && (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-xs text-slate-500 dark:text-slate-400">Por variante</summary>
+                    <ul className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      {variantBreakdownMap.get(r.productId)!.map((v) => (
+                        <li key={v.label}>{v.label}: {v.quantity}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </td>
               <td>{r.soldDirect}</td>
               <td>{r.deliveredToPartners}</td>
               <td>{r.consignmentRemaining}</td>
