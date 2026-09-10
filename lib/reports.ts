@@ -378,9 +378,17 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
       produced,
       soldDirect,
       deliveredToPartners: delivery.delivered,
-      consignmentRemaining: delivery.delivered - delivery.consignmentSold,
+      // Nunca negativo (bug de estoque/montagem): "disponível"/"em
+      // consignação" são residuais derivados (produzido menos o que já
+      // saiu) -- excluir uma ProductionRun já concluída (deleteProductionRun)
+      // reduz "produced" retroativamente sem tocar Sale/ConsignmentDelivery
+      // (fatos históricos, nunca reescritos), o que pode deixar o residual
+      // abaixo de zero. Cada campo zera de forma independente (nunca
+      // "empresta" o excedente de outro campo) -- é só isso, não um saldo
+      // físico que precisa ser fisicamente descontado em cascata.
+      consignmentRemaining: Math.max(0, delivery.delivered - delivery.consignmentSold),
       inProduction: openOrdersMap.get(p.id) ?? 0,
-      available: produced - soldDirect - delivery.delivered + adjustment,
+      available: Math.max(0, produced - soldDirect - delivery.delivered + adjustment),
     }
   })
 }
@@ -444,7 +452,7 @@ export async function getConsignmentPartnerSummary(): Promise<ConsignmentPartner
         productName,
         delivered,
         sold,
-        remaining: delivered - sold,
+        remaining: Math.max(0, delivered - sold),
       })),
       history,
     }

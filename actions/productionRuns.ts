@@ -459,6 +459,25 @@ function buildFilamentRestoreOps(
 // Guard against double restoration: a CANCELADA run already had every
 // resource restored by cancelProductionRun, so deleting it afterward (e.g.
 // purging old cancelled history) must NOT touch stock again.
+//
+// Bug de estoque/montagem -- exclusão de produção concluída: quantitySuccess
+// desta run já pode ter avançado no funil (virado peça em Montagem, sido
+// montada pra Estoque, entregue a parceiro ou vendida) antes de ser
+// excluída aqui. Não existe rastreio por-run de pra onde cada unidade foi
+// (Sale/ConsignmentDelivery/ProductAssembly não guardam productionRunId),
+// então não há como reverter fisicamente "a unidade desta run" de um
+// estágio específico -- e não faria sentido reescrever Sale/
+// ConsignmentDelivery/ProductAssembly (fatos históricos já ocorridos,
+// nunca reescritos nesta base, ver costSnapshot). O tratamento correto é:
+// deletar a ProductionRun (linha abaixo) já reduz "produzido" organicamente,
+// já que todo saldo de Estoque/Montagem é somado ao vivo dessas tabelas
+// (lib/reports.ts#getOwnStockSummary, actions/assembly.ts#getAssemblyStatus)
+// -- e cada tela clampa seu próprio residual em Math.max(0, ...)
+// independentemente uma da outra (Estoque, Montagem, Entregue a Parceiros/
+// Consignado), na ordem em que cada uma já é composta (Estoque via
+// ProductAssembly/ProductionRun, Montagem via ProductionRun cru, entrega/
+// consignado são fatos imutáveis). Isso zera cada residual que ficaria
+// negativo sem nunca "emprestar" o excedente de um estágio pra outro.
 export async function deleteProductionRun(id: string): Promise<ActionResult> {
   const run = await prisma.productionRun.findUniqueOrThrow({ where: { id }, include: { filamentUsages: true } })
 

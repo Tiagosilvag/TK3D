@@ -22,7 +22,7 @@ export async function createConsignmentSaleReport(formData: FormData): Promise<A
     include: { saleReports: true },
   })
   const alreadySold = delivery.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
-  const remaining = delivery.quantityDelivered - alreadySold
+  const remaining = Math.max(0, delivery.quantityDelivered - alreadySold)
   if (parsed.data.quantitySold > remaining) {
     return { success: false, error: `Quantidade excede o saldo disponível (${remaining})` }
   }
@@ -53,7 +53,7 @@ export async function getPartnerStock(partnerId: string) {
       productName: d.product.name,
       delivered: d.quantityDelivered,
       sold,
-      remaining: d.quantityDelivered - sold,
+      remaining: Math.max(0, d.quantityDelivered - sold),
     }
   })
 }

@@ -127,8 +127,8 @@ export default async function AssemblyPage({
             parts={status.parts}
             accessoryRequirements={status.accessoryRequirements}
             supplyRequirements={status.supplyRequirements}
-            allAccessories={allAccessories.map((a) => ({ id: a.id, name: a.colorName ? `${a.name} — ${a.colorName}` : a.name, available: a.currentStock.toNumber() }))}
-            allSupplies={allSupplies.map((s) => ({ id: s.id, name: s.name, unit: s.unit, available: s.currentStock.toNumber() }))}
+            allAccessories={allAccessories.map((a) => ({ id: a.id, name: a.colorName ? `${a.name} — ${a.colorName}` : a.name, available: Math.max(0, a.currentStock.toNumber()) }))}
+            allSupplies={allSupplies.map((s) => ({ id: s.id, name: s.name, unit: s.unit, available: Math.max(0, s.currentStock.toNumber()) }))}
           />
 
           <Link href="/stock" className="inline-block text-sm text-amber-600 hover:underline dark:text-amber-400">

@@ -156,7 +156,13 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
     parts = product.parts.map((part) => {
       const produced = producedMap.get(part.id) ?? 0
       const consumed = alreadyAssembled * part.quantityPerUnit
-      const available = produced - consumed
+      // Nunca negativo (bug de estoque/montagem): "disponível" é produzido
+      // menos já consumido em montagens -- excluir uma ProductionRun já
+      // concluída (deleteProductionRun) reduz "produced" retroativamente
+      // sem desfazer ProductAssembly (histórico, nunca reescrito), podendo
+      // deixar esse residual negativo. Zera aqui em vez de mostrar
+      // negativo; maxUnitsFromThisPart deriva deste valor já clampado.
+      const available = Math.max(0, produced - consumed)
 
       const producedByCombo = producedByPartAndCombo.get(part.id) ?? new Map<string, { filamentIds: string[]; quantity: number }>()
       const consumedByCombo = consumedByPartAndCombo.get(part.id) ?? new Map<string, number>()
@@ -168,7 +174,7 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
           key,
           filamentIds,
           label,
-          available: (producedByCombo.get(key)?.quantity ?? 0) - (consumedByCombo.get(key) ?? 0),
+          available: Math.max(0, (producedByCombo.get(key)?.quantity ?? 0) - (consumedByCombo.get(key) ?? 0)),
         }
       })
 
@@ -192,7 +198,8 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
     })
     const produced = producedAgg._sum.quantitySuccess ?? 0
     const consumed = alreadyAssembled
-    const available = produced - consumed
+    // Nunca negativo -- mesmo motivo do caso composto acima.
+    const available = Math.max(0, produced - consumed)
     parts = [
       {
         partId: product.id,
@@ -211,13 +218,13 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
     id: u.accessoryId,
     name: u.accessory.colorName ? `${u.accessory.name} — ${u.accessory.colorName}` : u.accessory.name,
     quantityPerUnit: u.quantity.toNumber(),
-    available: u.accessory.currentStock.toNumber(),
+    available: Math.max(0, u.accessory.currentStock.toNumber()),
   }))
   const supplyRequirements: AssemblyResourceRequirement[] = product.supplyUsages.map((u) => ({
     id: u.supplyId,
     name: u.supply.name,
     quantityPerUnit: u.quantity.toNumber(),
-    available: u.supply.currentStock.toNumber(),
+    available: Math.max(0, u.supply.currentStock.toNumber()),
     unit: u.supply.unit,
   }))
 

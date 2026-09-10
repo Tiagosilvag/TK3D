@@ -46,7 +46,8 @@ export default async function ConsignmentDeliveriesPage({
         <tbody>
           {deliveries.map((d) => {
             const sold = d.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
-            const remaining = d.quantityDelivered - sold
+            // Nunca negativo -- ver comentário em lib/reports.ts#getOwnStockSummary.
+            const remaining = Math.max(0, d.quantityDelivered - sold)
             return (
               <tr key={d.id} className="tk-row">
                 <td className="py-2">{d.deliveryDate.toLocaleDateString('pt-BR')}</td>
