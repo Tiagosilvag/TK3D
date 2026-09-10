@@ -18,7 +18,7 @@ export default async function StockPage() {
     <div className="tk-page">
       <h1 className="tk-page-title">Meu Estoque</h1>
       <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
-        Disponível = produzido − vendido diretamente − entregue a parceiros (+ ajustes). Produto composto só soma ao estoque depois da montagem.
+        Disponível = produzido − vendido diretamente − entregue a parceiros (+ ajustes). Produto que precisa de montagem (composto, ou com insumo/acessório cadastrado) só soma ao estoque depois da montagem confirmada.
       </p>
 
       <table className="w-full text-sm">
@@ -43,6 +43,14 @@ export default async function StockPage() {
                   <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                     composto
                   </span>
+                )}
+                {r.needsAssembly && (
+                  <Link
+                    href={`/assembly?productId=${r.productId}`}
+                    className="ml-2 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 hover:underline dark:bg-amber-500/10 dark:text-amber-400"
+                  >
+                    precisa de montagem
+                  </Link>
                 )}
               </td>
               <td>

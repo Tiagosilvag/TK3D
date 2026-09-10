@@ -11,6 +11,7 @@ import {
 } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 import { Prisma, type ProductionStatus, type SupplyUnit } from '@prisma/client'
+import { productNeedsAssembly } from '@/lib/products'
 
 type ActionResult = { success: boolean; error?: string }
 
@@ -124,6 +125,19 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
   ])
   const filamentById = new Map(filaments.map((f) => [f.id, f]))
 
+  // Ajuste "produção → montagem → estoque": uma produção de PEÇA nunca
+  // consome insumo/acessório (sempre foi assim -- isso é conceito de
+  // produto MONTADO). Agora um produto SIMPLES que tenha insumo/acessório
+  // cadastrado também precisa passar pela Montagem antes de virar estoque
+  // -- então sua produção também não consome esses recursos na hora, só
+  // quando a montagem for confirmada (actions/assembly.ts). Só o produto
+  // simples SEM nenhum componente continua consumindo tudo direto aqui.
+  const skipProductLevelConsumption = Boolean(productPart) || productNeedsAssembly({
+    isComposite: product.isComposite,
+    accessoryUsagesCount: product.accessoryUsages.length,
+    supplyUsagesCount: product.supplyUsages.length,
+  })
+
   // --- Pre-transaction check across ALL resources (spec §5.2) -- um check
   // por componente de filamento realmente consumido.
   const checks: ResourceCheck[] = [
@@ -137,14 +151,12 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
         describe: () => `${filament.manufacturer} ${filament.material} ${filament.colorName} (necessário ${needed}g, disponível ${available}g)`,
       }
     }),
-    // 2.1: uma produção de PEÇA não consome insumos/acessórios do produto
-    // montado -- esses só são consumidos na montagem (spec 2.3).
-    ...(productPart ? [] : product.accessoryUsages.map((u): ResourceCheck => {
+    ...(skipProductLevelConsumption ? [] : product.accessoryUsages.map((u): ResourceCheck => {
       const needed = u.quantity.toNumber() * data.quantitySuccess
       const available = u.accessory.currentStock.toNumber()
       return { needed, available, describe: () => `${u.accessory.name} (necessário ${needed}, disponível ${available})` }
     })),
-    ...(productPart ? [] : product.supplyUsages.map((u): ResourceCheck => {
+    ...(skipProductLevelConsumption ? [] : product.supplyUsages.map((u): ResourceCheck => {
       const needed = u.quantity.toNumber() * data.quantitySuccess
       const available = u.supply.currentStock.toNumber()
       return {
@@ -220,21 +232,25 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
       // implementada), nunca duplicados na impressão de cada peça avulsa.
       weightGrams,
       printTimeHours: productPart ? productPart.printTimeHours.toNumber() : product.printTimeHours.toNumber(),
-      laborTimeHours: productPart ? 0 : product.laborTimeHours.toNumber(),
+      // Mão de obra/embalagem/insumos/acessórios são conceito de produto
+      // MONTADO -- ficam zerados aqui e entram no custo só na montagem,
+      // tanto pra peça de produto composto quanto pra produto simples que
+      // precise de montagem (skipProductLevelConsumption acima).
+      laborTimeHours: skipProductLevelConsumption ? 0 : product.laborTimeHours.toNumber(),
       filamentPricePerKg,
       printerAvgPowerConsumptionKwh: printer.avgPowerConsumptionKwh.toNumber(),
       printerDepreciationCostPerHour,
       printerMaintenanceCostPerHour,
-      packagingItemId: productPart ? null : product.packagingItemId,
-      packagingCost: productPart ? 0 : (product.packagingItem?.unitCost.toNumber() ?? 0),
-      accessoryUsages: productPart
+      packagingItemId: skipProductLevelConsumption ? null : product.packagingItemId,
+      packagingCost: skipProductLevelConsumption ? 0 : (product.packagingItem?.unitCost.toNumber() ?? 0),
+      accessoryUsages: skipProductLevelConsumption
         ? []
         : product.accessoryUsages.map((u) => ({
             accessoryId: u.accessoryId,
             quantity: u.quantity.toNumber(),
             avgUnitCost: u.accessory.avgUnitCost.toNumber(),
           })),
-      supplyUsages: productPart
+      supplyUsages: skipProductLevelConsumption
         ? []
         : product.supplyUsages.map((u) => ({
             supplyId: u.supplyId,

@@ -1,7 +1,7 @@
 'use client'
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { confirmAssembly, type AssemblyPartStatus } from '@/actions/assembly'
+import { confirmAssembly, type AssemblyPartStatus, type AssemblyResourceRequirement } from '@/actions/assembly'
 import { SubmitButton } from '@/components/SubmitButton'
 
 // Ajuste "cor na montagem": pra cada peça de cor variável (colorOptions
@@ -14,30 +14,132 @@ function defaultColorChoice(part: AssemblyPartStatus): string {
   return best.filamentId
 }
 
+type ResourceOption = { id: string; name: string; available: number; unit?: string }
+type ResourceRow = { id: string; quantityPerUnit: string }
+
+// Ajuste "produção → montagem → estoque": lista de insumo/acessório
+// pré-preenchida da ficha técnica do produto, mas totalmente editável
+// nesta leva -- trocar quantidade, remover linha, adicionar um recurso
+// que nem está na ficha técnica. Nunca reescreve a ficha técnica do
+// produto, só o que é consumido nesta montagem específica.
+function ResourceUsageEditor({
+  label,
+  rows,
+  options,
+  onChange,
+}: {
+  label: string
+  rows: ResourceRow[]
+  options: ResourceOption[]
+  onChange: (rows: ResourceRow[]) => void
+}) {
+  function updateRow(index: number, patch: Partial<ResourceRow>) {
+    onChange(rows.map((r, i) => (i === index ? { ...r, ...patch } : r)))
+  }
+  function removeRow(index: number) {
+    onChange(rows.filter((_, i) => i !== index))
+  }
+  function addRow() {
+    onChange([...rows, { id: '', quantityPerUnit: '1' }])
+  }
+
+  return (
+    <div className="col-span-full grid grid-cols-2 gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700 md:grid-cols-4">
+      <h3 className="col-span-full text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</h3>
+      {rows.length === 0 && <p className="col-span-full text-xs text-slate-400 dark:text-slate-500">Nenhum.</p>}
+      {rows.map((row, i) => {
+        const option = options.find((o) => o.id === row.id)
+        return (
+          <div key={i} className="col-span-full grid grid-cols-2 gap-2 md:grid-cols-4">
+            <label className="text-xs md:col-span-2">
+              Item
+              <select value={row.id} onChange={(e) => updateRow(i, { id: e.target.value })} className="tk-input-full" required>
+                <option value="" disabled>Selecione</option>
+                {options.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name} ({o.available} disponível{o.available === 1 ? '' : 'is'})</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs">
+              Qtd. por unidade
+              <input
+                type="number"
+                step="0.001"
+                min="0"
+                value={row.quantityPerUnit}
+                onChange={(e) => updateRow(i, { quantityPerUnit: e.target.value })}
+                className="tk-input-full"
+                required
+              />
+              {option?.unit && <span className="ml-1 text-slate-400 dark:text-slate-500">{option.unit.toLowerCase()}</span>}
+            </label>
+            <button type="button" onClick={() => removeRow(i)} className="tk-link-danger self-end text-xs">
+              Remover
+            </button>
+          </div>
+        )
+      })}
+      <button type="button" onClick={addRow} className="col-span-full text-left text-xs font-medium text-amber-600 hover:underline dark:text-amber-400">
+        + Adicionar {label.toLowerCase()}
+      </button>
+    </div>
+  )
+}
+
 export function ConfirmAssemblyForm({
   productId,
   parts,
+  accessoryRequirements,
+  supplyRequirements,
+  allAccessories,
+  allSupplies,
 }: {
   productId: string
   parts: AssemblyPartStatus[]
+  accessoryRequirements: AssemblyResourceRequirement[]
+  supplyRequirements: AssemblyResourceRequirement[]
+  allAccessories: { id: string; name: string; available: number }[]
+  allSupplies: { id: string; name: string; unit: string; available: number }[]
 }) {
   const router = useRouter()
   const colorParts = useMemo(() => parts.filter((p) => p.colorOptions), [parts])
   const [colorChoices, setColorChoices] = useState<Record<string, string>>(() =>
     Object.fromEntries(colorParts.map((p) => [p.partId, defaultColorChoice(p)])),
   )
+  const [accessoryRows, setAccessoryRows] = useState<ResourceRow[]>(() =>
+    accessoryRequirements.map((r) => ({ id: r.id, quantityPerUnit: String(r.quantityPerUnit) })),
+  )
+  const [supplyRows, setSupplyRows] = useState<ResourceRow[]>(() =>
+    supplyRequirements.map((r) => ({ id: r.id, quantityPerUnit: String(r.quantityPerUnit) })),
+  )
 
-  // Máximo que dá pra montar COM AS CORES ESCOLHIDAS agora -- mínimo entre
-  // as peças sem cor variável (maxUnitsFromThisPart de sempre) e as peças
-  // de cor variável (limitado pela cor selecionada, não pelo total da peça).
+  // Máximo que dá pra montar com as cores/insumos/acessórios ESCOLHIDOS
+  // agora -- mínimo entre peças (limitadas pela cor selecionada, quando
+  // aplicável) e cada linha de insumo/acessório (limitada pelo estoque
+  // atual daquele item específico).
   const effectiveMax = useMemo(() => {
-    const limits = parts.map((part) => {
+    const partLimits = parts.map((part) => {
       if (!part.colorOptions) return part.maxUnitsFromThisPart
       const chosen = part.colorOptions.find((o) => o.filamentId === colorChoices[part.partId])
       return chosen ? Math.floor(chosen.available / part.quantityPerUnit) : 0
     })
+    const resourceLimits = [
+      ...accessoryRows.map((r) => {
+        const option = allAccessories.find((a) => a.id === r.id)
+        const qty = parseFloat(r.quantityPerUnit) || 0
+        if (!option || qty <= 0) return Infinity
+        return Math.floor(option.available / qty)
+      }),
+      ...supplyRows.map((r) => {
+        const option = allSupplies.find((s) => s.id === r.id)
+        const qty = parseFloat(r.quantityPerUnit) || 0
+        if (!option || qty <= 0) return Infinity
+        return Math.floor(option.available / qty)
+      }),
+    ]
+    const limits = [...partLimits, ...resourceLimits]
     return limits.length === 0 ? 0 : Math.max(0, Math.min(...limits))
-  }, [parts, colorChoices])
+  }, [parts, colorChoices, accessoryRows, supplyRows, allAccessories, allSupplies])
 
   const [quantity, setQuantity] = useState(effectiveMax > 0 ? '1' : '0')
 
@@ -46,7 +148,13 @@ export function ConfirmAssemblyForm({
       alert('Selecione a cor de cada peça antes de confirmar.')
       return
     }
+    if ([...accessoryRows, ...supplyRows].some((r) => !r.id)) {
+      alert('Selecione o insumo/acessório de cada linha, ou remova a linha vazia.')
+      return
+    }
     formData.set('colorChoicesJson', JSON.stringify(colorChoices))
+    formData.set('accessoryUsagesJson', JSON.stringify(accessoryRows.map((r) => ({ id: r.id, quantityPerUnit: parseFloat(r.quantityPerUnit) || 0 }))))
+    formData.set('supplyUsagesJson', JSON.stringify(supplyRows.map((r) => ({ id: r.id, quantityPerUnit: parseFloat(r.quantityPerUnit) || 0 }))))
     const result = await confirmAssembly(formData)
     if (result.success) {
       router.refresh()
@@ -84,6 +192,14 @@ export function ConfirmAssemblyForm({
           ))}
         </div>
       )}
+
+      <ResourceUsageEditor label="Acessórios usados" rows={accessoryRows} options={allAccessories} onChange={setAccessoryRows} />
+      <ResourceUsageEditor
+        label="Insumos usados"
+        rows={supplyRows}
+        options={allSupplies.map((s) => ({ id: s.id, name: s.name, available: s.available, unit: s.unit }))}
+        onChange={setSupplyRows}
+      />
 
       <label className="text-sm">
         Quantidade a montar *
