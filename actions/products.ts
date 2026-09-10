@@ -217,7 +217,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
   const accessoriesCost = sumUsageCost(
     product.accessoryUsages.map((u) => ({ quantity: u.quantity.toNumber(), avgUnitCost: u.accessory.avgUnitCost.toNumber() })),
   )
-  const packagingCost = product.packagingItem?.unitCost.toNumber() ?? 0
+  const packagingCost = product.packagingItem?.avgUnitCost.toNumber() ?? 0
 
   const flags = {
     includeDepreciation: settings.includeDepreciation,

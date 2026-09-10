@@ -238,7 +238,7 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
       printerDepreciationCostPerHour,
       printerMaintenanceCostPerHour,
       packagingItemId: skipProductLevelConsumption ? null : product.packagingItemId,
-      packagingCost: skipProductLevelConsumption ? 0 : (product.packagingItem?.unitCost.toNumber() ?? 0),
+      packagingCost: skipProductLevelConsumption ? 0 : (product.packagingItem?.avgUnitCost.toNumber() ?? 0),
       accessoryUsages: skipProductLevelConsumption
         ? []
         : product.accessoryUsages.map((u) => ({

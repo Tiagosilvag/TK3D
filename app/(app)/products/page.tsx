@@ -38,7 +38,7 @@ export default async function ProductsPage() {
     pricePerGram: calculateFilamentPricePerGram({ spoolPrice: f.spoolPrice.toNumber(), spoolWeightKg: f.spoolWeightKg.toNumber() }),
   }))
 
-  const packagingOptions = packagingItems.map((p) => ({ id: p.id, name: p.name, unitCost: p.unitCost.toNumber() }))
+  const packagingOptions = packagingItems.map((p) => ({ id: p.id, name: p.name, unitCost: p.avgUnitCost.toNumber() }))
 
   return (
     <div className="tk-page">

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const stockAdjustmentResourceTypeEnum = z.enum(['FILAMENT', 'ACCESSORY', 'SUPPLY', 'PRODUCT'])
+export const stockAdjustmentResourceTypeEnum = z.enum(['FILAMENT', 'ACCESSORY', 'SUPPLY', 'PRODUCT', 'PACKAGING'])
 export const stockAdjustmentReasonEnum = z.enum([
   'INVENTARIO_FISICO',
   'PERDA_DANO',

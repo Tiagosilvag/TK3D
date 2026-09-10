@@ -41,7 +41,7 @@ async function createSupportRecords() {
   const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
   const accessory = await prisma.accessory.create({ data: { name: 'Argola Dourada', type: 'OUTRO', colorName: '', currentStock: 100, avgUnitCost: 0.5 } })
   const supply = await prisma.supply.create({ data: { name: 'Cola Quente', unit: 'ML', currentStock: 50, avgUnitCost: 1.2 } })
-  const packagingItem = await prisma.packagingItem.create({ data: { name: 'Saquinho', unitCost: 0.3 } })
+  const packagingItem = await prisma.packagingItem.create({ data: { name: 'Saquinho', currentStock: 100, avgUnitCost: 0.3 } })
   const product = await prisma.product.create({
     data: {
       name: 'Chaveirinho',

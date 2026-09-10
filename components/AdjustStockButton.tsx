@@ -19,7 +19,7 @@ export function AdjustStockButton({
   currentQuantity,
   unitLabel = '',
 }: {
-  resourceType: 'FILAMENT' | 'ACCESSORY' | 'SUPPLY' | 'PRODUCT'
+  resourceType: 'FILAMENT' | 'ACCESSORY' | 'SUPPLY' | 'PRODUCT' | 'PACKAGING'
   resourceId: string
   resourceName: string
   currentQuantity: number

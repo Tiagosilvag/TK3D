@@ -81,7 +81,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     return { id: p.id, name: p.name, costPerHour }
   })
 
-  const packagingOptions = packagingItems.map((p) => ({ id: p.id, name: p.name, unitCost: p.unitCost.toNumber() }))
+  const packagingOptions = packagingItems.map((p) => ({ id: p.id, name: p.name, unitCost: p.avgUnitCost.toNumber() }))
 
   const currentSuppliesCost = product.supplyUsages.reduce(
     (sum, u) => sum + u.quantity.toNumber() * u.supply.avgUnitCost.toNumber(),

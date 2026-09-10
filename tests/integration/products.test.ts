@@ -148,7 +148,7 @@ describe('products actions', () => {
     await prisma.settings.create({ data: { id: 1 } })
     const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
     const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
-    const packagingItem = await prisma.packagingItem.create({ data: { name: 'Saquinho', unitCost: 0.1 } })
+    const packagingItem = await prisma.packagingItem.create({ data: { name: 'Saquinho', currentStock: 100, avgUnitCost: 0.1 } })
     // 2 accessories (spec §2, task-5 brief: accessoryId single-FK generalized
     // into a ProductAccessoryUsage list) -- proves the new summing logic
     // through the real DB path, not just calculateProductCost in isolation.

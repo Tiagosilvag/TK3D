@@ -1,10 +1,8 @@
-import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { formatCurrency } from '@/lib/format'
-import { PackagingForm } from './PackagingForm'
-import { deletePackagingItem, reactivatePackagingItem } from '@/actions/packaging'
-import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
-import { ActionsMenu } from '@/components/ActionsMenu'
+import { calculateStockReferenceQuantity, calculateStockPercentRemaining } from '@/lib/costing'
+import { reactivatePackagingItem } from '@/actions/packaging'
+import { PackagingExplorer, type PackagingRow } from './PackagingExplorer'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,45 +12,39 @@ export default async function PackagingPage({
   searchParams: Promise<{ editId?: string }>
 }) {
   const { editId } = await searchParams
+
   const [items, inactiveItems, editingItemRecord] = await Promise.all([
-    prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+    prisma.packagingItem.findMany({
+      where: { active: true },
+      include: { purchases: { orderBy: { purchaseDate: 'desc' } } },
+      orderBy: { name: 'asc' },
+    }),
     prisma.packagingItem.findMany({ where: { active: false }, orderBy: { name: 'asc' } }),
     editId ? prisma.packagingItem.findUnique({ where: { id: editId } }) : null,
   ])
 
   const editingItem = editingItemRecord
-    ? { id: editingItemRecord.id, name: editingItemRecord.name, unitCost: editingItemRecord.unitCost.toNumber() }
+    ? { id: editingItemRecord.id, name: editingItemRecord.name, minStock: editingItemRecord.minStock.toNumber() }
     : undefined
+
+  // Mesmo raciocínio de Acessórios/Insumos (lib/costing.ts#calculateStockReferenceQuantity):
+  // % restante é sobre a média das últimas compras, não o total histórico.
+  const rows: PackagingRow[] = items.map((item) => {
+    const currentStock = item.currentStock.toNumber()
+    const referenceQuantity = calculateStockReferenceQuantity(item.purchases.map((p) => p.quantity.toNumber()))
+    return {
+      id: item.id,
+      name: item.name,
+      currentStock,
+      avgUnitCost: item.avgUnitCost.toNumber(),
+      minStock: item.minStock.toNumber(),
+      percentRemaining: calculateStockPercentRemaining(currentStock, referenceQuantity),
+    }
+  })
 
   return (
     <div className="tk-page">
-      <h1 className="tk-page-title">Embalagens</h1>
-      <PackagingForm key={editingItem?.id ?? 'new'} editingItem={editingItem} />
-      <table className="mt-6 w-full text-sm">
-        <thead>
-          <tr className="tk-table-head-row">
-            <th className="py-2">Nome</th>
-            <th>Custo unitário</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item) => (
-            <tr key={item.id} className="tk-row">
-              <td className="py-2">{item.name}</td>
-              <td>{formatCurrency(item.unitCost.toNumber())}</td>
-              <td>
-                <ActionsMenu>
-                  <Link href={`/packaging?editId=${item.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
-                    Editar
-                  </Link>
-                  <ConfirmDeleteForm action={async () => { 'use server'; await deletePackagingItem(item.id) }} />
-                </ActionsMenu>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <PackagingExplorer rows={rows} editingItem={editingItem} />
 
       {inactiveItems.length > 0 && (
         <details className="mt-8">
@@ -61,6 +53,7 @@ export default async function PackagingPage({
             <thead>
               <tr className="tk-table-head-row">
                 <th className="py-2">Nome</th>
+                <th>Custo unitário</th>
                 <th></th>
               </tr>
             </thead>
@@ -68,6 +61,7 @@ export default async function PackagingPage({
               {inactiveItems.map((item) => (
                 <tr key={item.id} className="tk-row-inactive">
                   <td className="py-2">{item.name}</td>
+                  <td>{formatCurrency(item.avgUnitCost.toNumber())}</td>
                   <td>
                     <form action={async () => { 'use server'; await reactivatePackagingItem(item.id) }}>
                       <button className="tk-link-success">Reativar</button>

@@ -38,16 +38,14 @@ async function main() {
     await prisma.materialDefaults.upsert({ where: { material: d.material }, update: {}, create: d })
   }
 
-  const packaging = [
-    { name: 'Caixa Grande', unitCost: 3.1656 },
-    { name: 'Caixa Pequena', unitCost: 1.398 },
-    { name: 'Almofada Colmeia', unitCost: 0.8517 },
-    { name: 'Fita gomada', unitCost: 0.1933 },
-    { name: 'Etiqueta', unitCost: 0.1333 },
-  ]
-  for (const p of packaging) {
-    await prisma.packagingItem.upsert({ where: { name: p.name }, update: {}, create: p })
-  }
+  // Melhoria "Embalagens": PackagingItem ganhou controle de estoque real
+  // (currentStock/avgUnitCost, cadastro = primeira compra) -- não seeda mais
+  // placeholders aqui, mesmo raciocínio do Bug 2 abaixo pra Insumos: um item
+  // criado com estoque zero fica esgotado pra sempre e não pode ser
+  // removido pela UI. Embalagem real só nasce de um cadastro real
+  // (createPackagingItem), nunca de seed. Itens já existentes no banco (de
+  // deploys anteriores a essa mudança) não são afetados -- isso só remove a
+  // inserção, nunca apaga linha existente.
 
   // Bug 2: Insumos NUNCA são seedados como placeholders com estoque zero --
   // um Supply criado assim fica esgotado pra sempre (ninguém repõe o que

@@ -30,6 +30,10 @@ async function getCurrentQuantity(resourceType: StockAdjustmentResourceType, res
       const rows = await getOwnStockSummary()
       return rows.find((r) => r.productId === resourceId)?.available ?? 0
     }
+    case 'PACKAGING': {
+      const p = await prisma.packagingItem.findUniqueOrThrow({ where: { id: resourceId } })
+      return p.currentStock.toNumber()
+    }
   }
 }
 
@@ -49,6 +53,8 @@ export async function adjustStock(formData: FormData): Promise<ActionResult> {
       await tx.accessory.update({ where: { id: resourceId }, data: { currentStock: newQty } })
     } else if (resourceType === 'SUPPLY') {
       await tx.supply.update({ where: { id: resourceId }, data: { currentStock: newQty } })
+    } else if (resourceType === 'PACKAGING') {
+      await tx.packagingItem.update({ where: { id: resourceId }, data: { currentStock: newQty } })
     }
     // PRODUCT: nada pra escrever -- o "difference" gravado abaixo já é
     // suficiente pra getOwnStockSummary somar na próxima leitura.
@@ -60,6 +66,7 @@ export async function adjustStock(formData: FormData): Promise<ActionResult> {
   revalidatePath('/filaments')
   revalidatePath('/accessories')
   revalidatePath('/supplies')
+  revalidatePath('/packaging')
   revalidatePath('/stock')
   return { success: true }
 }

@@ -128,14 +128,38 @@ model Filament {
   @@unique([manufacturer, material, colorName, rollNumber])
 }
 
+// Melhorias "Embalagens": ganhou controle de estoque real (antes só tinha
+// unitCost hand-typed, sem quantidade nenhuma) -- mesmo padrão de
+// Accessory/Supply (custo médio ponderado, recalculado a cada compra via
+// PackagingItemPurchase). minStock é limiar ABSOLUTO por item (não
+// percentual como Filament/Accessory/Supply) -- "Estoque baixo" é
+// currentStock <= minStock, ver lib/costing.ts#getPackagingStockStatus.
 model PackagingItem {
-  id        String    @id @default(cuid())
-  name      String    @unique
-  unitCost  Decimal   @db.Decimal(10, 4)
-  active    Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  products  Product[]
+  id           String                  @id @default(cuid())
+  name         String                  @unique
+  currentStock Decimal                 @db.Decimal(10, 2)
+  avgUnitCost  Decimal                 @db.Decimal(10, 4)
+  minStock     Decimal                 @default(0) @db.Decimal(10, 2)
+  active       Boolean                 @default(true)
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+  products     Product[]
+  purchases    PackagingItemPurchase[]
+}
+
+model PackagingItemPurchase {
+  id              String        @id @default(cuid())
+  packagingItemId String
+  // onDelete: Cascade -- histórico de compra só existe pra explicar como
+  // essa embalagem chegou no estoque/custo atual (mesmo padrão de
+  // AccessoryPurchase/SupplyPurchase); Product's FK (default Restrict) é
+  // quem bloqueia deletePackagingItem físico, não esta tabela.
+  packagingItem   PackagingItem @relation(fields: [packagingItemId], references: [id], onDelete: Cascade)
+  quantity        Decimal       @db.Decimal(10, 2)
+  totalCost       Decimal       @db.Decimal(10, 2)
+  purchaseDate    DateTime
+  notes           String?
+  createdAt       DateTime      @default(now())
 }
 
 // Tipos de acessório (spec: Configurações → Tipos de acessório), movidos de
@@ -647,6 +671,7 @@ enum StockAdjustmentResourceType {
   ACCESSORY
   SUPPLY
   PRODUCT
+  PACKAGING
 }
 
 enum StockAdjustmentReason {

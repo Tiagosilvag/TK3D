@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createPackagingItem, updatePackagingItem, deletePackagingItem, reactivatePackagingItem } from '@/actions/packaging'
+import { createPackagingItem, updatePackagingItem, registerPackagingPurchase, deletePackagingItem, reactivatePackagingItem } from '@/actions/packaging'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -21,31 +21,41 @@ function fd(obj: Record<string, string>): FormData {
 }
 
 describe('packaging actions', () => {
-  it('cria uma embalagem válida', async () => {
+  it('cria uma embalagem válida (cadastro = primeira compra)', async () => {
     const result = await createPackagingItem(fd({
       name: 'Caixa Teste',
-      unitCost: '1.5',
+      quantity: '10',
+      totalCost: '15',
+      minStock: '2',
     }))
     expect(result.success).toBe(true)
     const item = await prisma.packagingItem.findFirst({ where: { name: 'Caixa Teste' } })
     expect(item).not.toBeNull()
+    expect(item?.currentStock.toNumber()).toBe(10)
+    expect(item?.avgUnitCost.toNumber()).toBeCloseTo(1.5, 6)
+    expect(item?.minStock.toNumber()).toBe(2)
   })
 
   it('rejeita nome vazio', async () => {
     const result = await createPackagingItem(fd({
       name: '',
-      unitCost: '1.5',
+      quantity: '10',
+      totalCost: '15',
+      minStock: '0',
     }))
     expect(result.success).toBe(false)
   })
 
-  it('atualiza e depois remove (soft-delete)', async () => {
-    const created = await createPackagingItem(fd({ name: 'Saco Teste', unitCost: '0.3' }))
+  it('atualiza nome/estoque mínimo e depois remove (soft-delete)', async () => {
+    const created = await createPackagingItem(fd({ name: 'Saco Teste', quantity: '20', totalCost: '6', minStock: '0' }))
     expect(created.success).toBe(true)
     const item = await prisma.packagingItem.findFirstOrThrow({ where: { name: 'Saco Teste' } })
 
-    const updated = await updatePackagingItem(item.id, fd({ name: 'Saco Teste Atualizado', unitCost: '0.35' }))
+    const updated = await updatePackagingItem(item.id, fd({ name: 'Saco Teste Atualizado', minStock: '5' }))
     expect(updated.success).toBe(true)
+    const afterUpdate = await prisma.packagingItem.findUniqueOrThrow({ where: { id: item.id } })
+    expect(afterUpdate.name).toBe('Saco Teste Atualizado')
+    expect(afterUpdate.minStock.toNumber()).toBe(5)
 
     const del = await deletePackagingItem(item.id)
     expect(del.success).toBe(true)
@@ -57,7 +67,7 @@ describe('packaging actions', () => {
   })
 
   it('reativa uma embalagem removida (soft-deleted)', async () => {
-    const created = await createPackagingItem(fd({ name: 'Caixa Reativação', unitCost: '2' }))
+    const created = await createPackagingItem(fd({ name: 'Caixa Reativação', quantity: '5', totalCost: '10', minStock: '0' }))
     expect(created.success).toBe(true)
     const item = await prisma.packagingItem.findFirstOrThrow({ where: { name: 'Caixa Reativação' } })
 
@@ -67,5 +77,19 @@ describe('packaging actions', () => {
 
     const restored = await prisma.packagingItem.findUnique({ where: { id: item.id } })
     expect(restored?.active).toBe(true)
+  })
+
+  it('repõe estoque recalculando custo médio ponderado', async () => {
+    const created = await createPackagingItem(fd({ name: 'Caixa Reposição', quantity: '10', totalCost: '10', minStock: '0' }))
+    expect(created.success).toBe(true)
+    const item = await prisma.packagingItem.findFirstOrThrow({ where: { name: 'Caixa Reposição' } })
+
+    const restocked = await registerPackagingPurchase(fd({ packagingItemId: item.id, quantity: '10', totalCost: '20' }))
+    expect(restocked.success).toBe(true)
+
+    const after = await prisma.packagingItem.findUniqueOrThrow({ where: { id: item.id } })
+    expect(after.currentStock.toNumber()).toBe(20)
+    // (10*1 + 20) / 20 = 1.5
+    expect(after.avgUnitCost.toNumber()).toBeCloseTo(1.5, 6)
   })
 })

@@ -40,6 +40,18 @@ export function getStockStatus(percentRemaining: number): StockStatus {
   return { emoji: '🟢', label: 'Em estoque' }
 }
 
+// Melhorias "Embalagens": status de estoque por limiar ABSOLUTO
+// (PackagingItem.minStock, unidades), não percentual como Filament (fixo
+// 30/10) ou Accessory/Supply (Settings.stockLow/CriticalThresholdPercent)
+// -- cada embalagem define seu próprio "abaixo de quanto é pouco" em
+// unidades direto, sem depender de histórico de compras pra calcular uma
+// referência de 100%.
+export function getPackagingStockStatus(currentStock: number, minStock: number): StockStatus {
+  if (currentStock <= 0) return { emoji: '⚫', label: 'Esgotado' }
+  if (currentStock <= minStock) return { emoji: '🔴', label: 'Estoque baixo' }
+  return { emoji: '🟢', label: 'Em estoque' }
+}
+
 // Accessory/Supply stock status (spec §1.1/§1.3, task-3 brief): same shape
 // as getStockStatus above, but with the low/critical thresholds passed in
 // (as fractions, 0-1 -- same convention Settings stores every percentage
