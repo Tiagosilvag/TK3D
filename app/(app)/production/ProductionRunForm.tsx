@@ -24,8 +24,14 @@ function formatHours(hours: number): string {
 type EditingRun = {
   id: string
   productName: string
+  productPartName: string | null
   printerName: string
   filamentName: string
+  // Ajuste "peça multi-filamento": updateProductionRun recusa editar
+  // desperdício de uma produção com várias cores reais (o formulário
+  // simples de "gramas desperdiçadas" não sabe dizer qual cor mudou) --
+  // ver esse motivo exibido em vez dos campos de edição.
+  isMultiFilament: boolean
   date: string
   quantityPlanned: number
   quantitySuccess: number
@@ -208,6 +214,12 @@ export function ProductionRunForm({
           <span className="block text-slate-500 dark:text-slate-400">Produto</span>
           <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.productName}</span>
         </div>
+        {editingRun.productPartName && (
+          <div className="text-sm">
+            <span className="block text-slate-500 dark:text-slate-400">Peça</span>
+            <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.productPartName}</span>
+          </div>
+        )}
         <div className="text-sm">
           <span className="block text-slate-500 dark:text-slate-400">Impressora</span>
           <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.printerName}</span>
@@ -229,32 +241,41 @@ export function ProductionRunForm({
           <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.gramsUsed}g</span>
         </div>
 
-        <label className="text-sm">
-          Filamento desperdiçado (g)
-          <input name="gramsWasted" type="number" step="0.01" min="0" defaultValue={editingRun.gramsWasted} className="tk-input-full" />
-        </label>
-        <label className="text-sm">
-          Tempo desperdiçado (HH:MM)
-          <HoursInput name="timeWastedHours" value={parseFloat(timeWastedHours) || 0} onChange={(hours) => setTimeWastedHours(String(hours))} />
-        </label>
-        <label className="text-sm">
-          Motivo do desperdício (opcional)
-          <select name="wasteReason" defaultValue={editingRun.wasteReason ?? ''} className="tk-input-full">
-            <option value="">Nenhum</option>
-            {WASTE_REASON_OPTIONS.map((reason) => (
-              <option key={reason} value={reason}>{WASTE_REASON_LABELS[reason]}</option>
-            ))}
-          </select>
-        </label>
-        <label className="col-span-full text-sm md:col-span-3">
-          Observações (opcional)
-          <textarea name="notes" defaultValue={editingRun.notes ?? ''} className="tk-input-full" rows={2} />
-        </label>
+        {editingRun.isMultiFilament ? (
+          <p className="col-span-full text-sm text-amber-600 dark:text-amber-400">
+            Esta produção usou mais de um filamento -- não é possível corrigir o desperdício aqui, porque não dá pra saber qual cor mudou.
+            Cancele esta produção e registre de novo com os valores corretos.
+          </p>
+        ) : (
+          <>
+            <label className="text-sm">
+              Filamento desperdiçado (g)
+              <input name="gramsWasted" type="number" step="0.01" min="0" defaultValue={editingRun.gramsWasted} className="tk-input-full" />
+            </label>
+            <label className="text-sm">
+              Tempo desperdiçado (HH:MM)
+              <HoursInput name="timeWastedHours" value={parseFloat(timeWastedHours) || 0} onChange={(hours) => setTimeWastedHours(String(hours))} />
+            </label>
+            <label className="text-sm">
+              Motivo do desperdício (opcional)
+              <select name="wasteReason" defaultValue={editingRun.wasteReason ?? ''} className="tk-input-full">
+                <option value="">Nenhum</option>
+                {WASTE_REASON_OPTIONS.map((reason) => (
+                  <option key={reason} value={reason}>{WASTE_REASON_LABELS[reason]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="col-span-full text-sm md:col-span-3">
+              Observações (opcional)
+              <textarea name="notes" defaultValue={editingRun.notes ?? ''} className="tk-input-full" rows={2} />
+            </label>
+          </>
+        )}
 
         <div className="col-span-full mt-2 flex items-center gap-3">
-          <SubmitButton pendingLabel="Salvando…">Salvar alterações</SubmitButton>
+          {!editingRun.isMultiFilament && <SubmitButton pendingLabel="Salvando…">Salvar alterações</SubmitButton>}
           <Link href="/production" className="text-xs text-slate-500 hover:underline dark:text-slate-400">
-            Cancelar
+            {editingRun.isMultiFilament ? 'Voltar' : 'Cancelar'}
           </Link>
         </div>
       </form>

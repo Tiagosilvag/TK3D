@@ -34,7 +34,7 @@ export default async function ProductionPage({
     prisma.productionRun.findMany({
       where: runsWhere,
       orderBy: { date: 'desc' },
-      include: { product: true, printer: true, filament: true },
+      include: { product: true, printer: true, filament: true, productPart: true, filamentUsages: { include: { filament: true } } },
       skip: (currentPage - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
     }),
@@ -43,7 +43,7 @@ export default async function ProductionPage({
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { manufacturer: 'asc' } }),
     editId
-      ? prisma.productionRun.findUnique({ where: { id: editId }, include: { product: true, printer: true, filament: true } })
+      ? prisma.productionRun.findUnique({ where: { id: editId }, include: { product: true, printer: true, filament: true, productPart: true, filamentUsages: true } })
       : null,
   ])
 
@@ -74,8 +74,10 @@ export default async function ProductionPage({
     ? {
         id: editingRunRecord.id,
         productName: editingRunRecord.product.name,
+        productPartName: editingRunRecord.productPart?.name ?? null,
         printerName: editingRunRecord.printer.name,
         filamentName: `${editingRunRecord.filament.manufacturer} ${editingRunRecord.filament.colorName} — Rolo #${String(editingRunRecord.filament.rollNumber).padStart(3, '0')}`,
+        isMultiFilament: editingRunRecord.filamentUsages.length > 0,
         date: editingRunRecord.date.toISOString().slice(0, 10),
         quantityPlanned: editingRunRecord.quantityPlanned,
         quantitySuccess: editingRunRecord.quantitySuccess,
@@ -135,6 +137,7 @@ export default async function ProductionPage({
           <tr className="tk-table-head-row">
             <th className="py-2">Data</th>
             <th>Produto</th>
+            <th>Peça</th>
             <th>Impressora</th>
             <th>Filamento</th>
             <th>Plan.</th>
@@ -160,8 +163,15 @@ export default async function ProductionPage({
               <tr key={run.id} className="tk-row">
                 <td className="py-2">{run.date.toLocaleDateString('pt-BR')}</td>
                 <td>{run.product.name}</td>
+                <td>{run.productPart?.name ?? '—'}</td>
                 <td>{run.printer.name}</td>
-                <td>{run.filament.manufacturer} {run.filament.colorName} — Rolo #{String(run.filament.rollNumber).padStart(3, '0')}</td>
+                <td>
+                  {/* Ajuste "peça multi-filamento": produção de peça com
+                      >1 cor mostra todas, não só a "principal" (run.filament). */}
+                  {run.filamentUsages.length > 0
+                    ? run.filamentUsages.map((u) => `${u.filament.colorName} — Rolo #${String(u.filament.rollNumber).padStart(3, '0')}`).join(', ')
+                    : `${run.filament.manufacturer} ${run.filament.colorName} — Rolo #${String(run.filament.rollNumber).padStart(3, '0')}`}
+                </td>
                 <td>{run.quantityPlanned}</td>
                 <td>{run.quantitySuccess}</td>
                 <td>{run.quantityFailed}</td>
