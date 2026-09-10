@@ -83,7 +83,15 @@ function SecondaryLink({ href, label, active, badge }: NavLink & { active: boole
   )
 }
 
-export function AppLayoutClient({ children, suppliesOutOfStockCount }: { children: React.ReactNode; suppliesOutOfStockCount: number }) {
+export function AppLayoutClient({
+  children,
+  suppliesOutOfStockCount,
+  filamentsLowStockCount,
+}: {
+  children: React.ReactNode
+  suppliesOutOfStockCount: number
+  filamentsLowStockCount: number
+}) {
   const pathname = usePathname()
   const router = useRouter()
 
@@ -94,6 +102,7 @@ export function AppLayoutClient({ children, suppliesOutOfStockCount }: { childre
   }
 
   const settingsGroupActive = SETTINGS_NAV_LINKS.some((link) => isActive(pathname, link.href))
+  const SETTINGS_BADGES: Record<string, number> = { '/supplies': suppliesOutOfStockCount, '/filaments': filamentsLowStockCount }
 
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -154,7 +163,7 @@ export function AppLayoutClient({ children, suppliesOutOfStockCount }: { childre
                   key={link.href}
                   {...link}
                   active={isActive(pathname, link.href)}
-                  badge={link.href === '/supplies' ? suppliesOutOfStockCount : undefined}
+                  badge={SETTINGS_BADGES[link.href]}
                 />
               ))}
             </div>

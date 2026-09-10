@@ -1,7 +1,25 @@
 import { prisma } from '@/lib/prisma'
-import type { ProductionCostSnapshot } from '@/lib/costing'
+import { getStockStatus, type ProductionCostSnapshot } from '@/lib/costing'
 import { productNeedsAssembly } from '@/lib/products'
 import type { Prisma, ProductionStatus, WasteReason } from '@prisma/client'
+
+// Badge do menu lateral (Filamentos, AppLayoutClient) -- mesma definição de
+// "Estoque baixo" já usada na tela de Filamentos (lib/costing.ts#getStockStatus),
+// pra badge do menu, chip da tela e status de cada linha nunca divergirem.
+// Só filamento com estoque > 0 entra na conta (esgotado é outra categoria,
+// já sinalizada à parte na própria tela de Filamentos).
+export async function getFilamentsLowStockCount(): Promise<number> {
+  const filaments = await prisma.filament.findMany({
+    where: { currentStockGrams: { gt: 0 } },
+    select: { currentStockGrams: true, initialStockGrams: true },
+  })
+  return filaments.filter((f) => {
+    const initial = f.initialStockGrams.toNumber()
+    const current = f.currentStockGrams.toNumber()
+    const percentRemaining = initial > 0 ? (current / initial) * 100 : 0
+    return getStockStatus(percentRemaining).label === 'Estoque baixo'
+  }).length
+}
 
 // 3.6 estendeu SaleChannel com SHOPEE/MERCADO_LIVRE (além do MARKETPLACE
 // legado) -- pro Dashboard, que só distingue Direta vs Marketplace no
