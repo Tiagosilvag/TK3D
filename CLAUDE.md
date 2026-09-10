@@ -37,6 +37,15 @@ Deploy em produção: `tk3d.coffetech.com.br` via Coolify.
   acessórios, insumos, embalagens, produtos, vendas, produção) usa esse
   query param pra alternar entre formulário de criação e edição —
   consistente em todo o app.
+- **Produção → Montagem → Estoque**: `lib/products.ts#productNeedsAssembly`
+  decide se um produto precisa passar por `/assembly` antes de virar
+  estoque de produto acabado -- verdadeiro se composto OU se tem qualquer
+  insumo/acessório cadastrado; só "peça única, sem nenhum componente" vai
+  direto de Produção pro estoque (`Produção → Estoque`). Pra todo o resto,
+  `createProductionRun` não decrementa insumo/acessório na hora (fica pra
+  `confirmAssembly`), e `getOwnStockSummary` só conta "produzido" depois
+  da montagem confirmada (`ProductAssembly`, nunca direto de
+  `ProductionRun`).
 - **`ActionResult`**: `type ActionResult = { success: boolean; error?: string }`
   redefinido localmente em cada `actions/*.ts` (não é um tipo
   compartilhado) — todo action segue esse contrato.
@@ -88,7 +97,10 @@ Deploy em produção: `tk3d.coffetech.com.br` via Coolify.
   anteriores a esse ajuste -- nunca inventado retroativamente. Sale/
   ConsignmentDelivery NÃO diferenciam variante (fora do escopo atual),
   então só "produzido por variante" é confiável, nunca "disponível por
-  variante".
+  variante". `confirmAssembly` também decrementa `Accessory.currentStock`/
+  `Supply.currentStock` a partir de uma lista editável enviada pelo
+  formulário (pré-preenchida da ficha técnica do produto, mas ajustável
+  só pra aquela leva -- nunca reescreve a ficha técnica cadastrada).
 - **Sale**: canal (`SaleChannel`: `DIRETA | SHOPEE | MERCADO_LIVRE`,
   mais `MARKETPLACE` só como valor legado — não oferecido em vendas
   novas desde 3.6), `costSnapshot`.
