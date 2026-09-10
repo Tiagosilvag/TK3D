@@ -248,7 +248,7 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
                       currentQuantity={r.currentStockGrams}
                       unitLabel="g"
                     />
-                    <ConfirmDeleteForm action={async () => { await deleteFilament(r.id) }} />
+                    <ConfirmDeleteForm action={async () => { return await deleteFilament(r.id) }} />
                   </ActionsMenu>
                 </td>
               </tr>

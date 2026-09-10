@@ -58,7 +58,7 @@ export default async function ConsignmentDeliveriesPage({
                 <td>{remaining}</td>
                 <td>{formatCurrency(d.unitPrice.toNumber())}</td>
                 <td>
-                  <ConfirmDeleteForm action={async () => { 'use server'; await deleteConsignmentDelivery(d.id) }} />
+                  <ConfirmDeleteForm action={async () => { 'use server'; return await deleteConsignmentDelivery(d.id) }} />
                 </td>
               </tr>
             )

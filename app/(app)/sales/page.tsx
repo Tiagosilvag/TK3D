@@ -154,7 +154,7 @@ export default async function SalesPage({
                     <Link href={`/sales?editId=${s.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
                       Editar
                     </Link>
-                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteSale(s.id) }} />
+                    <ConfirmDeleteForm action={async () => { 'use server'; return await deleteSale(s.id) }} />
                   </ActionsMenu>
                 </td>
               </tr>

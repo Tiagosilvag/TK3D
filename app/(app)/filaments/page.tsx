@@ -82,7 +82,7 @@ export default async function FilamentsPage({
                   <td>{f.material}</td>
                   <td>{f.currentStockGrams.toNumber()}g</td>
                   <td>
-                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteFilament(f.id) }} />
+                    <ConfirmDeleteForm action={async () => { 'use server'; return await deleteFilament(f.id) }} />
                   </td>
                 </tr>
               ))}

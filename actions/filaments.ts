@@ -1,9 +1,14 @@
 'use server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { filamentSchema } from '@/lib/validation/filament'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
+
+function isForeignKeyConstraintError(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003'
+}
 
 export async function createFilament(formData: FormData): Promise<ActionResult> {
   const parsed = filamentSchema.safeParse(Object.fromEntries(formData))
@@ -38,12 +43,20 @@ export async function updateFilament(id: string, formData: FormData): Promise<Ac
   return { success: true }
 }
 
-// Physical delete — no soft-delete in this model (spec §3.2). If a Product/ProductionRun
-// references this roll, Postgres's FK constraint blocks it and Prisma throws; that
-// propagates as an unhandled error, matching the existing precedent elsewhere in this
-// codebase of not handling FK-constraint deletes specially.
+// Physical delete — no soft-delete in this model (spec §3.2). If a Product/
+// ProductionRun references this roll, Postgres's FK constraint (ON DELETE
+// RESTRICT) blocks it and Prisma throws P2003, caught below and turned into
+// a friendly ActionResult instead of crashing the page (bug: this used to
+// propagate unhandled, showing the user a raw "Application error").
 export async function deleteFilament(id: string): Promise<ActionResult> {
-  await prisma.filament.delete({ where: { id } })
+  try {
+    await prisma.filament.delete({ where: { id } })
+  } catch (err) {
+    if (isForeignKeyConstraintError(err)) {
+      return { success: false, error: 'Este filamento está sendo usado na ficha técnica ou em produções registradas e não pode ser excluído.' }
+    }
+    throw err
+  }
   revalidatePath('/filaments')
   return { success: true }
 }

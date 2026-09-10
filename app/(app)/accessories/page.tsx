@@ -244,7 +244,7 @@ export default async function AccessoriesPage({
                       Editar
                     </Link>
                     <AdjustStockButton resourceType="ACCESSORY" resourceId={a.id} resourceName={a.name} currentQuantity={currentStock} />
-                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteAccessory(a.id) }} />
+                    <ConfirmDeleteForm action={async () => { 'use server'; return await deleteAccessory(a.id) }} />
                   </ActionsMenu>
                 </div>
               </td>

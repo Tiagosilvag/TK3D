@@ -188,7 +188,7 @@ export default async function ProductionPage({
                       </Link>
                     )}
                     {run.status !== 'CANCELADA' && <CancelProductionRunForm id={run.id} />}
-                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteProductionRun(run.id) }} />
+                    <ConfirmDeleteForm action={async () => { 'use server'; return await deleteProductionRun(run.id) }} />
                   </ActionsMenu>
                 </td>
               </tr>

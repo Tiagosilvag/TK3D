@@ -141,7 +141,7 @@ export function PackagingExplorer({ rows, editingItem }: { rows: PackagingRow[];
                     </Link>
                     <RestockForm packagingItemId={r.id} packagingItemName={r.name} />
                     <AdjustStockButton resourceType="PACKAGING" resourceId={r.id} resourceName={r.name} currentQuantity={r.currentStock} unitLabel=" un" />
-                    <ConfirmDeleteForm action={async () => { await deletePackagingItem(r.id) }} />
+                    <ConfirmDeleteForm action={async () => { return await deletePackagingItem(r.id) }} />
                   </ActionsMenu>
                 </td>
               </tr>

@@ -85,7 +85,7 @@ export default async function ConsignmentPartnersPage() {
                         )}
                       </details>
                     )}
-                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteConsignmentPartner(p.id) }} />
+                    <ConfirmDeleteForm action={async () => { 'use server'; return await deleteConsignmentPartner(p.id) }} />
                   </div>
                 </td>
               </tr>

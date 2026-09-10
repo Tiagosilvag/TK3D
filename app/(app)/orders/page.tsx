@@ -51,7 +51,7 @@ export default async function OrdersPage() {
                 </td>
                 <td>
                   {!o.saleId && (
-                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteOrder(o.id) }} />
+                    <ConfirmDeleteForm action={async () => { 'use server'; return await deleteOrder(o.id) }} />
                   )}
                 </td>
               </tr>

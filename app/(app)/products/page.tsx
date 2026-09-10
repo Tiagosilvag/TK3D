@@ -75,7 +75,7 @@ export default async function ProductsPage() {
                 <td>{formatCurrency(breakdown.suggestedPrice)}</td>
                 <td>{formatCurrency(breakdown.marketplacePrice)}</td>
                 <td>
-                  <ConfirmDeleteForm action={async () => { 'use server'; await deleteProduct(p.id) }} />
+                  <ConfirmDeleteForm action={async () => { 'use server'; return await deleteProduct(p.id) }} />
                 </td>
               </tr>
             )

@@ -11,6 +11,10 @@ function isUniqueConstraintError(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
 }
 
+function isForeignKeyConstraintError(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003'
+}
+
 // Cadastro de um Accessory NOVO = a primeira compra (task-3 brief): creates
 // the Accessory row AND its first AccessoryPurchase in the same transaction.
 // currentStock/avgUnitCost are derived from that purchase via
@@ -167,20 +171,26 @@ export async function registerAccessoryPurchase(formData: FormData): Promise<Act
 // Physical delete — only allowed when nothing references this accessory AND
 // it isn't depleted. "Esgotados não podem ser excluídos" is an explicit rule
 // from the original spec/prompt (spec §1.1: esgotado "some da lista
-// principal ... histórico de compras preservado", never deleted) -- before
-// this guard (task-10 brief, Fix 1) the only thing stopping a delete was the
-// FK constraint below, which does nothing for an esgotado item that no
-// Product ever referenced. AccessoryPurchase rows cascade automatically
-// (they only exist to explain this accessory's own history); a Product still
-// pointing at it via ProductAccessoryUsage hits Postgres's FK constraint and
-// Prisma throws, which propagates unhandled — same precedent as
-// deleteFilament.
+// principal ... histórico de compras preservado", never deleted).
+// AccessoryPurchase rows cascade automatically (they only exist to explain
+// this accessory's own history); a Product still pointing at it via
+// ProductAccessoryUsage hits Postgres's FK constraint (ON DELETE RESTRICT) --
+// Prisma throws P2003, caught below and turned into a friendly ActionResult
+// instead of crashing the page (bug: this used to propagate unhandled,
+// showing the user a raw "Application error").
 export async function deleteAccessory(id: string): Promise<ActionResult> {
   const accessory = await prisma.accessory.findUniqueOrThrow({ where: { id } })
   if (accessory.currentStock.toNumber() <= 0) {
     return { success: false, error: 'Itens esgotados não podem ser excluídos — o histórico é mantido automaticamente.' }
   }
-  await prisma.accessory.delete({ where: { id } })
+  try {
+    await prisma.accessory.delete({ where: { id } })
+  } catch (err) {
+    if (isForeignKeyConstraintError(err)) {
+      return { success: false, error: 'Este acessório está sendo usado na ficha técnica de algum produto e não pode ser excluído.' }
+    }
+    throw err
+  }
   revalidatePath('/accessories')
   return { success: true }
 }

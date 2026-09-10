@@ -75,7 +75,7 @@ export default async function ConsignmentSaleReportsPage({
                 <td>{(commission * 100).toFixed(0)}%</td>
                 <td>{formatCurrency(payout)}</td>
                 <td>
-                  <ConfirmDeleteForm action={async () => { 'use server'; await deleteConsignmentSaleReport(r.id) }} />
+                  <ConfirmDeleteForm action={async () => { 'use server'; return await deleteConsignmentSaleReport(r.id) }} />
                 </td>
               </tr>
             )

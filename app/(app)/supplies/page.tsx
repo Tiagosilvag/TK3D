@@ -246,7 +246,7 @@ export default async function SuppliesPage({
                       Editar
                     </Link>
                     <AdjustStockButton resourceType="SUPPLY" resourceId={s.id} resourceName={s.name} currentQuantity={currentStock} unitLabel={SUPPLY_UNIT_LABELS[s.unit] === 'Unidade' ? '' : ` ${s.unit.toLowerCase()}`} />
-                    <ConfirmDeleteForm action={async () => { 'use server'; await deleteSupply(s.id) }} />
+                    <ConfirmDeleteForm action={async () => { 'use server'; return await deleteSupply(s.id) }} />
                   </ActionsMenu>
                 </div>
               </td>
