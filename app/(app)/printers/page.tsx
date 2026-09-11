@@ -47,6 +47,8 @@ export default async function PrintersPage({
         avgPowerConsumptionKwh: editingPrinterRecord.avgPowerConsumptionKwh.toNumber(),
         energyCostPerKwh: editingPrinterRecord.energyCostPerKwh.toNumber(),
         maintenanceCostPerHour: editingPrinterRecord.maintenanceCostPerHour.toNumber(),
+        bambuEnabled: editingPrinterRecord.bambuEnabled,
+        bambuSerial: editingPrinterRecord.bambuSerial,
       }
     : undefined
 
