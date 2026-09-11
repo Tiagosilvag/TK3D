@@ -51,7 +51,7 @@ async function createSupportRecords() {
       weightGrams: 30,
       printTimeHours: 2,
       laborTimeHours: 0.25,
-      packagingItemId: packagingItem.id,
+      packagingUsages: { create: [{ packagingItemId: packagingItem.id, quantity: 1 }] },
       accessoryUsages: { create: [{ accessoryId: accessory.id, quantity: 2 }] },
       supplyUsages: { create: [{ supplyId: supply.id, quantity: 3 }] },
     },
@@ -206,11 +206,9 @@ describe('productionRuns actions', () => {
     expect(snapshot.consumedResources.supplies).toEqual([
       { supplyId: supply.id, quantityPerUnit: 3, quantityConsumed: 24, unitCost: 1.2 },
     ])
-    expect(snapshot.consumedResources.packaging).toEqual({
-      packagingItemId: packagingItem.id,
-      quantityConsumed: 8,
-      unitCost: 0.3,
-    })
+    expect(snapshot.consumedResources.packaging).toEqual([
+      { packagingItemId: packagingItem.id, quantityPerUnit: 1, quantityConsumed: 8, unitCost: 0.3 },
+    ])
   })
 
   // --- Correctness requirement: pre-transaction check across ALL resources, write NOTHING on failure ---
@@ -520,6 +518,7 @@ describe('productionRuns actions', () => {
     // costSnapshot left null (as a real historical row would be after migration).
     const legacyRun = await prisma.productionRun.create({
       data: {
+        batchId: 'legacy-batch',
         productId: product.id,
         printerId: printer.id,
         filamentId: filament.id,
@@ -558,7 +557,7 @@ describe('productionRuns actions', () => {
     const snapshot = run.costSnapshot as any
     expect(snapshot.consumedResources.accessories).toEqual([])
     expect(snapshot.consumedResources.supplies).toEqual([])
-    expect(snapshot.consumedResources.packaging).toBeNull()
+    expect(snapshot.consumedResources.packaging).toEqual([])
     expect((await prisma.filament.findUniqueOrThrow({ where: { id: filament.id } })).currentStockGrams.toNumber()).toBe(1000 - 255)
 
     const cancel = await cancelProductionRun(run.id, 'Teste sem acessórios')

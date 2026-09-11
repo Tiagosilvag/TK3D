@@ -507,10 +507,21 @@ export interface ProductionSupplyUsageInput {
   avgUnitCost: number // Supply.avgUnitCost at production time
 }
 
+// Melhoria "Produtos" §3: generaliza a antiga embalagem-única
+// (packagingItemId/packagingCost soltos) numa lista, mesmo shape de
+// ProductionAccessoryUsageInput/ProductionSupplyUsageInput -- packagingCost
+// deixa de ser passado já somado e vira computado aqui dentro (sumUsageCost),
+// igual accessoryCost/suppliesCost.
+export interface ProductionPackagingUsageInput {
+  packagingItemId: string
+  quantity: number // per single unit of product
+  avgUnitCost: number // PackagingItem.avgUnitCost at production time
+}
+
 export interface ProductionCostSnapshotInput extends ProductCostFlags {
   // Ficha técnica (per single unit) — same fields calculateProductCost takes,
-  // minus the already-summed suppliesCost/accessoryCost (computed internally
-  // below via sumUsageCost from the lists instead).
+  // minus the already-summed suppliesCost/accessoryCost/packagingCost
+  // (computed internally below via sumUsageCost from the lists instead).
   weightGrams: number
   printTimeHours: number
   laborTimeHours: number
@@ -521,14 +532,13 @@ export interface ProductionCostSnapshotInput extends ProductCostFlags {
   printerEnergyCostPerKwh: number
   printerDepreciationCostPerHour: number
   printerMaintenanceCostPerHour: number
-  packagingCost: number
   accessoryUsages: ProductionAccessoryUsageInput[]
   supplyUsages: ProductionSupplyUsageInput[]
+  packagingUsages: ProductionPackagingUsageInput[]
 
   // Resource identities needed to record (and later reverse) consumption —
   // not used in any cost formula, only copied into consumedResources below.
   filamentId: string
-  packagingItemId: string | null
 
   // This specific production run.
   quantityPlanned: number
@@ -548,7 +558,7 @@ export interface ProductionResourceConsumption {
   filament: { filamentId: string; gramsUsed: number; gramsWasted: number }
   accessories: { accessoryId: string; quantityPerUnit: number; quantityConsumed: number; unitCost: number }[]
   supplies: { supplyId: string; quantityPerUnit: number; quantityConsumed: number; unitCost: number }[]
-  packaging: { packagingItemId: string; quantityConsumed: number; unitCost: number } | null
+  packaging: { packagingItemId: string; quantityPerUnit: number; quantityConsumed: number; unitCost: number }[]
 }
 
 export interface ProductionCostSnapshot {
@@ -577,6 +587,7 @@ export function buildProductionCostSnapshot(
 ): ProductionCostSnapshot {
   const suppliesCost = sumUsageCost(input.supplyUsages)
   const accessoryCost = sumUsageCost(input.accessoryUsages)
+  const packagingCost = sumUsageCost(input.packagingUsages)
 
   const unitCost = calculateProductCost(
     {
@@ -589,7 +600,7 @@ export function buildProductionCostSnapshot(
       printerDepreciationCostPerHour: input.printerDepreciationCostPerHour,
       printerMaintenanceCostPerHour: input.printerMaintenanceCostPerHour,
       suppliesCost,
-      packagingCost: input.packagingCost,
+      packagingCost,
       accessoryCost,
       includeDepreciation: input.includeDepreciation,
       includeEnergyCost: input.includeEnergyCost,
@@ -638,13 +649,12 @@ export function buildProductionCostSnapshot(
       quantityConsumed: u.quantity * input.quantitySuccess,
       unitCost: u.avgUnitCost,
     })),
-    packaging: input.packagingItemId
-      ? {
-          packagingItemId: input.packagingItemId,
-          quantityConsumed: input.quantitySuccess,
-          unitCost: input.packagingCost,
-        }
-      : null,
+    packaging: input.packagingUsages.map((u) => ({
+      packagingItemId: u.packagingItemId,
+      quantityPerUnit: u.quantity,
+      quantityConsumed: u.quantity * input.quantitySuccess,
+      unitCost: u.avgUnitCost,
+    })),
   }
 
   return {

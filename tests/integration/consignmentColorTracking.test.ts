@@ -65,8 +65,8 @@ async function buildTwoColorProductScenario() {
     },
   })
 
-  await prisma.productionRun.create({ data: { productId: product.id, printerId: printer.id, filamentId: filamentRosa.id, date: new Date('2026-09-01'), quantityPlanned: 5, quantitySuccess: 5, quantityFailed: 0, gramsUsed: 50, gramsWasted: 0, timeWastedHours: 0 } })
-  await prisma.productionRun.create({ data: { productId: product.id, printerId: printer.id, filamentId: filamentAzul.id, date: new Date('2026-09-01'), quantityPlanned: 5, quantitySuccess: 5, quantityFailed: 0, gramsUsed: 50, gramsWasted: 0, timeWastedHours: 0 } })
+  await prisma.productionRun.create({ data: { batchId: 'batch-1', productId: product.id, printerId: printer.id, filamentId: filamentRosa.id, date: new Date('2026-09-01'), quantityPlanned: 5, quantitySuccess: 5, quantityFailed: 0, gramsUsed: 50, gramsWasted: 0, timeWastedHours: 0 } })
+  await prisma.productionRun.create({ data: { batchId: 'batch-2', productId: product.id, printerId: printer.id, filamentId: filamentAzul.id, date: new Date('2026-09-01'), quantityPlanned: 5, quantitySuccess: 5, quantityFailed: 0, gramsUsed: 50, gramsWasted: 0, timeWastedHours: 0 } })
 
   await prisma.productAssembly.create({ data: { productId: product.id, quantity: 3, colorChoices: { [product.id]: filamentRosa.id } } })
   await prisma.productAssembly.create({ data: { productId: product.id, quantity: 2, colorChoices: { [product.id]: filamentAzul.id } } })

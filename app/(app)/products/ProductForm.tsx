@@ -8,7 +8,6 @@ import { HoursInput } from '@/components/HoursInput'
 
 type PrinterOption = { id: string; name: string; costPerHour: number }
 type FilamentOption = { id: string; name: string; pricePerGram: number }
-type PackagingOption = { id: string; name: string; unitCost: number }
 
 const FINISHING_TYPES = [
   { value: 'NENHUM', label: 'Nenhum' },
@@ -27,7 +26,6 @@ type ProductValues = {
   weightGrams: number
   printTimeHours: number
   laborTimeHours: number
-  packagingItemId: string | null
   finishingType: string
   usesGlue: boolean
   notes: string | null
@@ -76,17 +74,16 @@ export function ProductForm({
   existingParts,
   printers,
   filaments,
-  packagingItems,
   laborCostPerHour,
   currentSuppliesCost = 0,
   currentAccessoriesCost = 0,
   showLiveCostPanel = true,
+  onSuccess,
 }: {
   product?: ProductValues
   existingParts?: ExistingPart[]
   printers: PrinterOption[]
   filaments: FilamentOption[]
-  packagingItems: PackagingOption[]
   laborCostPerHour: number
   currentSuppliesCost?: number
   currentAccessoriesCost?: number
@@ -97,6 +94,11 @@ export function ProductForm({
   // que ajudava. Only a página de criação (/products, sem o painel da
   // direita ainda) continua mostrando este painel.
   showLiveCostPanel?: boolean
+  // Melhoria "Produtos" §1: o cadastro passou a viver dentro de um modal na
+  // listagem (ProductsExplorer) -- chamado depois de salvar com sucesso pra
+  // fechar o modal e atualizar a grade de cards, além do reset/refresh que
+  // este form já fazia.
+  onSuccess?: () => void
 }) {
   const formRef = useRef<HTMLFormElement>(null)
   const router = useRouter()
@@ -110,7 +112,6 @@ export function ProductForm({
   const [weightGrams, setWeightGrams] = useState(product ? String(product.weightGrams) : '')
   const [printTimeHours, setPrintTimeHours] = useState(product ? String(product.printTimeHours) : '')
   const [laborTimeHours, setLaborTimeHours] = useState(product ? String(product.laborTimeHours) : '0')
-  const [packagingItemId, setPackagingItemId] = useState(product?.packagingItemId ?? '')
   const [parts, setParts] = useState<PartRow[]>(
     existingParts && existingParts.length > 0
       ? existingParts.map((p) => ({
@@ -191,11 +192,13 @@ export function ProductForm({
 
     const result = product ? await updateProduct(product.id, formData) : await createProduct(formData)
     if (result.success) {
-      if (product) router.refresh()
-      else {
+      if (product) {
+        router.refresh()
+      } else {
         formRef.current?.reset()
         setParts([emptyPartRow()])
       }
+      onSuccess?.()
     } else {
       alert(result.error)
     }
@@ -203,7 +206,6 @@ export function ProductForm({
 
   const selectedPrinter = printers.find((p) => p.id === printerId)
   const selectedFilament = filaments.find((f) => f.id === filamentId)
-  const selectedPackaging = packagingItems.find((p) => p.id === packagingItemId)
 
   const weight = parseFloat(weightGrams) || 0
   const printHours = parseFloat(printTimeHours) || 0
@@ -211,7 +213,6 @@ export function ProductForm({
 
   const filamentPricePerGram = selectedFilament?.pricePerGram ?? 0
   const printerCostPerHour = selectedPrinter?.costPerHour ?? 0
-  const packagingCost = selectedPackaging?.unitCost ?? 0
   const laborCost = laborHours * laborCostPerHour
 
   // 2.1: pra composto, filamento/impressão são a SOMA de cada peça × sua
@@ -235,7 +236,7 @@ export function ProductForm({
 
   const filamentCost = isComposite ? compositeFilamentCost : weight * filamentPricePerGram
   const printCost = isComposite ? compositePrintCost : printHours * printerCostPerHour
-  const totalCost = filamentCost + printCost + laborCost + packagingCost + currentSuppliesCost + currentAccessoriesCost
+  const totalCost = filamentCost + printCost + laborCost + currentSuppliesCost + currentAccessoriesCost
   const suggestedPrice = totalCost * 2
   const marketplacePrice = totalCost * 3.3
 
@@ -412,15 +413,6 @@ export function ProductForm({
               <HoursInput name="laborTimeHours" value={parseFloat(laborTimeHours) || 0} onChange={(hours) => setLaborTimeHours(String(hours))} />
             </label>
             <label className="text-sm">
-              Embalagem (opcional)
-              <select name="packagingItemId" value={packagingItemId} onChange={(e) => setPackagingItemId(e.target.value)} className="tk-input-full">
-                <option value="">Nenhuma</option>
-                {packagingItems.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm">
               Acabamento (opcional)
               <select name="finishingType" defaultValue={product?.finishingType ?? 'NENHUM'} className="tk-input-full">
                 {FINISHING_TYPES.map((f) => (
@@ -468,10 +460,6 @@ export function ProductForm({
           <div className="flex justify-between text-slate-600 dark:text-slate-400">
             <dt>Mão de obra ({laborHours}h × {money(laborCostPerHour)}/h)</dt>
             <dd>{money(laborCost)}</dd>
-          </div>
-          <div className="flex justify-between text-slate-600 dark:text-slate-400">
-            <dt>Embalagem{selectedPackaging ? ` (${selectedPackaging.name})` : ''}</dt>
-            <dd>{money(packagingCost)}</dd>
           </div>
           {currentSuppliesCost > 0 && (
             <div className="flex justify-between text-slate-600 dark:text-slate-400">

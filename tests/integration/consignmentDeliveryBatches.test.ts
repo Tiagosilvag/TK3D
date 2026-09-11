@@ -44,9 +44,9 @@ async function buildSimpleProductScenario() {
   const productB = await prisma.product.create({
     data: { name: 'Picole', category: 'Chaveiro', printerId: printer.id, filamentId: filamentRosa.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0.1 },
   })
-  await prisma.productionRun.create({ data: { productId: productA.id, printerId: printer.id, filamentId: filamentRosa.id, date: new Date(), quantityPlanned: 45, quantitySuccess: 45, quantityFailed: 0, gramsUsed: 450, gramsWasted: 0, timeWastedHours: 0 } })
-  await prisma.productionRun.create({ data: { productId: productA.id, printerId: printer.id, filamentId: filamentAzul.id, date: new Date(), quantityPlanned: 30, quantitySuccess: 30, quantityFailed: 0, gramsUsed: 300, gramsWasted: 0, timeWastedHours: 0 } })
-  await prisma.productionRun.create({ data: { productId: productB.id, printerId: printer.id, filamentId: filamentRosa.id, date: new Date(), quantityPlanned: 3, quantitySuccess: 3, quantityFailed: 0, gramsUsed: 30, gramsWasted: 0, timeWastedHours: 0 } })
+  await prisma.productionRun.create({ data: { batchId: 'batch-1', productId: productA.id, printerId: printer.id, filamentId: filamentRosa.id, date: new Date(), quantityPlanned: 45, quantitySuccess: 45, quantityFailed: 0, gramsUsed: 450, gramsWasted: 0, timeWastedHours: 0 } })
+  await prisma.productionRun.create({ data: { batchId: 'batch-2', productId: productA.id, printerId: printer.id, filamentId: filamentAzul.id, date: new Date(), quantityPlanned: 30, quantitySuccess: 30, quantityFailed: 0, gramsUsed: 300, gramsWasted: 0, timeWastedHours: 0 } })
+  await prisma.productionRun.create({ data: { batchId: 'batch-3', productId: productB.id, printerId: printer.id, filamentId: filamentRosa.id, date: new Date(), quantityPlanned: 3, quantitySuccess: 3, quantityFailed: 0, gramsUsed: 30, gramsWasted: 0, timeWastedHours: 0 } })
 
   return { printer, filamentRosa, filamentAzul, productA, productB }
 }

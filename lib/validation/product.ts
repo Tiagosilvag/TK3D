@@ -46,7 +46,6 @@ export const productSchema = z
     weightGrams: z.coerce.number().optional(),
     printTimeHours: z.coerce.number().optional(),
     laborTimeHours: z.coerce.number().nonnegative('Tempo de mão de obra não pode ser negativo'),
-    packagingItemId: z.string().optional().nullable(),
     finishingType: finishingTypeEnum,
     usesGlue: checkboxBoolean,
     notes: z.string().optional().nullable(),

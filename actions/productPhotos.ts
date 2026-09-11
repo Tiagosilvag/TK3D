@@ -41,5 +41,21 @@ export async function addProductPhoto(formData: FormData) {
 export async function removeProductPhoto(photoId: string) {
   const photo = await prisma.productPhoto.delete({ where: { id: photoId } })
   revalidatePath(`/products/${photo.productId}`)
+  revalidatePath('/products')
+  return { success: true }
+}
+
+// Melhoria "Produtos" §3: clicar numa foto já enviada marca ela como capa
+// (mostrada no card da listagem) -- desmarca a anterior e marca a nova na
+// mesma transação, garantindo no máximo 1 capa por produto (reforçado
+// também por um índice único parcial no banco, ver migration.sql).
+export async function setProductCoverPhoto(photoId: string) {
+  const photo = await prisma.productPhoto.findUniqueOrThrow({ where: { id: photoId } })
+  await prisma.$transaction([
+    prisma.productPhoto.updateMany({ where: { productId: photo.productId, isCover: true }, data: { isCover: false } }),
+    prisma.productPhoto.update({ where: { id: photoId }, data: { isCover: true } }),
+  ])
+  revalidatePath(`/products/${photo.productId}`)
+  revalidatePath('/products')
   return { success: true }
 }

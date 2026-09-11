@@ -1,6 +1,8 @@
 'use server'
+import { randomUUID } from 'crypto'
+import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { productionRunSchema, productionRunWasteUpdateSchema } from '@/lib/validation/productionRun'
+import { productionRunSchema, productionRunWasteUpdateSchema, productionRunBatchSchema } from '@/lib/validation/productionRun'
 import {
   buildProductionCostSnapshot,
   calculatePrinterDepreciationCostPerHour,
@@ -88,11 +90,35 @@ interface ResourceCheck {
 // Aqui (produção) o avgUnitCost ainda entra no costSnapshot (via
 // buildProductionCostSnapshot's consumedResources.packaging) pra
 // accounting de custo, mas nenhum estoque é checado ou tocado.
-export async function createProductionRun(formData: FormData): Promise<ActionResult> {
-  const parsed = parse(formData)
-  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
-  const { filamentUsages, ...data } = parsed.data
+// Melhoria "Produção" §3: extraído de createProductionRun pra ser
+// reutilizável por createProductionRunBatch -- monta as operações de
+// escrita (criar a run + decrementar cada recurso consumido) de UMA
+// produção SEM executá-las, pra que um lote de N peças (checkbox por peça
+// no modal "Registrar produção") consiga juntar as operações de todas
+// antes de rodar TUDO numa transação só (spec §5.3: um lote com qualquer
+// peça sem estoque suficiente não escreve nada, nem as outras peças que
+// passariam no check). createProductionRun (1 produção só) e
+// createProductionRunBatch (N produções, 1 batchId compartilhado) chamam
+// esta mesma função -- o comportamento de cada produção individual
+// (checagem de estoque, snapshot de custo, consumo de recursos) nunca muda
+// entre os dois call sites.
+type RunCreationData = Omit<z.infer<typeof productionRunSchema>, 'filamentUsages'> & { batchId: string }
 
+async function prepareProductionRunCreation(
+  data: RunCreationData,
+  filamentUsages?: { filamentId: string; gramsUsed: number; gramsWasted: number }[],
+  // Melhoria "Produção" §3: quando várias peças do MESMO lote consomem o
+  // mesmo filamento (ex.: Topo e Meio, ambos "Masterprint Azul" no
+  // mockup), cada uma checaria o estoque fresco do banco isoladamente --
+  // como as ops só executam no fim (createProductionRunBatch), a segunda
+  // peça não "veria" o consumo já reservado pela primeira e um lote que
+  // devia estourar o estoque combinado passaria no check mesmo assim. Este
+  // mapa (filamentId -> gramas já reservadas por itens ANTERIORES deste
+  // mesmo lote) é descontado do disponível antes de cada check, e
+  // atualizado aqui mesmo após um sucesso -- createProductionRun (1 item
+  // só) passa um Map novo a cada chamada, então nunca tem nada reservado.
+  reservedGramsByFilament: Map<string, number> = new Map(),
+): Promise<{ success: true; ops: Prisma.PrismaPromise<unknown>[] } | { success: false; error: string }> {
   // Ajuste "peça multi-filamento": os componentes REAIS consumidos nesta
   // produção -- filamentUsages (1 por cor da receita) quando a peça tem
   // mais de 1, senão um array de 1 item com os campos escalares de sempre.
@@ -106,7 +132,7 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
     prisma.product.findUniqueOrThrow({
       where: { id: data.productId },
       include: {
-        packagingItem: true,
+        packagingUsages: { include: { packagingItem: true } },
         accessoryUsages: { include: { accessory: true } },
         supplyUsages: { include: { supply: true } },
       },
@@ -139,7 +165,7 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
     ...components.map((c): ResourceCheck => {
       const filament = filamentById.get(c.filamentId)!
       const needed = c.gramsUsed + c.gramsWasted
-      const available = filament.currentStockGrams.toNumber()
+      const available = filament.currentStockGrams.toNumber() - (reservedGramsByFilament.get(c.filamentId) ?? 0)
       return {
         needed,
         available,
@@ -233,8 +259,13 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
       printerEnergyCostPerKwh: printer.energyCostPerKwh.toNumber(),
       printerDepreciationCostPerHour,
       printerMaintenanceCostPerHour,
-      packagingItemId: skipProductLevelConsumption ? null : product.packagingItemId,
-      packagingCost: skipProductLevelConsumption ? 0 : (product.packagingItem?.avgUnitCost.toNumber() ?? 0),
+      packagingUsages: skipProductLevelConsumption
+        ? []
+        : product.packagingUsages.map((u) => ({
+            packagingItemId: u.packagingItemId,
+            quantity: u.quantity.toNumber(),
+            avgUnitCost: u.packagingItem.avgUnitCost.toNumber(),
+          })),
       accessoryUsages: skipProductLevelConsumption
         ? []
         : product.accessoryUsages.map((u) => ({
@@ -268,9 +299,12 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
 
   const status = computeStatus(data.quantitySuccess, data.quantityFailed, data.quantityPlanned)
 
-  // --- Single transaction: create the run + decrement every resource it
-  // actually consumed. All or nothing (spec §5.3).
-  await prisma.$transaction([
+  // --- Ops desta produção (criar a run + decrementar cada recurso
+  // consumido) -- NÃO executadas aqui, quem chama decide quando rodar (uma
+  // produção só: na hora; um lote de N: só depois de montar as ops de TODAS
+  // as peças, pra manter o "tudo ou nada" do spec §5.3 valendo pro lote
+  // inteiro, não só por peça individual).
+  const ops: Prisma.PrismaPromise<unknown>[] = [
     prisma.productionRun.create({
       data: {
         ...data,
@@ -295,7 +329,106 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
     ...snapshot.consumedResources.supplies.map((s) =>
       prisma.supply.update({ where: { id: s.supplyId }, data: { currentStock: { decrement: s.quantityConsumed } } }),
     ),
-  ])
+  ]
+
+  for (const c of components) {
+    reservedGramsByFilament.set(c.filamentId, (reservedGramsByFilament.get(c.filamentId) ?? 0) + c.gramsUsed + c.gramsWasted)
+  }
+
+  return { success: true, ops }
+}
+
+export async function createProductionRun(formData: FormData): Promise<ActionResult> {
+  const parsed = parse(formData)
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  const { filamentUsages, ...data } = parsed.data
+
+  // Uma produção avulsa é um "lote de 1" -- ganha seu próprio batchId
+  // (nunca compartilhado com outra run), mesmo padrão já usado em
+  // createConsignmentDelivery (actions/consignmentDeliveries.ts).
+  const result = await prepareProductionRunCreation({ ...data, batchId: randomUUID() }, filamentUsages)
+  if (!result.success) return result
+
+  await prisma.$transaction(result.ops)
+
+  revalidatePath('/production')
+  revalidatePath('/filaments')
+  revalidatePath('/accessories')
+  revalidatePath('/supplies')
+  return { success: true }
+}
+
+// Melhoria "Produção" §3/§4: o modal "Registrar produção" deixa marcar
+// várias peças de um produto composto (ou a linha única de um produto
+// simples) numa SÓ submissão -- cada peça marcada vira uma ProductionRun
+// própria (mesmas regras de checagem de estoque/snapshot de custo de
+// sempre, via prepareProductionRunCreation), todas compartilhando um
+// batchId -- é o que permite a lista principal (§4) agrupar de volta numa
+// única linha por EVENTO (Data + Produto), igual
+// ConsignmentDelivery.batchId já faz pra Entregas em consignação. Tudo ou
+// nada: se qualquer peça do lote não tem estoque suficiente, a mensagem de
+// erro é dela e NENHUMA peça do lote é gravada (nem as que passariam no
+// check sozinhas) -- só roda o $transaction depois de montar as ops de
+// TODAS as peças com sucesso.
+export async function createProductionRunBatch(formData: FormData): Promise<ActionResult> {
+  const raw = Object.fromEntries(formData)
+  let items: unknown = []
+  try {
+    items = JSON.parse(String(raw.itemsJson ?? '[]'))
+  } catch {
+    items = []
+  }
+  const parsed = productionRunBatchSchema.safeParse({ productId: raw.productId, date: raw.date, items })
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+
+  const batchId = randomUUID()
+  const allOps: Prisma.PrismaPromise<unknown>[] = []
+  const reservedGramsByFilament = new Map<string, number>()
+
+  for (const item of parsed.data.items) {
+    // "Falhas (auto)" (spec §3): nunca confiado do cliente -- sempre
+    // recalculado aqui a partir de planejada/sucesso, mesma fórmula que o
+    // modal usa só pra exibir (planejada − sucesso, nunca negativo).
+    const quantityFailed = Math.max(0, item.quantityPlanned - item.quantitySuccess)
+    const [first, ...restFilaments] = item.filaments
+    const filamentUsages = restFilaments.length > 0
+      ? item.filaments.map((f) => ({
+          filamentId: f.filamentId,
+          gramsUsed: f.weightGramsPerUnit * item.quantityPlanned,
+          gramsWasted: f.gramsWasted,
+        }))
+      : undefined
+
+    const result = await prepareProductionRunCreation(
+      {
+        productId: parsed.data.productId,
+        productPartId: item.productPartId ?? null,
+        printerId: item.printerId,
+        filamentId: first.filamentId,
+        date: parsed.data.date,
+        quantityPlanned: item.quantityPlanned,
+        quantitySuccess: item.quantitySuccess,
+        quantityFailed,
+        // Gasto (spec §3 "Gasto por peça"/"Gasto total"): sempre derivado
+        // de peso-por-unidade × planejada, nunca um campo editável à parte
+        // -- pra peça multi-filamento o total real vem da soma dos
+        // componentes em filamentUsages (gramsUsed/gramsWasted escalares
+        // aqui recebem só o 1º componente, mesma convenção de sempre).
+        gramsUsed: first.weightGramsPerUnit * item.quantityPlanned,
+        gramsWasted: first.gramsWasted,
+        timeWastedHours: item.timeWastedHours,
+        wasteReason: item.wasteReason ?? null,
+        notes: item.notes ?? null,
+        batchId,
+      },
+      filamentUsages,
+      reservedGramsByFilament,
+    )
+    if (!result.success) return result
+    allOps.push(...result.ops)
+  }
+
+  await prisma.$transaction(allOps)
 
   revalidatePath('/production')
   revalidatePath('/filaments')

@@ -31,7 +31,6 @@ function parse(formData: FormData) {
   }
   return productSchema.safeParse({
     ...raw,
-    packagingItemId: raw.packagingItemId || null,
     printerId: raw.printerId || null,
     filamentId: raw.filamentId || null,
     parts,
@@ -64,7 +63,6 @@ export async function createProduct(formData: FormData): Promise<ActionResult> {
     category: data.category,
     isComposite: data.isComposite,
     laborTimeHours: data.laborTimeHours,
-    packagingItemId: data.packagingItemId,
     finishingType: data.finishingType,
     usesGlue: data.usesGlue,
     notes: data.notes,
@@ -111,7 +109,6 @@ export async function updateProduct(id: string, formData: FormData): Promise<Act
     category: data.category,
     isComposite: data.isComposite,
     laborTimeHours: data.laborTimeHours,
-    packagingItemId: data.packagingItemId,
     finishingType: data.finishingType,
     usesGlue: data.usesGlue,
     notes: data.notes,
@@ -199,7 +196,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
       include: {
         printer: true,
         filament: true,
-        packagingItem: true,
+        packagingUsages: { include: { packagingItem: true } },
         accessoryUsages: { include: { accessory: true } },
         supplyUsages: { include: { supply: true } },
         parts: { include: { printer: true, filamentComponents: { include: { filament: true } } } },
@@ -217,7 +214,12 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
   const accessoriesCost = sumUsageCost(
     product.accessoryUsages.map((u) => ({ quantity: u.quantity.toNumber(), avgUnitCost: u.accessory.avgUnitCost.toNumber() })),
   )
-  const packagingCost = product.packagingItem?.avgUnitCost.toNumber() ?? 0
+  // Melhoria "Produtos" §3: Embalagem generalizada pra lista
+  // (ProductPackagingUsage), mesma redução de suppliesCost/accessoriesCost
+  // acima em vez do antigo `packagingItem?.avgUnitCost` de item único.
+  const packagingCost = sumUsageCost(
+    product.packagingUsages.map((u) => ({ quantity: u.quantity.toNumber(), avgUnitCost: u.packagingItem.avgUnitCost.toNumber() })),
+  )
 
   const flags = {
     includeDepreciation: settings.includeDepreciation,
@@ -424,6 +426,35 @@ export async function addProductSupplyUsage(formData: FormData): Promise<ActionR
 
 export async function removeProductSupplyUsage(usageId: string): Promise<ActionResult> {
   await prisma.productSupplyUsage.delete({ where: { id: usageId } })
+  revalidatePath('/products')
+  return { success: true }
+}
+
+// Melhoria "Produtos" §3: mirrors addProductSupplyUsage/removeProductSupplyUsage
+// acima -- Embalagem generalizada de FK única (Product.packagingItemId) pra
+// lista (ProductPackagingUsage), mesmo shape/upsert-por-par-único que
+// Insumos/Acessórios já tinham. Faz parte da lista unificada "Componentes"
+// da tela de detalhe do produto.
+const packagingUsageSchema = z.object({
+  productId: z.string().min(1),
+  packagingItemId: z.string().min(1),
+  quantity: z.coerce.number().positive('Quantidade deve ser maior que zero'),
+})
+
+export async function addProductPackagingUsage(formData: FormData): Promise<ActionResult> {
+  const parsed = packagingUsageSchema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  await prisma.productPackagingUsage.upsert({
+    where: { productId_packagingItemId: { productId: parsed.data.productId, packagingItemId: parsed.data.packagingItemId } },
+    update: { quantity: parsed.data.quantity },
+    create: parsed.data,
+  })
+  revalidatePath('/products')
+  return { success: true }
+}
+
+export async function removeProductPackagingUsage(usageId: string): Promise<ActionResult> {
+  await prisma.productPackagingUsage.delete({ where: { id: usageId } })
   revalidatePath('/products')
   return { success: true }
 }

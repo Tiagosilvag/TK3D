@@ -22,7 +22,25 @@ const ROWS: { key: keyof ProductCostBreakdown; label: string; flagKey: keyof Pro
   { key: 'failureRateCost', label: 'Taxa de falha', flagKey: 'includeFailureRate' },
 ]
 
-export function CostBreakdown({ breakdown, flags }: { breakdown: ProductCostBreakdown; flags: ProductCostFlags }) {
+// Melhoria "Produtos" §3: "Preço marketplace" genérico (Settings, fallback/
+// preview antes de existir plataforma específica) é substituído aqui por 1
+// valor por plataforma cadastrada (MarketplacePlatform) quando existir
+// alguma -- mesma fórmula (lib/costing.ts#calculatePlatformPrice), só com a
+// taxa/fee daquela plataforma específica em vez do par genérico.
+export interface MarketplacePlatformPrice {
+  label: string
+  price: number
+}
+
+export function CostBreakdown({
+  breakdown,
+  flags,
+  marketplacePlatformPrices = [],
+}: {
+  breakdown: ProductCostBreakdown
+  flags: ProductCostFlags
+  marketplacePlatformPrices?: MarketplacePlatformPrice[]
+}) {
   return (
     <div className="tk-panel p-4">
       <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Custo (ao vivo)</h2>
@@ -54,10 +72,19 @@ export function CostBreakdown({ breakdown, flags }: { breakdown: ProductCostBrea
           <dt>Preço sugerido</dt>
           <dd>{money(breakdown.suggestedPrice)}</dd>
         </div>
-        <div className="flex justify-between font-semibold text-amber-700 dark:text-amber-400">
-          <dt>Preço marketplace</dt>
-          <dd>{money(breakdown.marketplacePrice)}</dd>
-        </div>
+        {marketplacePlatformPrices.length > 0 ? (
+          marketplacePlatformPrices.map((p) => (
+            <div key={p.label} className="flex justify-between font-semibold text-amber-700 dark:text-amber-400">
+              <dt>Preço {p.label}</dt>
+              <dd>{money(p.price)}</dd>
+            </div>
+          ))
+        ) : (
+          <div className="flex justify-between font-semibold text-amber-700 dark:text-amber-400">
+            <dt>Preço marketplace</dt>
+            <dd>{money(breakdown.marketplacePrice)}</dd>
+          </div>
+        )}
       </dl>
     </div>
   )

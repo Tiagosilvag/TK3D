@@ -726,8 +726,7 @@ describe('buildProductionCostSnapshot (spec §4/§5, task-5 brief)', () => {
     printerEnergyCostPerKwh: 1,
     printerDepreciationCostPerHour: 0.36,
     printerMaintenanceCostPerHour: 0.18,
-    packagingItemId: 'pkg1',
-    packagingCost: 0.2,
+    packagingUsages: [{ packagingItemId: 'pkg1', quantity: 1, avgUnitCost: 0.2 }],
     accessoryUsages: [
       { accessoryId: 'acc1', quantity: 1, avgUnitCost: 0.10 },
       { accessoryId: 'acc2', quantity: 1, avgUnitCost: 0.05 },
@@ -822,19 +821,17 @@ describe('buildProductionCostSnapshot (spec §4/§5, task-5 brief)', () => {
 
   it('consumedResources.packaging registra 1 unidade de embalagem por peça bem-sucedida', () => {
     const snapshot = buildProductionCostSnapshot(baseInput, settings)
-    expect(snapshot.consumedResources.packaging).toEqual({
-      packagingItemId: 'pkg1',
-      quantityConsumed: 8,
-      unitCost: 0.2,
-    })
+    expect(snapshot.consumedResources.packaging).toEqual([
+      { packagingItemId: 'pkg1', quantityPerUnit: 1, quantityConsumed: 8, unitCost: 0.2 },
+    ])
   })
 
-  it('consumedResources.packaging é null quando o produto não usa embalagem', () => {
+  it('consumedResources.packaging fica vazio quando o produto não usa embalagem', () => {
     const snapshot = buildProductionCostSnapshot(
-      { ...baseInput, packagingItemId: null, packagingCost: 0 },
+      { ...baseInput, packagingUsages: [] },
       settings,
     )
-    expect(snapshot.consumedResources.packaging).toBeNull()
+    expect(snapshot.consumedResources.packaging).toEqual([])
   })
 
   it('consumedResources.accessories/supplies ficam vazios quando o produto não usa nenhum', () => {

@@ -148,8 +148,8 @@ model PackagingItem {
   active       Boolean                 @default(true)
   createdAt    DateTime                @default(now())
   updatedAt    DateTime                @updatedAt
-  products     Product[]
   purchases    PackagingItemPurchase[]
+  usages       ProductPackagingUsage[]
 }
 
 model PackagingItemPurchase {
@@ -302,8 +302,7 @@ model Product {
   laborTimeHours        Decimal                 @db.Decimal(10, 3)
   parts                 ProductPart[]
   assemblies            ProductAssembly[]
-  packagingItemId       String?
-  packagingItem         PackagingItem?          @relation(fields: [packagingItemId], references: [id])
+  packagingUsages       ProductPackagingUsage[]
   finishingType         FinishingType           @default(NENHUM)
   usesGlue              Boolean                 @default(false)
   notes                 String?
@@ -416,7 +415,32 @@ model ProductPhoto {
   data        Bytes
   contentType String
   sizeBytes   Int
+  // Melhoria "Produtos" §3: clicar numa foto já enviada marca ela como capa
+  // (usada no card da listagem e disponível pra marketplace) -- não existe
+  // campo de upload separado pra capa, é sempre uma das fotos já existentes.
+  // Índice único parcial (ver migration) garante no máximo 1 capa por
+  // produto no banco -- setProductCoverPhoto (actions/productPhotos.ts)
+  // desmarca a anterior e marca a nova na mesma transação.
+  isCover     Boolean  @default(false)
   createdAt   DateTime @default(now())
+}
+
+// Generaliza o antigo Product.packagingItemId (FK único) numa lista, mesmo
+// padrão/relações/cascade de ProductSupplyUsage -- Embalagem passa a
+// aceitar mais de um item por produto, cada um com sua quantidade, igual
+// Acessórios/Insumos já eram. actions/sales.ts#consumePackagingForSale e
+// lib/costing.ts#buildProductionCostSnapshot generalizam de "1 item" pra
+// "lista" junto com esta migração -- ver comentário na migration.sql pro
+// backfill 1:1 da coluna antiga.
+model ProductPackagingUsage {
+  id              String        @id @default(cuid())
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  packagingItemId String
+  packagingItem   PackagingItem @relation(fields: [packagingItemId], references: [id])
+  quantity        Decimal       @db.Decimal(10, 2)
+
+  @@unique([productId, packagingItemId])
 }
 
 model ProductSupplyUsage {
@@ -475,6 +499,22 @@ model ProductAccessoryColorUsage {
 
 model ProductionRun {
   id              String           @id @default(cuid())
+  // Melhoria "Produção" §3/§4: uma sessão de produção real pode cobrir
+  // várias peças de um produto composto de uma vez (marcadas via checkbox
+  // no modal "Registrar produção") -- cada peça marcada continua virando
+  // UMA ProductionRun própria (mesma granularidade de sempre, cada uma com
+  // seu costSnapshot/consumo independente), mas todas as criadas na MESMA
+  // submissão compartilham um `batchId` -- mesmo padrão de
+  // ConsignmentDelivery.batchId (ver comentário lá): token de agrupamento
+  // opaco, nunca uma FK pra uma tabela "evento" própria, gerado uma vez por
+  // submissão (actions/productionRuns.ts#createProductionRunBatch). É o
+  // que permite a lista principal (§4) mostrar UMA linha por evento
+  // (Data + Produto) em vez de uma linha por peça. Toda run pré-existente a
+  // este ajuste (inclusive as criadas por createProductionRun, 1 produção
+  // só) recebe seu próprio id como batchId -- um "lote" só com ela mesma,
+  // preservando o comportamento antigo (1 produção = 1 linha) sem inventar
+  // agrupamento que nunca existiu.
+  batchId         String
   productId       String
   product         Product          @relation(fields: [productId], references: [id])
   // 2.1 Produto composto: quando presente, esta produção é de UMA peça
@@ -527,6 +567,8 @@ model ProductionRun {
   // continuam decrementando estoque só pelos campos escalares acima,
   // sem nenhuma mudança de comportamento.
   filamentUsages  ProductionRunFilamentUsage[]
+
+  @@index([batchId])
 }
 
 // Consumo real de UM componente de filamento de uma produção de peça

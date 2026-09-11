@@ -29,13 +29,21 @@ function parse(formData: FormData) {
 // estoque negativo pro usuário repor depois. StockConsumption é a fonte
 // de verdade de quanto foi de fato decrementado, pra updateSale/deleteSale
 // conseguirem reverter exatamente o que uma venda anterior consumiu.
+//
+// Melhoria "Produtos" §3: Embalagem generalizada de FK única pra lista
+// (ProductPackagingUsage) -- consome TODA embalagem cadastrada na ficha
+// técnica do produto, cada uma na sua própria quantidade por unidade ×
+// quantidade vendida (mesma multiplicação que Acessórios/Insumos já usam
+// na Montagem), em vez de decrementar só 1 item fixo.
 export async function consumePackagingForSale(tx: TxClient, saleId: string, productId: string, quantity: number): Promise<void> {
-  const product = await tx.product.findUnique({ where: { id: productId }, select: { packagingItemId: true } })
-  if (!product?.packagingItemId) return
-  await tx.packagingItem.update({ where: { id: product.packagingItemId }, data: { currentStock: { decrement: quantity } } })
-  await tx.stockConsumption.create({
-    data: { resourceType: 'PACKAGING', resourceId: product.packagingItemId, quantity, productId, source: 'SALE', sourceId: saleId },
-  })
+  const usages = await tx.productPackagingUsage.findMany({ where: { productId } })
+  for (const usage of usages) {
+    const consumed = usage.quantity.toNumber() * quantity
+    await tx.packagingItem.update({ where: { id: usage.packagingItemId }, data: { currentStock: { decrement: consumed } } })
+    await tx.stockConsumption.create({
+      data: { resourceType: 'PACKAGING', resourceId: usage.packagingItemId, quantity: consumed, productId, source: 'SALE', sourceId: saleId },
+    })
+  }
 }
 
 // Reverte exatamente o que consumePackagingForSale gravou pra esta venda

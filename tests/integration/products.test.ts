@@ -10,6 +10,7 @@ import {
   removeProductSupplyUsage,
   addProductAccessoryUsage,
   removeProductAccessoryUsage,
+  addProductPackagingUsage,
   applyProductPrice,
 } from '@/actions/products'
 
@@ -18,6 +19,7 @@ const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL }
 async function cleanup() {
   await prisma.productSupplyUsage.deleteMany()
   await prisma.productAccessoryUsage.deleteMany()
+  await prisma.productPackagingUsage.deleteMany()
   await prisma.product.deleteMany()
   await prisma.printer.deleteMany()
   await prisma.filament.deleteMany()
@@ -164,7 +166,6 @@ describe('products actions', () => {
       weightGrams: '30',
       printTimeHours: '2',
       laborTimeHours: '0.25',
-      packagingItemId: packagingItem.id,
       finishingType: 'NENHUM',
       usesGlue: 'true',
     }))
@@ -177,6 +178,13 @@ describe('products actions', () => {
       quantity: '2',
     }))
     expect(usageResult.success).toBe(true)
+
+    const packagingUsageResult = await addProductPackagingUsage(fd({
+      productId: product.id,
+      packagingItemId: packagingItem.id,
+      quantity: '1',
+    }))
+    expect(packagingUsageResult.success).toBe(true)
 
     const accessoryUsage1 = await addProductAccessoryUsage(fd({
       productId: product.id,

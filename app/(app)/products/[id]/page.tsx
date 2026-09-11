@@ -1,37 +1,31 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
-import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
+import { getProductionStatusBadge } from '@/lib/format'
 import { StatusBadge } from '@/components/StatusBadge'
 import {
   calculatePrinterDepreciationCostPerHour,
+  calculatePlatformPrice,
   type ProductCostFlags,
 } from '@/lib/costing'
 import { ProductForm } from '../ProductForm'
-import { CostBreakdown } from '../CostBreakdown'
+import { CostBreakdown, type MarketplacePlatformPrice } from '../CostBreakdown'
 import { PriceSimulation } from '../PriceSimulation'
+import { ComponentsSection, type ComponentRow } from '../ComponentsSection'
+import { PhotoGallery } from '../PhotoGallery'
 import {
   getProductCostBreakdown,
   getEditableFilamentOptions,
-  removeProductSupplyUsage,
-  addProductAccessoryUsage,
-  removeProductAccessoryUsage,
   addProductAccessoryColorUsage,
   removeProductAccessoryColorUsage,
+  deleteProduct,
 } from '@/actions/products'
-import { addProductPhoto, removeProductPhoto } from '@/actions/productPhotos'
+import { addProductPhoto } from '@/actions/productPhotos'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
-import { AddSupplyUsageForm } from '../AddSupplyUsageForm'
 import { getProductVariantBreakdown } from '@/lib/reports'
 import { productNeedsAssembly } from '@/lib/products'
 
-const SUPPLY_UNIT_LABELS: Record<string, string> = {
-  UN: 'Unidade',
-  ML: 'Mililitro',
-  G: 'Grama',
-  M: 'Metro',
-  OUTRO: 'Outro',
-}
+const PLATFORM_LABELS: Record<string, string> = { MERCADO_LIVRE: 'Mercado Livre', SHOPEE: 'Shopee' }
 
 function accessoryOptionLabel(a: { name: string; colorName: string }): string {
   return a.colorName ? `${a.name} — ${a.colorName}` : a.name
@@ -44,7 +38,8 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     include: {
       supplyUsages: { include: { supply: true } },
       accessoryUsages: { include: { accessory: true } },
-      photos: { orderBy: { createdAt: 'asc' }, select: { id: true } },
+      packagingUsages: { include: { packagingItem: true } },
+      photos: { orderBy: { createdAt: 'asc' }, select: { id: true, isCover: true } },
       parts: { orderBy: { createdAt: 'asc' }, include: { filamentComponents: true } },
     },
   })
@@ -56,7 +51,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     supplyUsagesCount: product.supplyUsages.length,
   })
 
-  const [printers, filamentOptions, packagingItems, supplies, accessories, breakdown, settings, partRuns, colorVariants, accessoryColorUsages] = await Promise.all([
+  const [printers, filamentOptions, packagingItems, supplies, accessories, breakdown, settings, platforms, partRuns, colorVariants, accessoryColorUsages] = await Promise.all([
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getEditableFilamentOptions(product.id),
     prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
@@ -64,6 +59,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     prisma.accessory.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getProductCostBreakdown(product.id),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
+    prisma.marketplacePlatform.findMany(),
     product.parts.length > 0
       ? prisma.productionRun.findMany({
           where: { productPartId: { in: product.parts.map((p) => p.id) } },
@@ -98,8 +94,6 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     return { id: p.id, name: p.name, costPerHour }
   })
 
-  const packagingOptions = packagingItems.map((p) => ({ id: p.id, name: p.name, unitCost: p.avgUnitCost.toNumber() }))
-
   const currentSuppliesCost = product.supplyUsages.reduce(
     (sum, u) => sum + u.quantity.toNumber() * u.supply.avgUnitCost.toNumber(),
     0,
@@ -108,6 +102,37 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     (sum, u) => sum + u.quantity.toNumber() * u.accessory.avgUnitCost.toNumber(),
     0,
   )
+
+  // Melhoria "Produtos" §3: uma lista só "Componentes" juntando Acessórios,
+  // Insumos e Embalagem (antes 3 seções separadas) -- ComponentsSection cuida
+  // da apresentação unificada, os dados continuam vindo de 3 tabelas
+  // diferentes por baixo.
+  const components: ComponentRow[] = [
+    ...product.accessoryUsages.map((u): ComponentRow => ({
+      id: u.id,
+      type: 'ACCESSORY',
+      name: accessoryOptionLabel(u.accessory),
+      quantity: u.quantity.toNumber(),
+      unitSuffix: '',
+      cost: u.quantity.toNumber() * u.accessory.avgUnitCost.toNumber(),
+    })),
+    ...product.supplyUsages.map((u): ComponentRow => ({
+      id: u.id,
+      type: 'SUPPLY',
+      name: u.supply.name,
+      quantity: u.quantity.toNumber(),
+      unitSuffix: '',
+      cost: u.quantity.toNumber() * u.supply.avgUnitCost.toNumber(),
+    })),
+    ...product.packagingUsages.map((u): ComponentRow => ({
+      id: u.id,
+      type: 'PACKAGING',
+      name: u.packagingItem.name,
+      quantity: u.quantity.toNumber(),
+      unitSuffix: '',
+      cost: u.quantity.toNumber() * u.packagingItem.avgUnitCost.toNumber(),
+    })),
+  ]
 
   const costFlags: ProductCostFlags = {
     includeDepreciation: settings.includeDepreciation,
@@ -121,10 +146,28 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     includePackagingCost: settings.includePackagingCost,
   }
 
+  // Melhoria "Produtos" §3: "Preço marketplace" genérico vira 1 valor por
+  // plataforma cadastrada (Mercado Livre, Shopee) -- mesma fórmula de
+  // getPlatformSalePrice (actions/marketplacePlatforms.ts), calculada aqui
+  // direto porque já temos o breakdown carregado.
+  const marketplacePlatformPrices: MarketplacePlatformPrice[] = platforms.map((platform) => ({
+    label: PLATFORM_LABELS[platform.platform] ?? platform.platform,
+    price: calculatePlatformPrice(breakdown.suggestedPrice, settings.taxPercent.toNumber(), platform.feePercent.toNumber(), platform.feeFixed.toNumber()),
+  }))
+
   return (
     <div className="tk-page">
-      <Link href="/products" className="text-sm text-slate-500 hover:underline dark:text-slate-400">&larr; Produtos</Link>
-      <h1 className="mb-4 mt-1 font-display text-lg font-semibold text-slate-900 dark:text-slate-100">{product.name}</h1>
+      <div className="mb-4 mt-1 flex items-center justify-between">
+        <div>
+          <Link href="/products" className="text-sm text-slate-500 hover:underline dark:text-slate-400">&larr; Produtos</Link>
+          <h1 className="mt-1 font-display text-lg font-semibold text-slate-900 dark:text-slate-100">{product.name}</h1>
+        </div>
+        <ConfirmDeleteForm
+          action={async () => { 'use server'; return await deleteProduct(product.id) }}
+          label="Remover produto"
+          confirmMessage="Remover este produto? Ele deixa de aparecer nas listagens, mas o histórico é preservado."
+        />
+      </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
@@ -139,7 +182,6 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               weightGrams: product.weightGrams.toNumber(),
               printTimeHours: product.printTimeHours.toNumber(),
               laborTimeHours: product.laborTimeHours.toNumber(),
-              packagingItemId: product.packagingItemId,
               finishingType: product.finishingType,
               usesGlue: product.usesGlue,
               notes: product.notes,
@@ -154,7 +196,6 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
             }))}
             printers={printerOptions}
             filaments={filamentOptions}
-            packagingItems={packagingOptions}
             laborCostPerHour={settings.laborCostPerHour.toNumber()}
             currentSuppliesCost={currentSuppliesCost}
             currentAccessoriesCost={currentAccessoriesCost}
@@ -163,7 +204,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
 
           {product.isComposite && product.parts.length > 0 && (
             <div className="mt-6 tk-panel p-4">
-              <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Peças</h2>
+              <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Histórico de produção por peça</h2>
               <table className="w-full text-sm">
                 <thead>
                   <tr className="tk-table-head-row">
@@ -197,98 +238,22 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
             </div>
           )}
 
-          <details className="mt-6 tk-panel p-4">
-            <summary className="tk-summary">Insumos (opcional)</summary>
-            <h2 className="mb-3 mt-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Insumos usados</h2>
-            {product.supplyUsages.length === 0 ? (
-              <p className="text-sm text-slate-500 dark:text-slate-400">Nenhum insumo cadastrado.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="tk-table-head-row">
-                    <th className="py-1">Insumo</th>
-                    <th>Quantidade</th>
-                    <th>Custo</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {product.supplyUsages.map((usage) => (
-                    <tr key={usage.id} className="tk-row">
-                      <td className="py-1">{usage.supply.name}</td>
-                      <td>{usage.quantity.toNumber()} {SUPPLY_UNIT_LABELS[usage.supply.unit] ?? usage.supply.unit}</td>
-                      <td>{formatCurrency(usage.quantity.toNumber() * usage.supply.avgUnitCost.toNumber())}</td>
-                      <td>
-                        <form action={async () => { 'use server'; await removeProductSupplyUsage(usage.id) }}>
-                          <button className="tk-link-danger">Remover</button>
-                        </form>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-
-            <AddSupplyUsageForm
-              productId={product.id}
-              supplies={supplies.map((s) => ({ id: s.id, name: s.name, unit: s.unit, defaultUsage: s.defaultUsage?.toNumber() ?? null }))}
-            />
-          </details>
-
-          <details className="mt-6 tk-panel p-4">
-            <summary className="tk-summary">Acessórios (opcional)</summary>
-            <h2 className="mb-3 mt-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Acessórios usados</h2>
-            {product.accessoryUsages.length === 0 ? (
-              <p className="text-sm text-slate-500 dark:text-slate-400">Nenhum acessório cadastrado.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="tk-table-head-row">
-                    <th className="py-1">Acessório</th>
-                    <th>Quantidade</th>
-                    <th>Custo</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {product.accessoryUsages.map((usage) => (
-                    <tr key={usage.id} className="tk-row">
-                      <td className="py-1">{accessoryOptionLabel(usage.accessory)}</td>
-                      <td>{usage.quantity.toNumber()}</td>
-                      <td>{formatCurrency(usage.quantity.toNumber() * usage.accessory.avgUnitCost.toNumber())}</td>
-                      <td>
-                        <form action={async () => { 'use server'; await removeProductAccessoryUsage(usage.id) }}>
-                          <button className="tk-link-danger">Remover</button>
-                        </form>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-
-            <form action={async (formData: FormData) => { 'use server'; await addProductAccessoryUsage(formData) }} className="mt-4 grid grid-cols-3 gap-2">
-              <input type="hidden" name="productId" value={product.id} />
-              <select name="accessoryId" className="tk-input" required defaultValue="">
-                <option value="" disabled>Selecione um acessório</option>
-                {accessories.map((a) => (
-                  <option key={a.id} value={a.id}>{accessoryOptionLabel(a)}</option>
-                ))}
-              </select>
-              <input name="quantity" type="number" step="0.01" min="0.01" placeholder="Quantidade" className="tk-input" required />
-              <button className="tk-btn-primary">Adicionar</button>
-            </form>
-          </details>
+          <ComponentsSection
+            productId={product.id}
+            components={components}
+            accessories={accessories.map((a) => ({ id: a.id, name: a.name, colorName: a.colorName }))}
+            supplies={supplies.map((s) => ({ id: s.id, name: s.name, unit: s.unit, defaultUsage: s.defaultUsage?.toNumber() ?? null }))}
+            packagingItems={packagingItems.map((p) => ({ id: p.id, name: p.name }))}
+          />
 
           {/* Melhoria "Parceiros de consignação" §5: mapa opcional de "quais
               acessórios (variação exata, já com cor) cada COMBINAÇÃO DE COR
               deste produto usa" -- só existe pra alimentar os chips de
               acessório no detalhe por cor da tela de Parceiros, nunca muda
-              Montagem/custeio (a lista flat "Acessórios usados" acima
-              continua sendo a única que confirmAssembly consome). Só
-              aparece quando o produto já tem alguma cor conhecida
-              (colorVariants vem de getProductVariantBreakdown, nunca uma
-              lista pré-declarada). */}
+              Montagem/custeio (a lista "Componentes" acima continua sendo a
+              única que confirmAssembly consome). Só aparece quando o
+              produto já tem alguma cor conhecida (colorVariants vem de
+              getProductVariantBreakdown, nunca uma lista pré-declarada). */}
           {colorVariants.length > 0 && (
             <details className="mt-6 tk-panel p-4">
               <summary className="tk-summary">Acessórios por cor (opcional)</summary>
@@ -347,27 +312,14 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
           )}
 
           <div className="mt-6 tk-panel p-4">
-            <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Fotos da peça</h2>
+            <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Fotos</h2>
             {product.photos.length === 0 ? (
               <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">Nenhuma foto ainda.</p>
             ) : (
-              <div className="mb-4 grid grid-cols-3 gap-3 sm:grid-cols-4">
-                {product.photos.map((photo) => (
-                  <div key={photo.id} className="group relative overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
-                    {/* eslint-disable-next-line @next/next/no-img-element -- served from our own DB-backed route, not a static/optimizable asset */}
-                    <img
-                      src={`/api/photos/${photo.id}`}
-                      alt={`Foto de ${product.name}`}
-                      className="aspect-square w-full object-cover"
-                    />
-                    <ConfirmDeleteForm
-                      action={async () => { 'use server'; await removeProductPhoto(photo.id) }}
-                      confirmMessage="Remover esta foto?"
-                      className="absolute right-1 top-1 rounded-md bg-slate-950/70 px-1.5 py-0.5 text-xs text-white opacity-0 transition-opacity hover:bg-red-600 group-hover:opacity-100"
-                    />
-                  </div>
-                ))}
-              </div>
+              <>
+                <p className="mb-2 text-xs text-slate-400 dark:text-slate-500">Clique numa foto pra marcá-la como capa (usada no card da listagem).</p>
+                <PhotoGallery productName={product.name} photos={product.photos} />
+              </>
             )}
 
             <form
@@ -389,7 +341,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
         </div>
 
         <div>
-          <CostBreakdown breakdown={breakdown} flags={costFlags} />
+          <CostBreakdown breakdown={breakdown} flags={costFlags} marketplacePlatformPrices={marketplacePlatformPrices} />
           <PriceSimulation
             productId={product.id}
             finalCost={breakdown.finalCost}

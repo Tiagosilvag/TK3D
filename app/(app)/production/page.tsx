@@ -1,14 +1,9 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
-import { ProductionRunForm } from './ProductionRunForm'
-import { CancelProductionRunForm } from './CancelProductionRunForm'
-import { deleteProductionRun } from '@/actions/productionRuns'
+import { EditProductionRunForm } from './EditProductionRunForm'
+import { ProductionRunsExplorer, type ProductionEventRow } from './ProductionRunsExplorer'
 import type { ProductionCostSnapshot } from '@/lib/costing'
-import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
-import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
-import { StatusBadge } from '@/components/StatusBadge'
-import { ActionsMenu } from '@/components/ActionsMenu'
-import { DateRangeFilter } from '@/components/DateRangeFilter'
+import { formatCurrency } from '@/lib/format'
 import { resolveDateRange } from '@/lib/dateRange'
 
 export const dynamic = 'force-dynamic'
@@ -30,15 +25,19 @@ export default async function ProductionPage({
     ...(printerId ? { printerId } : {}),
   }
 
-  const [runs, totalRuns, products, printers, filaments, editingRunRecord] = await Promise.all([
+  const [runs, totalRuns, summaryRuns, products, printers, filaments, editingRunRecord] = await Promise.all([
     prisma.productionRun.findMany({
       where: runsWhere,
-      orderBy: { date: 'desc' },
-      include: { product: true, printer: true, filament: true, productPart: true, filamentUsages: { include: { filament: true } } },
+      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+      include: { product: true, productPart: true },
       skip: (currentPage - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
     }),
     prisma.productionRun.count({ where: runsWhere }),
+    // Melhoria "Produção" §1: cards de resumo ("Produções no período",
+    // "Custo total", "Falhas no período") refletem TODO o período filtrado,
+    // não só a página atual -- select leve, sem includes pesados.
+    prisma.productionRun.findMany({ where: runsWhere, select: { quantityFailed: true, costSnapshot: true } }),
     prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { manufacturer: 'asc' } }),
@@ -48,6 +47,12 @@ export default async function ProductionPage({
   ])
 
   const totalPages = Math.max(1, Math.ceil(totalRuns / PAGE_SIZE))
+
+  const summary = {
+    count: totalRuns,
+    totalCost: summaryRuns.reduce((sum, r) => sum + ((r.costSnapshot as unknown as ProductionCostSnapshot | null)?.total ?? 0), 0),
+    totalFailed: summaryRuns.reduce((sum, r) => sum + r.quantityFailed, 0),
+  }
 
   function pageHref(targetPage: number): string {
     const qs = new URLSearchParams()
@@ -90,14 +95,55 @@ export default async function ProductionPage({
       }
     : undefined
 
+  // Melhoria "Produção" §4: agrupa por batchId -- uma linha por EVENTO de
+  // produção (Data + Produto), não mais uma linha por peça.
+  const eventsMap = new Map<string, ProductionEventRow>()
+  for (const run of runs) {
+    const event = eventsMap.get(run.batchId) ?? {
+      batchId: run.batchId,
+      date: run.date.toISOString(),
+      productName: run.product.name,
+      items: [],
+    }
+    const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+    event.items.push({
+      id: run.id,
+      partName: run.productPart?.name ?? null,
+      quantitySuccess: run.quantitySuccess,
+      quantityFailed: run.quantityFailed,
+      status: run.status,
+      cost: snapshot ? snapshot.total : null,
+      cancelReason: run.cancelReason,
+    })
+    eventsMap.set(run.batchId, event)
+  }
+  // findMany já vem ordenado por date/createdAt desc -- Map preserva a
+  // ordem de primeira inserção, então os eventos já saem na ordem certa.
+  const events = [...eventsMap.values()]
+
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Produção e desperdício</h1>
-      <DateRangeFilter action="/production" from={range.from} to={range.to} hiddenParams={{ productId, printerId }} />
 
-      <form method="get" action="/production" className="mb-4 flex flex-wrap items-end gap-3 tk-panel p-3">
-        <input type="hidden" name="from" value={range.from} />
-        <input type="hidden" name="to" value={range.to} />
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="tk-panel p-4">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Produções no período</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{summary.count}</p>
+        </div>
+        <div className="tk-panel p-4">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Custo total</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(summary.totalCost)}</p>
+        </div>
+        <div className="tk-panel p-4">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Falhas no período</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{summary.totalFailed}</p>
+        </div>
+      </div>
+
+      {/* Melhoria "Produção" §1: um filtro único (Produto + Impressora +
+          Período), em vez de dois blocos separados disputando espaço com o
+          cadastro (que virou modal). */}
+      <form method="get" action="/production" className="mt-4 flex flex-wrap items-end gap-3 tk-panel p-3">
         <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
           Produto
           <select name="productId" defaultValue={productId ?? ''} className="tk-input-full mt-1">
@@ -116,6 +162,14 @@ export default async function ProductionPage({
             ))}
           </select>
         </label>
+        <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+          De
+          <input type="date" name="from" defaultValue={range.from} className="tk-input-full mt-1" />
+        </label>
+        <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+          Até
+          <input type="date" name="to" defaultValue={range.to} className="tk-input-full mt-1" />
+        </label>
         <button type="submit" className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white dark:bg-amber-500 dark:text-slate-950">
           Filtrar
         </button>
@@ -125,83 +179,15 @@ export default async function ProductionPage({
           </Link>
         )}
       </form>
-      <ProductionRunForm
-        key={editingRun?.id ?? 'new'}
-        products={products}
-        printers={printers}
+
+      {editingRun && <div className="mt-6"><EditProductionRunForm editingRun={editingRun} /></div>}
+
+      <ProductionRunsExplorer
+        events={events}
+        products={products.map((p) => ({ id: p.id, name: p.name }))}
+        printers={printers.map((p) => ({ id: p.id, name: p.name }))}
         filaments={filaments.map((f) => ({ id: f.id, name: `${f.manufacturer} ${f.colorName} (${f.material}) — Rolo #${String(f.rollNumber).padStart(3, '0')} (${f.currentStockGrams.toNumber()}g restantes)` }))}
-        editingRun={editingRun}
       />
-      <table className="tk-table-zebra mt-6 w-full text-sm">
-        <thead>
-          <tr className="tk-table-head-row">
-            <th className="py-2">Data</th>
-            <th>Produto</th>
-            <th>Peça</th>
-            <th>Impressora</th>
-            <th>Filamento</th>
-            <th>Plan.</th>
-            <th>Sucesso</th>
-            <th>Falhas</th>
-            <th>Status</th>
-            <th>Desperdício</th>
-            <th>Custo</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map((run) => {
-            const badge = getProductionStatusBadge(run.status)
-            // costSnapshot is only null for legacy rows created before Task 7
-            // added the column (see prisma/schema.prisma's costSnapshot doc
-            // comment) -- there's no historical Printer/Filament/Settings
-            // state to reconstruct one for them, so this never recalculates
-            // live (spec §4): it shows "—" instead.
-            const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
-
-            return (
-              <tr key={run.id} className="tk-row">
-                <td className="py-2">{run.date.toLocaleDateString('pt-BR')}</td>
-                <td>{run.product.name}</td>
-                <td>{run.productPart?.name ?? '—'}</td>
-                <td>{run.printer.name}</td>
-                <td>
-                  {/* Ajuste "peça multi-filamento": produção de peça com
-                      >1 cor mostra todas, não só a "principal" (run.filament). */}
-                  {run.filamentUsages.length > 0
-                    ? run.filamentUsages.map((u) => `${u.filament.colorName} — Rolo #${String(u.filament.rollNumber).padStart(3, '0')}`).join(', ')
-                    : `${run.filament.manufacturer} ${run.filament.colorName} — Rolo #${String(run.filament.rollNumber).padStart(3, '0')}`}
-                </td>
-                <td>{run.quantityPlanned}</td>
-                <td>{run.quantitySuccess}</td>
-                <td>{run.quantityFailed}</td>
-                <td>
-                  <StatusBadge badge={badge} title={run.status === 'CANCELADA' && run.cancelReason ? `Motivo: ${run.cancelReason}` : undefined} />
-                </td>
-                <td>{run.gramsWasted.toNumber()}g / {run.timeWastedHours.toNumber()}h</td>
-                <td>{snapshot ? formatCurrency(snapshot.total) : '—'}</td>
-                <td className="py-2">
-                  <ActionsMenu>
-                    {run.status !== 'CANCELADA' && (
-                      <Link href={`/production?editId=${run.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
-                        Editar
-                      </Link>
-                    )}
-                    {run.status !== 'CANCELADA' && <CancelProductionRunForm id={run.id} />}
-                    <ConfirmDeleteForm action={async () => { 'use server'; return await deleteProductionRun(run.id) }} />
-                  </ActionsMenu>
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-
-      {runs.length === 0 && (
-        <div className="mt-6 rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400 dark:border-slate-700 dark:text-slate-500">
-          Nenhuma produção encontrada com esses filtros.
-        </div>
-      )}
 
       {totalPages > 1 && (
         <div className="mt-4 flex items-center justify-between text-sm text-slate-500 dark:text-slate-400">
