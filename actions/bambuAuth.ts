@@ -2,6 +2,7 @@
 import { prisma } from '@/lib/prisma'
 import { requestLoginCode, confirmLoginCode } from '@/lib/bambu/auth'
 import { encryptCredential } from '@/lib/bambu/crypto'
+import { restartBambuListener } from '@/lib/bambu/listener'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
@@ -34,6 +35,7 @@ export async function connectBambuAccountStep2(formData: FormData): Promise<Acti
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : 'Código inválido' }
   }
+  await restartBambuListener()
   revalidatePath('/settings')
   return { success: true }
 }
@@ -44,6 +46,7 @@ export async function disconnectBambuAccount(): Promise<ActionResult> {
     update: { bambuCloudEmail: null, bambuCloudCredentialEncrypted: null },
     create: { id: 1 } as never,
   })
+  await restartBambuListener()
   revalidatePath('/settings')
   return { success: true }
 }
