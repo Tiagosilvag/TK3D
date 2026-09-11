@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { connectBambuAccountStep1, connectBambuAccountStep2, disconnectBambuAccount } from '@/actions/bambuAuth'
+import { reconnectBambuListener } from '@/actions/bambuStatus'
 import { SubmitButton } from '@/components/SubmitButton'
 
 export function BambuConnectionForm({ connectedEmail }: { connectedEmail: string | null }) {
@@ -41,6 +42,11 @@ export function BambuConnectionForm({ connectedEmail }: { connectedEmail: string
     router.refresh()
   }
 
+  async function handleReconnect() {
+    await reconnectBambuListener()
+    router.refresh()
+  }
+
   return (
     <div className="tk-panel p-4">
       <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Integração Bambu Lab</h2>
@@ -53,9 +59,14 @@ export function BambuConnectionForm({ connectedEmail }: { connectedEmail: string
             <p>
               Conectado como <strong>{connectedEmail}</strong>
             </p>
-            <button type="button" onClick={handleDisconnect} className="mt-2 text-sm text-red-600 hover:underline dark:text-red-400">
-              Desconectar
-            </button>
+            <div className="mt-2 flex gap-3">
+              <button type="button" onClick={handleReconnect} className="text-sm text-amber-600 hover:underline dark:text-amber-400">
+                Reconectar
+              </button>
+              <button type="button" onClick={handleDisconnect} className="text-sm text-red-600 hover:underline dark:text-red-400">
+                Desconectar
+              </button>
+            </div>
           </div>
         ) : step === 'code' ? (
           <form action={handleStep2} className="flex flex-col gap-3">
