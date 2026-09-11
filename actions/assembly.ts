@@ -28,6 +28,11 @@ export interface AssemblyPartColorOption {
   filamentIds: string[]
   label: string
   available: number
+  // Melhoria "Montagem" §4: bolinha de cor na tabela de Peças -- só
+  // populado quando o combo resolve pra 1 filamento só (mesma convenção de
+  // getProductVariantBreakdown em lib/reports.ts); combo multi-filamento
+  // não tem uma bolinha única que o represente direito.
+  colorHex: string | null
 }
 
 export interface AssemblyPartStatus {
@@ -61,7 +66,18 @@ export interface AssemblyStatus {
   parts: AssemblyPartStatus[]
   accessoryRequirements: AssemblyResourceRequirement[]
   supplyRequirements: AssemblyResourceRequirement[]
+  // Melhoria "Montagem" §5: puramente informativo -- Embalagem continua
+  // sendo consumida só na Venda (actions/sales.ts#consumePackagingForSale),
+  // nunca na Montagem. Aparece aqui só pra visibilidade da ficha técnica
+  // completa (com o resto dos componentes), nunca decrementa estoque nem
+  // entra em maxAssemblableUnits abaixo.
+  packagingRequirements: AssemblyResourceRequirement[]
   maxAssemblableUnits: number
+  // Melhoria "Montagem" §3: total de unidades do PRODUTO já montadas (soma
+  // de ProductAssembly.quantity) -- vira card de resumo na tela de detalhe
+  // (antes era uma coluna dentro da tabela de peças) e alimenta a lista
+  // geral (getAssemblyOverview).
+  alreadyAssembled: number
 }
 
 // 2.3: pra cada peça do produto, "disponível" = soma de tudo que já foi
@@ -91,6 +107,7 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
       assemblies: true,
       accessoryUsages: { include: { accessory: true } },
       supplyUsages: { include: { supply: true } },
+      packagingUsages: { include: { packagingItem: true } },
     },
   })
 
@@ -182,6 +199,7 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
           filamentIds,
           label,
           available: Math.max(0, (producedByCombo.get(key)?.quantity ?? 0) - (consumedByCombo.get(key) ?? 0)),
+          colorHex: filamentIds.length === 1 ? (filamentById.get(filamentIds[0])?.colorHex ?? null) : null,
         }
       })
 
@@ -269,6 +287,7 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
         filamentIds: [filamentId],
         label: f ? filamentLabel(f) : filamentId,
         available: Math.max(0, (producedByCombo.get(filamentId) ?? 0) - (consumedByCombo.get(filamentId) ?? 0)),
+        colorHex: f?.colorHex ?? null,
       }
     })
 
@@ -311,13 +330,21 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
     available: Math.max(0, u.supply.currentStock.toNumber()),
     unit: u.supply.unit,
   }))
+  const packagingRequirements: AssemblyResourceRequirement[] = product.packagingUsages.map((u) => ({
+    id: u.packagingItemId,
+    name: u.packagingItem.name,
+    quantityPerUnit: u.quantity.toNumber(),
+    available: Math.max(0, u.packagingItem.currentStock.toNumber()),
+  }))
 
-  const limits = [
-    ...parts.map((p) => p.maxUnitsFromThisPart),
-    ...accessoryRequirements.map((r) => Math.floor(r.available / r.quantityPerUnit)),
-    ...supplyRequirements.map((r) => Math.floor(r.available / r.quantityPerUnit)),
-  ]
-  const maxAssemblableUnits = limits.length === 0 ? 0 : Math.max(0, Math.min(...limits))
+  // Melhoria "Montagem" §4/§5/§6: só falta de PEÇA bloqueia a montagem --
+  // não existe substituto pra uma peça não impressa. Falta de acessório/
+  // insumo (e embalagem, nunca consumida aqui) não trava mais o cálculo de
+  // quanto dá pra montar, só gera aviso (calculado à parte pela tela a
+  // partir de accessoryRequirements/supplyRequirements/packagingRequirements
+  // -- ver comentário em confirmAssembly abaixo sobre o mesmo ajuste do
+  // lado da escrita).
+  const maxAssemblableUnits = parts.length === 0 ? 0 : Math.max(0, Math.min(...parts.map((p) => p.maxUnitsFromThisPart)))
 
   return {
     productId: product.id,
@@ -326,8 +353,48 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
     parts,
     accessoryRequirements,
     supplyRequirements,
+    packagingRequirements,
     maxAssemblableUnits,
+    alreadyAssembled,
   }
+}
+
+export interface AssemblyOverviewRow {
+  productId: string
+  productName: string
+  partsCount: number
+  alreadyAssembled: number
+  maxAssemblableUnits: number
+}
+
+// Melhoria "Montagem" §2: lista geral no topo da tela -- todo produto que
+// passa por Montagem (mesma regra de app/(app)/assembly/page.tsx: composto
+// OU simples com insumo/acessório cadastrado), com "Já montado"/"Disponível
+// pra montagem" pra dar uma visão de quais produtos precisam de atenção
+// antes de escolher um. Reaproveita getAssemblyStatus por produto (catálogo
+// é pequeno, mesmo padrão N+1-em-paralelo já usado por getOwnStockSummary's
+// variantBreakdowns em /stock) -- garante que os números batem exatamente
+// com os da tela de detalhe, em vez de uma segunda fórmula que pudesse
+// divergir.
+export async function getAssemblyOverview(): Promise<AssemblyOverviewRow[]> {
+  const products = await prisma.product.findMany({
+    where: {
+      active: true,
+      OR: [{ isComposite: true }, { accessoryUsages: { some: {} } }, { supplyUsages: { some: {} } }],
+    },
+    orderBy: { name: 'asc' },
+    select: { id: true, name: true },
+  })
+
+  const statuses = await Promise.all(products.map((p) => getAssemblyStatus(p.id)))
+
+  return statuses.map((status) => ({
+    productId: status.productId,
+    productName: status.productName,
+    partsCount: status.parts.length,
+    alreadyAssembled: status.alreadyAssembled,
+    maxAssemblableUnits: status.maxAssemblableUnits,
+  }))
 }
 
 const confirmAssemblySchema = z.object({
@@ -433,31 +500,27 @@ export async function confirmAssembly(formData: FormData): Promise<ActionResult>
   const accessoryById = new Map(accessories.map((a) => [a.id, a]))
   const supplyById = new Map(supplies.map((s) => [s.id, s]))
 
+  // Melhoria "Montagem" §5/§6: falta de acessório/insumo NÃO bloqueia mais
+  // a montagem (só falta de peça bloqueia, ver `insufficient` acima) --
+  // sempre consome o que foi pedido, mesmo que deixe currentStock negativo,
+  // mesmo raciocínio já usado pra Embalagem na Venda (actions/sales.ts#
+  // consumePackagingForSale: "a pessoa pode montar/vender mesmo assim e
+  // resolver o estoque depois"). O aviso não-bloqueante ("Estoque baixo
+  // de: X") é calculado pela tela a partir de accessoryRequirements/
+  // supplyRequirements ANTES da submissão, não impede o confirmAssembly.
   const accessoryConsumption: { accessoryId: string; quantity: number }[] = []
   for (const u of submittedAccessoryUsages) {
     if (u.quantityPerUnit <= 0) continue
     const accessory = accessoryById.get(u.id)
     if (!accessory) continue
-    const needed = u.quantityPerUnit * quantity
-    const available = accessory.currentStock.toNumber()
-    if (needed > available) {
-      insufficient.push(`${accessory.name} (necessário ${needed}, disponível ${available})`)
-    } else {
-      accessoryConsumption.push({ accessoryId: u.id, quantity: needed })
-    }
+    accessoryConsumption.push({ accessoryId: u.id, quantity: u.quantityPerUnit * quantity })
   }
   const supplyConsumption: { supplyId: string; quantity: number }[] = []
   for (const u of submittedSupplyUsages) {
     if (u.quantityPerUnit <= 0) continue
     const supply = supplyById.get(u.id)
     if (!supply) continue
-    const needed = u.quantityPerUnit * quantity
-    const available = supply.currentStock.toNumber()
-    if (needed > available) {
-      insufficient.push(`${supply.name} (necessário ${needed}, disponível ${available})`)
-    } else {
-      supplyConsumption.push({ supplyId: u.id, quantity: needed })
-    }
+    supplyConsumption.push({ supplyId: u.id, quantity: u.quantityPerUnit * quantity })
   }
 
   if (insufficient.length > 0) {
