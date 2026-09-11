@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 import { createConsignmentDeliveryBatch } from '@/actions/consignmentDeliveries'
-import { getProductDeliveryOptions } from '@/lib/reports'
+import { getProductVariantStockOptions } from '@/lib/reports'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -93,7 +93,7 @@ describe('createConsignmentDeliveryBatch', () => {
   })
 })
 
-describe('getProductDeliveryOptions', () => {
+describe('getProductVariantStockOptions', () => {
   it('calcula "available" por variante como produzido menos já entregue, e traz o preço sugerido', async () => {
     const { productA, filamentRosa, filamentAzul } = await buildSimpleProductScenario()
     const partner = await prisma.consignmentPartner.create({ data: { name: 'Maria', defaultCommissionPercent: 0.3 } })
@@ -104,7 +104,7 @@ describe('getProductDeliveryOptions', () => {
       itemsJson: JSON.stringify([{ productId: productA.id, colorComboKey: filamentRosa.id, quantityDelivered: 10, unitPrice: 20 }]),
     }))
 
-    const options = await getProductDeliveryOptions()
+    const options = await getProductVariantStockOptions()
     const productAOption = options.find((o) => o.productId === productA.id)!
     expect(productAOption.suggestedPrice).toBe(20)
     expect(productAOption.variants).toHaveLength(2)
@@ -121,7 +121,7 @@ describe('getProductDeliveryOptions', () => {
     const filament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
     const product = await prisma.product.create({ data: { name: 'Nunca Produzido', category: 'Chaveiro', printerId: printer.id, filamentId: filament.id, weightGrams: 5, printTimeHours: 0.3, laborTimeHours: 0.02 } })
 
-    const options = await getProductDeliveryOptions()
+    const options = await getProductVariantStockOptions()
     const option = options.find((o) => o.productId === product.id)!
     expect(option.variants).toEqual([])
   })

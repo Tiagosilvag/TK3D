@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { DeliveriesExplorer, type DeliveryBatchRow } from './DeliveriesExplorer'
 import { resolveDateRange } from '@/lib/dateRange'
-import { getProductDeliveryOptions, getProductVariantBreakdown } from '@/lib/reports'
+import { getProductVariantStockOptions, getProductVariantBreakdown } from '@/lib/reports'
 import { productNeedsAssembly } from '@/lib/products'
 
 export const dynamic = 'force-dynamic'
@@ -24,7 +24,7 @@ export default async function ConsignmentDeliveriesPage({
       include: { partner: true, product: true },
     }),
     prisma.consignmentPartner.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
-    getProductDeliveryOptions(),
+    getProductVariantStockOptions(),
   ])
 
   // Melhoria "Entregas em consignação" §5: rótulo de cor de cada linha --

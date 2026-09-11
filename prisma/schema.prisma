@@ -725,6 +725,18 @@ model Sale {
   saleDate        DateTime
   buyerOrPlatform String?
   notes           String?
+  // Melhoria "Vendas por variante": qual combinação de cor foi vendida --
+  // mesma convenção de comboKey de ProductAssembly.colorChoices/
+  // ConsignmentDelivery.colorComboKey (1+ filamentIds ordenados e unidos
+  // por vírgula, ou o próprio productId pra produto simples sem
+  // ProductPart). Nulo pra produto sem variante conhecida (getProductVariantBreakdown
+  // não achou nenhuma) ou venda anterior a este ajuste -- nunca inventado
+  // retroativamente. Sem validação de estoque no servidor (mesma filosofia
+  // já usada em ConsignmentDelivery.colorComboKey -- ver
+  // createConsignmentDeliveryBatch: quantidade/cor vêm do cliente, sem
+  // checagem bloqueante, porque venda/entrega nunca travam por falta de
+  // registro de cor).
+  colorComboKey   String?
   // Custo histórico (task-10 brief, new feature -- mirrors ProductionRun's
   // costSnapshot exactly, spec §4 pattern extended here per explicit user
   // request after the final review): calculated ONCE at creation time via

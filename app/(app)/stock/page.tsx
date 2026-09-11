@@ -6,6 +6,19 @@ import { InfoTooltip } from './InfoTooltip'
 
 export const dynamic = 'force-dynamic'
 
+// Melhoria "Estoque por variante" §2: qualquer coluna agregada (produzido,
+// vendido, consignado) pode divergir da soma "Por variante" quando parte do
+// histórico não tem cor registrada (montagem/venda anterior a rastrear cor,
+// ou produto sem nenhuma variante conhecida) -- nunca inventa essa cor
+// retroativamente, mas também nunca deixa a soma da quebra ficar silenciosamente
+// menor que o total: o que falta entra como um bucket explícito "Sem cor
+// registrada", pra "Por variante" sempre somar exatamente o número da coluna.
+function reconcileVariantBreakdown(total: number, perVariant: { label: string; quantity: number }[]): { label: string; quantity: number }[] {
+  const sum = perVariant.reduce((s, v) => s + v.quantity, 0)
+  const remainder = total - sum
+  return remainder > 0 ? [...perVariant, { label: 'Sem cor registrada', quantity: remainder }] : perVariant
+}
+
 export default async function StockPage() {
   const [rows, assemblyOverview, settings, products, adjustments] = await Promise.all([
     getOwnStockSummary(),
@@ -30,6 +43,33 @@ export default async function StockPage() {
   )
   const variantBreakdownMap = new Map(variantBreakdowns)
 
+  // Melhoria "Estoque por variante" §3: mesma quebra por cor pras colunas
+  // Vendido (Sale.colorComboKey, desde a melhoria "Vendas por variante") e
+  // Consignado (ConsignmentDelivery.colorComboKey menos o que já foi vendido
+  // daquele combo -- ConsignmentSaleReport não tem colorComboKey próprio,
+  // vem do delivery que ele referencia).
+  const [soldByProductAndKey, deliveredByProductAndKey, saleReportsWithDelivery] = await Promise.all([
+    prisma.sale.groupBy({ by: ['productId', 'colorComboKey'], _sum: { quantity: true } }),
+    prisma.consignmentDelivery.groupBy({ by: ['productId', 'colorComboKey'], _sum: { quantityDelivered: true } }),
+    prisma.consignmentSaleReport.findMany({ include: { delivery: { select: { productId: true, colorComboKey: true } } } }),
+  ])
+  const soldMap = new Map<string, number>()
+  for (const s of soldByProductAndKey) {
+    if (!s.colorComboKey) continue
+    soldMap.set(`${s.productId}::${s.colorComboKey}`, s._sum.quantity ?? 0)
+  }
+  const deliveredMap = new Map<string, number>()
+  for (const d of deliveredByProductAndKey) {
+    if (!d.colorComboKey) continue
+    deliveredMap.set(`${d.productId}::${d.colorComboKey}`, d._sum.quantityDelivered ?? 0)
+  }
+  const consignmentSoldMap = new Map<string, number>()
+  for (const report of saleReportsWithDelivery) {
+    if (!report.delivery.colorComboKey) continue
+    const key = `${report.delivery.productId}::${report.delivery.colorComboKey}`
+    consignmentSoldMap.set(key, (consignmentSoldMap.get(key) ?? 0) + report.quantitySold)
+  }
+
   const readyToAssembleMap = new Map(assemblyOverview.map((o) => [o.productId, o.maxAssemblableUnits]))
   const productInfoMap = new Map(products.map((p) => [p.id, { category: p.category, coverPhotoId: p.photos[0]?.id ?? null }]))
   const adjustmentsByProduct = new Map<string, typeof adjustments>()
@@ -43,6 +83,11 @@ export default async function StockPage() {
 
   const stockRows: StockRow[] = rows.map((r) => {
     const info = productInfoMap.get(r.productId)
+    const breakdown = variantBreakdownMap.get(r.productId) ?? []
+    const soldVariants = breakdown.map((v) => ({ label: v.label, quantity: soldMap.get(`${r.productId}::${v.key}`) ?? 0 })).filter((v) => v.quantity > 0)
+    const consignadoVariants = breakdown
+      .map((v) => ({ label: v.label, quantity: Math.max(0, (deliveredMap.get(`${r.productId}::${v.key}`) ?? 0) - (consignmentSoldMap.get(`${r.productId}::${v.key}`) ?? 0)) }))
+      .filter((v) => v.quantity > 0)
     return {
       productId: r.productId,
       productName: r.productName,
@@ -55,7 +100,9 @@ export default async function StockPage() {
       consignado: r.consignmentRemaining,
       soldDirect: r.soldDirect,
       produced: r.produced,
-      variantBreakdown: (variantBreakdownMap.get(r.productId) ?? []).map((v) => ({ label: v.label, quantity: v.quantity })),
+      variantBreakdown: reconcileVariantBreakdown(r.produced, breakdown.map((v) => ({ label: v.label, quantity: v.quantity }))),
+      soldVariantBreakdown: reconcileVariantBreakdown(r.soldDirect, soldVariants),
+      consignadoVariantBreakdown: reconcileVariantBreakdown(r.consignmentRemaining, consignadoVariants),
       lowStock: r.available > 0 && r.available <= threshold,
       adjustments: (adjustmentsByProduct.get(r.productId) ?? []).map((a) => ({
         id: a.id,

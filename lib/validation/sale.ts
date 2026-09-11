@@ -12,4 +12,11 @@ export const saleSchema = z.object({
   saleDate: z.coerce.date({ errorMap: () => ({ message: 'Data inválida' }) }),
   buyerOrPlatform: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
+  // Melhoria "Vendas por variante": qual cor foi vendida, quando o produto
+  // tem mais de uma variante em estoque -- mesma convenção de comboKey de
+  // ConsignmentDelivery.colorComboKey. Opcional/nulo pra produto sem
+  // variante conhecida; sem checagem de estoque bloqueante no servidor
+  // (mesmo padrão já usado em ConsignmentDelivery -- venda nunca trava por
+  // falta de registro de cor).
+  colorComboKey: z.string().optional().nullable(),
 })

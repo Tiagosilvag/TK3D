@@ -15,6 +15,7 @@ function parse(formData: FormData) {
     ...raw,
     buyerOrPlatform: raw.buyerOrPlatform || null,
     notes: raw.notes || null,
+    colorComboKey: raw.colorComboKey || null,
   })
 }
 

@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 import { createSale, getSaleProfit } from '@/actions/sales'
 import { getProductCostBreakdown } from '@/actions/products'
+import { getProductVariantStockOptions } from '@/lib/reports'
+import { createConsignmentDeliveryBatch } from '@/actions/consignmentDeliveries'
 import type { SaleCostSnapshot } from '@/lib/costing'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
@@ -13,6 +15,10 @@ async function cleanup() {
   // accessory/supply added for the Sale cost snapshot tests below, which
   // give a product an accessory usage to mutate its price after a sale.
   await prisma.sale.deleteMany()
+  await prisma.consignmentSaleReport.deleteMany()
+  await prisma.consignmentDelivery.deleteMany()
+  await prisma.consignmentPartner.deleteMany()
+  await prisma.productionRun.deleteMany()
   await prisma.productSupplyUsage.deleteMany()
   await prisma.productAccessoryUsage.deleteMany()
   await prisma.product.deleteMany()
@@ -224,5 +230,68 @@ describe('Sale cost snapshot (task-10 brief, new feature)', () => {
     // exactly this legacy case.
     expect(typeof profit.profit).toBe('number')
     expect(Number.isFinite(profit.profit)).toBe(true)
+  })
+})
+
+// Melhoria "Vendas por variante": Sale ganha colorComboKey (mesma convenção
+// de ConsignmentDelivery.colorComboKey) -- createSale/updateSale gravam
+// exatamente o que o formulário manda, sem checagem de estoque bloqueante
+// no servidor (mesmo padrão de createConsignmentDeliveryBatch).
+describe('Vendas por variante (Sale.colorComboKey)', () => {
+  async function createTwoColorProduct() {
+    const printer = await prisma.printer.create({ data: { name: 'P3', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+    const rosa = await prisma.filament.create({ data: { manufacturer: 'F3', material: 'PLA', colorName: 'Rosa', colorHex: '#ff69b4', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const azul = await prisma.filament.create({ data: { manufacturer: 'F3', material: 'PLA', colorName: 'Azul', colorHex: '#0000ff', rollNumber: 2, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const product = await prisma.product.create({
+      data: { name: 'Produto Duas Cores', category: 'Chaveiro', printerId: printer.id, filamentId: rosa.id, weightGrams: 10, printTimeHours: 0.3, laborTimeHours: 0 },
+    })
+    // Produzido direto via ProductionRun (produto sem componente algum --
+    // "produzido" já É o estoque, sem passar por Montagem).
+    await prisma.productionRun.create({
+      data: { batchId: 'b1', productId: product.id, printerId: printer.id, filamentId: rosa.id, date: new Date('2026-09-01'), quantityPlanned: 45, quantitySuccess: 45, quantityFailed: 0, gramsUsed: 450, gramsWasted: 0, timeWastedHours: 0 },
+    })
+    await prisma.productionRun.create({
+      data: { batchId: 'b2', productId: product.id, printerId: printer.id, filamentId: azul.id, date: new Date('2026-09-01'), quantityPlanned: 30, quantitySuccess: 30, quantityFailed: 0, gramsUsed: 300, gramsWasted: 0, timeWastedHours: 0 },
+    })
+    return { printer, rosa, azul, product }
+  }
+
+  it('createSale grava a cor escolhida (colorComboKey), e null quando o formulário não manda nenhuma', async () => {
+    const { product, rosa } = await createTwoColorProduct()
+
+    const result = await createSale(fd({
+      channel: 'DIRETA', productId: product.id, quantity: '2', unitPrice: '30.00', saleDate: '2026-09-05', colorComboKey: rosa.id,
+    }))
+    expect(result.success).toBe(true)
+    const sale = await prisma.sale.findFirstOrThrow({ where: { productId: product.id } })
+    expect(sale.colorComboKey).toBe(rosa.id)
+
+    await prisma.sale.deleteMany({ where: { productId: product.id } })
+    const withoutColor = await createSale(fd({ channel: 'DIRETA', productId: product.id, quantity: '1', unitPrice: '30.00', saleDate: '2026-09-05' }))
+    expect(withoutColor.success).toBe(true)
+    const saleNoColor = await prisma.sale.findFirstOrThrow({ where: { productId: product.id } })
+    expect(saleNoColor.colorComboKey).toBeNull()
+  })
+
+  it('getProductVariantStockOptions desconta TANTO venda direta QUANTO entrega em consignação do mesmo pool por cor', async () => {
+    const { product, rosa, azul } = await createTwoColorProduct()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Ana', defaultCommissionPercent: 0.3 } })
+
+    // Vende 10 Rosa direto e entrega 15 Rosa em consignação -- ambos
+    // consomem do MESMO pool de 45 Rosa produzidos.
+    await createSale(fd({ channel: 'DIRETA', productId: product.id, quantity: '10', unitPrice: '30.00', saleDate: '2026-09-05', colorComboKey: rosa.id }))
+    await createConsignmentDeliveryBatch(fd({
+      partnerId: partner.id, deliveryDate: '2026-09-06', notes: '',
+      itemsJson: JSON.stringify([{ productId: product.id, colorComboKey: rosa.id, quantityDelivered: 15, unitPrice: 25 }]),
+    }))
+
+    const options = await getProductVariantStockOptions()
+    const option = options.find((o) => o.productId === product.id)!
+    const rosaOption = option.variants.find((v) => v.key === rosa.id)!
+    expect(rosaOption.available).toBe(45 - 10 - 15) // 20
+
+    // Azul não foi tocado -- continua com os 30 inteiros.
+    const azulOption = option.variants.find((v) => v.key === azul.id)!
+    expect(azulOption.available).toBe(30)
   })
 })

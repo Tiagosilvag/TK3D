@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { formatCurrency, getSaleChannelBadge } from '@/lib/format'
 import { SaleForm } from './SaleForm'
 import { deleteSale, getSaleProfit } from '@/actions/sales'
+import { getProductVariantStockOptions } from '@/lib/reports'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { DateRangeFilter } from '@/components/DateRangeFilter'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -31,13 +32,16 @@ export default async function SalesPage({
     : undefined
   const range = resolveDateRange({ from, to })
 
-  const [sales, products, editingSaleRecord] = await Promise.all([
+  const [sales, productOptions, editingSaleRecord] = await Promise.all([
     prisma.sale.findMany({
       where: { ...(activeChannel ? { channel: activeChannel } : {}), saleDate: { gte: range.gte, lte: range.lte } },
       orderBy: { saleDate: 'desc' },
       include: { product: true },
     }),
-    prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+    // Melhoria "Vendas por variante": cada produto ativo já vem com suas
+    // variantes de cor em estoque (getProductVariantStockOptions) -- o
+    // formulário só pede a cor quando o produto tem mais de uma.
+    getProductVariantStockOptions(),
     editId ? prisma.sale.findUnique({ where: { id: editId } }) : null,
   ])
 
@@ -51,6 +55,7 @@ export default async function SalesPage({
         saleDate: editingSaleRecord.saleDate.toISOString().slice(0, 10),
         buyerOrPlatform: editingSaleRecord.buyerOrPlatform,
         notes: editingSaleRecord.notes,
+        colorComboKey: editingSaleRecord.colorComboKey,
       }
     : undefined
 
@@ -63,10 +68,20 @@ export default async function SalesPage({
   // profit is frozen and displays exactly as before.
   const profits = await Promise.all(sales.map((s) => getSaleProfit(s.id)))
 
+  // Melhoria "Vendas por variante": rótulo/cor de cada venda com
+  // colorComboKey -- reaproveita o label já computado em productOptions
+  // (getProductVariantStockOptions) em vez de uma segunda fórmula. Venda
+  // sem colorComboKey (produto sem variante, ou anterior a este ajuste)
+  // simplesmente não mostra nada, nunca inventa uma cor.
+  const colorLabelByProductAndKey = new Map<string, { label: string; colorHex: string | null }>()
+  for (const opt of productOptions) {
+    for (const v of opt.variants) colorLabelByProductAndKey.set(`${opt.productId}::${v.key}`, { label: v.label, colorHex: v.colorHex })
+  }
+
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Vendas</h1>
-      <SaleForm key={editingSale?.id ?? 'new'} products={products} editingSale={editingSale} defaultProductId={productId} />
+      <SaleForm key={editingSale?.id ?? 'new'} products={productOptions} editingSale={editingSale} defaultProductId={productId} />
 
       <DateRangeFilter action="/sales" from={range.from} to={range.to} hiddenParams={{ channel: activeChannel }} />
 
@@ -111,13 +126,22 @@ export default async function SalesPage({
         <tbody>
           {sales.map((s, i) => {
             const { profit, estimated, saleTotal, costTotal } = profits[i]
+            const colorInfo = s.colorComboKey ? colorLabelByProductAndKey.get(`${s.productId}::${s.colorComboKey}`) : undefined
             return (
               <tr key={s.id} className="tk-row align-top">
                 <td className="py-2">{s.saleDate.toLocaleDateString('pt-BR')}</td>
                 <td>
                   <StatusBadge badge={getSaleChannelBadge(s.channel)} />
                 </td>
-                <td>{s.product.name}</td>
+                <td>
+                  {s.product.name}
+                  {colorInfo && (
+                    <span className="flex items-center gap-1.5 text-xs font-normal text-slate-500 dark:text-slate-400">
+                      {colorInfo.colorHex && <span style={{ background: colorInfo.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                      {colorInfo.label}
+                    </span>
+                  )}
+                </td>
                 <td>{s.quantity}</td>
                 <td>{formatCurrency(s.unitPrice.toNumber())}</td>
                 <td className="text-slate-500 dark:text-slate-400">{s.buyerOrPlatform ?? '-'}</td>

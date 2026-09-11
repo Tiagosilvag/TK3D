@@ -41,7 +41,7 @@ function today(): string {
 // Melhoria "Entregas em consignação" §1/§3: cadastro vira modal com um
 // fluxo em passos -- escolher parceiro, "+ Adicionar produto" abre a lista
 // de produtos, escolher um produto abre suas variantes de cor com estoque
-// disponível (getProductDeliveryOptions), preencher quantidade de cada
+// disponível (getProductVariantStockOptions), preencher quantidade de cada
 // cor e confirmar volta pra lista principal do modal. Repete pra quantos
 // produtos forem necessários numa mesma entrega -- tudo vira UMA submissão
 // (createConsignmentDeliveryBatch), N linhas de ConsignmentDelivery

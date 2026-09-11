@@ -21,8 +21,28 @@ export interface StockRow {
   soldDirect: number
   produced: number
   variantBreakdown: { label: string; quantity: number }[]
+  soldVariantBreakdown: { label: string; quantity: number }[]
+  consignadoVariantBreakdown: { label: string; quantity: number }[]
   lowStock: boolean
   adjustments: AdjustmentEntry[]
+}
+
+// Melhoria "Estoque por variante" §3: mesmo "Por variante" expansível que
+// já existia só na coluna Produzido, reaproveitado também em Vendido e
+// Consignado -- sempre a mesma apresentação (label: quantidade), nunca uma
+// versão divergente por coluna.
+function VariantDetails({ breakdown }: { breakdown: { label: string; quantity: number }[] }) {
+  if (breakdown.length === 0) return null
+  return (
+    <details className="mt-1">
+      <summary className="cursor-pointer text-xs">Por variante</summary>
+      <ul className="mt-1 space-y-0.5 text-xs">
+        {breakdown.map((v) => (
+          <li key={v.label}>{v.label}: {v.quantity}</li>
+        ))}
+      </ul>
+    </details>
+  )
 }
 
 type Chip = 'ALL' | 'MOST_STOCK' | 'LOW_STOCK' | 'READY_TO_ASSEMBLE'
@@ -164,20 +184,17 @@ export function StockExplorer({ rows }: { rows: StockRow[] }) {
                     r.readyToAssemble
                   )}
                 </td>
-                <td>{r.consignado}</td>
-                <td>{r.soldDirect}</td>
+                <td>
+                  {r.consignado}
+                  <VariantDetails breakdown={r.consignadoVariantBreakdown} />
+                </td>
+                <td>
+                  {r.soldDirect}
+                  <VariantDetails breakdown={r.soldVariantBreakdown} />
+                </td>
                 <td className="text-slate-400 dark:text-slate-500">
                   {r.produced}
-                  {r.variantBreakdown.length > 0 && (
-                    <details className="mt-1">
-                      <summary className="cursor-pointer text-xs">Por variante</summary>
-                      <ul className="mt-1 space-y-0.5 text-xs">
-                        {r.variantBreakdown.map((v) => (
-                          <li key={v.label}>{v.label}: {v.quantity}</li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
+                  <VariantDetails breakdown={r.variantBreakdown} />
                 </td>
                 <td>
                   <ActionsMenu>

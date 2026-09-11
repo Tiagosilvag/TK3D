@@ -1,5 +1,5 @@
 'use client'
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createSale, updateSale } from '@/actions/sales'
@@ -7,7 +7,22 @@ import { getPlatformSalePrice } from '@/actions/marketplacePlatforms'
 import { SubmitButton } from '@/components/SubmitButton'
 import type { MarketplacePlatformKind } from '@prisma/client'
 
-type Option = { id: string; name: string }
+// Melhoria "Vendas por variante": cada produto ativo já vem com suas
+// variantes de cor em estoque (getProductVariantStockOptions, lib/reports.ts)
+// -- mesmo shape que DeliveryBatchForm.ProductOption já usa pra Entregas,
+// só que aqui "available" também desconta venda direta, não só entrega.
+export interface ProductVariantOption {
+  key: string
+  label: string
+  colorHex: string | null
+  available: number
+}
+
+export interface ProductOption {
+  productId: string
+  productName: string
+  variants: ProductVariantOption[]
+}
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
@@ -31,6 +46,7 @@ type EditingSale = {
   saleDate: string
   buyerOrPlatform: string | null
   notes: string | null
+  colorComboKey: string | null
 }
 
 export function SaleForm({
@@ -38,7 +54,7 @@ export function SaleForm({
   editingSale,
   defaultProductId,
 }: {
-  products: Option[]
+  products: ProductOption[]
   editingSale?: EditingSale
   // 2.2: link de ação rápida "Registrar venda direta" em /stock chega aqui
   // com ?productId=... pra pré-selecionar o produto.
@@ -48,18 +64,29 @@ export function SaleForm({
   const formRef = useRef<HTMLFormElement>(null)
   const [unitPrice, setUnitPrice] = useState(editingSale ? String(editingSale.unitPrice) : '')
   const [prefilling, setPrefilling] = useState(false)
+  const [productId, setProductId] = useState(editingSale?.productId ?? defaultProductId ?? '')
+  const [colorComboKey, setColorComboKey] = useState(editingSale?.colorComboKey ?? '')
+
+  const selectedProduct = useMemo(() => products.find((p) => p.productId === productId), [products, productId])
+
+  // Melhoria "Vendas por variante": mesma UX de DeliveryBatchForm -- venda
+  // de um produto com mais de uma cor em estoque exige escolher qual foi
+  // vendida (sem isso, "Meu Estoque" não consegue descontar a cor certa).
+  // Produto sem variante conhecida (getProductVariantBreakdown não achou
+  // nenhuma) não pede cor -- mesma convenção de Entregas.
+  const requiresColorChoice = Boolean(selectedProduct && selectedProduct.variants.length > 0)
 
   // Convenience only: when the sale is on Shopee/Mercado Livre, suggest that
   // platform's own computed price (cost + markup + THAT platform's specific
   // fee/tax, spec 4.1) as a starting point for unitPrice — still a plain
   // editable field, not a locked value, since the actual sale price can
   // differ.
-  async function maybePrefillMarketplacePrice(productId: string, channel: string) {
+  async function maybePrefillMarketplacePrice(currentProductId: string, channel: string) {
     if (editingSale) return
-    if ((channel !== 'SHOPEE' && channel !== 'MERCADO_LIVRE') || !productId) return
+    if ((channel !== 'SHOPEE' && channel !== 'MERCADO_LIVRE') || !currentProductId) return
     setPrefilling(true)
     try {
-      const price = await getPlatformSalePrice(productId, channel as MarketplacePlatformKind)
+      const price = await getPlatformSalePrice(currentProductId, channel as MarketplacePlatformKind)
       setUnitPrice(price.toFixed(2))
     } catch {
       // Product lookup failing here shouldn't block filling the form
@@ -69,18 +96,25 @@ export function SaleForm({
     }
   }
 
-  function handleChannelOrProductChange(form: HTMLFormElement) {
-    const data = new FormData(form)
-    const productId = String(data.get('productId') ?? '')
-    const channel = String(data.get('channel') ?? '')
-    void maybePrefillMarketplacePrice(productId, channel)
+  function handleProductChange(newProductId: string) {
+    setProductId(newProductId)
+    setColorComboKey('')
+    const form = formRef.current
+    if (form) {
+      const channel = String(new FormData(form).get('channel') ?? '')
+      void maybePrefillMarketplacePrice(newProductId, channel)
+    }
   }
 
-  function handleSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    handleChannelOrProductChange(e.currentTarget.form!)
+  function handleChannelChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    void maybePrefillMarketplacePrice(productId, e.target.value)
   }
 
   async function action(formData: FormData) {
+    if (requiresColorChoice && !colorComboKey) {
+      alert('Selecione a cor/variação vendida')
+      return
+    }
     if (editingSale) {
       const result = await updateSale(editingSale.id, formData)
       if (!result.success) {
@@ -94,6 +128,7 @@ export function SaleForm({
     if (result.success) {
       formRef.current?.reset()
       setUnitPrice('')
+      setColorComboKey('')
     } else {
       alert(result.error)
     }
@@ -107,7 +142,7 @@ export function SaleForm({
     >
       <label className="text-sm">
         Plataforma *
-        <select name="channel" defaultValue={editingSale?.channel ?? ''} onChange={handleSelectChange} className="tk-input-full" required>
+        <select name="channel" defaultValue={editingSale?.channel ?? ''} onChange={handleChannelChange} className="tk-input-full" required>
           <option value="" disabled>Selecione</option>
           {editingSale?.channel === 'MARKETPLACE' && (
             <option value="MARKETPLACE">Marketplace (canal antigo)</option>
@@ -119,13 +154,26 @@ export function SaleForm({
       </label>
       <label className="text-sm">
         Produto *
-        <select name="productId" defaultValue={editingSale?.productId ?? defaultProductId ?? ''} onChange={handleSelectChange} className="tk-input-full" required>
+        <select name="productId" value={productId} onChange={(e) => handleProductChange(e.target.value)} className="tk-input-full" required>
           <option value="" disabled>Selecione</option>
           {products.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
+            <option key={p.productId} value={p.productId}>{p.productName}</option>
           ))}
         </select>
       </label>
+      {requiresColorChoice && (
+        <label className="text-sm">
+          Cor/Variação *
+          <select name="colorComboKey" value={colorComboKey} onChange={(e) => setColorComboKey(e.target.value)} className="tk-input-full" required>
+            <option value="" disabled>Selecione a cor</option>
+            {selectedProduct!.variants.map((v) => (
+              <option key={v.key} value={v.key} disabled={v.available <= 0}>
+                {v.label} ({v.available} disponível{v.available === 1 ? '' : 'is'})
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <label className="text-sm">
         Quantidade *
         <input name="quantity" type="number" step="1" min="1" defaultValue={editingSale?.quantity} className="tk-input-full" required />

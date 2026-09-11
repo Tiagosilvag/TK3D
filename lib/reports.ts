@@ -458,36 +458,37 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
     .sort((a, b) => b.quantity - a.quantity)
 }
 
-export interface ProductDeliveryVariantOption {
+export interface ProductVariantStockOption {
   key: string
   label: string
   colorHex: string | null
   available: number
 }
 
-export interface ProductDeliveryOption {
+export interface ProductVariantStockInfo {
   productId: string
   productName: string
   suggestedPrice: number | null
   // Vazio = produto sem variante conhecida (getProductVariantBreakdown não
-  // achou nenhuma) -- o modal de entrega pede só uma quantidade "sem cor"
-  // nesse caso, sem oferecer combo nenhum.
-  variants: ProductDeliveryVariantOption[]
+  // achou nenhuma) -- o modal de entrega/venda pede só uma quantidade "sem
+  // cor" nesse caso, sem oferecer combo nenhum.
+  variants: ProductVariantStockOption[]
 }
 
-// Melhoria "Entregas em consignação" §3/§6: pra cada produto ativo, suas
-// variantes de cor já produzidas/montadas (getProductVariantBreakdown) com
-// "disponível" = produzido menos o que já foi entregue em consignação
-// daquela cor (agora rastreável via ConsignmentDelivery.colorComboKey,
-// desde a melhoria "Parceiros de consignação"). Aproximação: NÃO desconta
-// venda direta (Sale) por variante, porque Sale continua sem rastrear cor
-// (mesma limitação documentada em getProductVariantBreakdown) -- pode
-// superestimar levemente o disponível de um produto com venda direta
-// recente da mesma cor, mas é a mesma fonte confiável ("produzido por
-// variante") que o resto do app já usa, nunca um número inventado. Preço
-// sugerido pré-preenche "Preço unitário" no modal (item 6), continua
-// editável por linha.
-export async function getProductDeliveryOptions(): Promise<ProductDeliveryOption[]> {
+// Melhoria "Vendas por variante": generaliza o antigo getProductDeliveryOptions
+// (que só alimentava o modal de Entregas) -- agora usado também pelo
+// formulário de Venda direta, então "disponível" desconta os DOIS canais que
+// consomem do mesmo estoque físico por cor: entregue em consignação
+// (ConsignmentDelivery.colorComboKey) E vendido diretamente
+// (Sale.colorComboKey, rastreável desde esta melhoria). Antes disso, Sale
+// não rastreava cor -- o comentário antigo documentava essa limitação como
+// aceita ("pode superestimar levemente"); com Sale.colorComboKey agora
+// existindo, o cálculo fica exato pra vendas/entregas feitas a partir de
+// agora (uma venda anterior a este ajuste, sem colorComboKey, não entra em
+// nenhum combo específico -- nunca inventada retroativamente). Preço
+// sugerido pré-preenche "Preço/Valor unitário" nos dois formulários,
+// continua editável.
+export async function getProductVariantStockOptions(): Promise<ProductVariantStockInfo[]> {
   const products = await prisma.product.findMany({
     where: { active: true },
     orderBy: { name: 'asc' },
@@ -495,14 +496,19 @@ export async function getProductDeliveryOptions(): Promise<ProductDeliveryOption
   })
   if (products.length === 0) return []
 
-  const alreadyDelivered = await prisma.consignmentDelivery.groupBy({
-    by: ['productId', 'colorComboKey'],
-    _sum: { quantityDelivered: true },
-  })
+  const [alreadyDelivered, alreadySold] = await Promise.all([
+    prisma.consignmentDelivery.groupBy({ by: ['productId', 'colorComboKey'], _sum: { quantityDelivered: true } }),
+    prisma.sale.groupBy({ by: ['productId', 'colorComboKey'], _sum: { quantity: true } }),
+  ])
   const deliveredByProductAndKey = new Map<string, number>()
   for (const d of alreadyDelivered) {
     if (!d.colorComboKey) continue
     deliveredByProductAndKey.set(`${d.productId}::${d.colorComboKey}`, d._sum.quantityDelivered ?? 0)
+  }
+  const soldByProductAndKey = new Map<string, number>()
+  for (const s of alreadySold) {
+    if (!s.colorComboKey) continue
+    soldByProductAndKey.set(`${s.productId}::${s.colorComboKey}`, s._sum.quantity ?? 0)
   }
 
   return Promise.all(products.map(async (p) => {
@@ -521,7 +527,7 @@ export async function getProductDeliveryOptions(): Promise<ProductDeliveryOption
         key: v.key,
         label: v.label,
         colorHex: v.colorHex,
-        available: Math.max(0, v.quantity - (deliveredByProductAndKey.get(`${p.id}::${v.key}`) ?? 0)),
+        available: Math.max(0, v.quantity - (deliveredByProductAndKey.get(`${p.id}::${v.key}`) ?? 0) - (soldByProductAndKey.get(`${p.id}::${v.key}`) ?? 0)),
       })),
     }
   }))

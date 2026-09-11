@@ -119,8 +119,8 @@ export interface AssemblyStatus {
 // podem pedir quantidades diferentes do mesmo componente).
 //
 // Limitação aceita (documentada, mesmo padrão já usado em
-// getProductDeliveryOptions pra consignação): venda direta/consignação
-// deste componente NÃO é descontada por cor aqui, só consumo-como-
+// getProductVariantStockOptions pra venda/consignação): venda direta/
+// consignação deste componente NÃO é descontada por cor aqui, só consumo-como-
 // componente -- a agregada 100% líquida é getOwnStockSummary (lib/reports.ts),
 // usada em Meu Estoque.
 async function getComponentColorAvailability(componentProductId: string): Promise<AssemblyPartColorOption[]> {
