@@ -8,7 +8,7 @@ type ActionResult = { success: boolean; error?: string }
 
 function parse(formData: FormData) {
   const raw = Object.fromEntries(formData)
-  return printerSchema.safeParse({ ...raw, nickname: raw.nickname || null })
+  return printerSchema.safeParse({ ...raw, nickname: raw.nickname || null, bambuSerial: raw.bambuSerial || null })
 }
 
 function isUniqueConstraintError(err: unknown): boolean {

@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createProductionRunBatch, createPlate } from '@/actions/productionRuns'
 import { getProductProductionDefaults, type ProductProductionPartDefault } from '@/actions/products'
+import { getAvailablePrinterCapture } from '@/actions/bambuStatus'
+import { buildPlateAutofill } from '@/lib/bambu/autofill'
 import { WASTE_REASON_LABELS } from '@/lib/format'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
@@ -236,12 +238,33 @@ export function ProductionRunBatchForm({
   const [addProductId, setAddProductId] = useState('')
   const [addProductParts, setAddProductParts] = useState<ProductProductionPartDefault[] | null>(null)
 
+  // Integração Bambu Lab (spec 2026-09-11): captura de telemetria real
+  // ainda não vinculada a nenhuma Plate, oferecida como autofill quando a
+  // impressora escolhida tem uma disponível (ver actions/bambuStatus.ts).
+  const [availableCapture, setAvailableCapture] = useState<Awaited<ReturnType<typeof getAvailablePrinterCapture>>>(null)
+  const [plateActualPrintTimeHours, setPlateActualPrintTimeHours] = useState<number | null>(null)
+  const [usedCaptureId, setUsedCaptureId] = useState<string | null>(null)
+
   useEffect(() => {
     const dialog = dialogRef.current
     if (!dialog) return
     if (open && !dialog.open) dialog.showModal()
     if (!open && dialog.open) dialog.close()
   }, [open])
+
+  useEffect(() => {
+    if (!platePrinterId) {
+      setAvailableCapture(null)
+      return
+    }
+    let cancelled = false
+    getAvailablePrinterCapture(platePrinterId).then((capture) => {
+      if (!cancelled) setAvailableCapture(capture)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [platePrinterId])
 
   function resetAll() {
     setMode('individual')
@@ -253,6 +276,9 @@ export function ProductionRunBatchForm({
     setPlateItems([])
     setAddProductId('')
     setAddProductParts(null)
+    setAvailableCapture(null)
+    setPlateActualPrintTimeHours(null)
+    setUsedCaptureId(null)
   }
 
   async function handleProductChange(newProductId: string) {
@@ -475,6 +501,8 @@ export function ProductionRunBatchForm({
         })),
       ),
     )
+    if (usedCaptureId) fd.set('printerCaptureId', usedCaptureId)
+    if (plateActualPrintTimeHours !== null) fd.set('actualPrintTimeHours', String(plateActualPrintTimeHours))
     const result = await createPlate(fd)
     if (!result.success) {
       alert(result.error)
@@ -689,6 +717,49 @@ export function ProductionRunBatchForm({
                 </select>
               </label>
             </div>
+
+            {availableCapture && (
+              <div className="rounded-lg bg-emerald-50 p-3 text-sm dark:bg-emerald-900/20">
+                <p>
+                  Impressão dessa impressora terminou às {new Date(availableCapture.finishedAt).toLocaleTimeString('pt-BR')}, durou{' '}
+                  {availableCapture.durationHours.toFixed(2)}h
+                  {availableCapture.gramsUsedTotal !== null && `, ~${availableCapture.gramsUsedTotal.toFixed(1)}g de filamento`}.
+                </p>
+                <button
+                  type="button"
+                  className="mt-1 font-medium text-emerald-700 hover:underline dark:text-emerald-400"
+                  onClick={() => {
+                    const autofill = buildPlateAutofill(
+                      { durationHours: availableCapture.durationHours, gramsUsedTotal: availableCapture.gramsUsedTotal, outcome: availableCapture.outcome },
+                      plateItems.map((item) => {
+                        const perUnit = parseFloat(item.filaments[0]?.weightGramsPerUnit ?? '0') || 0
+                        const qty = parseInt(item.quantityPlanned, 10) || 0
+                        return { key: item.key, theoreticalGramsUsed: perUnit * qty }
+                      }),
+                    )
+                    setPlateActualPrintTimeHours(autofill.actualPrintTimeHours)
+                    setPlateItems((rows) =>
+                      rows.map((row) => {
+                        const timeWasted = autofill.timeWastedHoursByItem[row.key]
+                        const gramsWasted = autofill.gramsWastedByItem[row.key]
+                        return {
+                          ...row,
+                          timeWastedHours: timeWasted !== undefined ? String(timeWasted) : row.timeWastedHours,
+                          filaments:
+                            gramsWasted !== undefined && row.filaments.length === 1
+                              ? [{ ...row.filaments[0], gramsWasted: String(gramsWasted) }]
+                              : row.filaments,
+                        }
+                      }),
+                    )
+                    setUsedCaptureId(availableCapture.id)
+                  }}
+                >
+                  Usar esses dados
+                </button>
+              </div>
+            )}
+
             <label className="text-xs">
               Observações da Plate (opcional)
               <textarea value={plateNotes} onChange={(e) => setPlateNotes(e.target.value)} className="tk-input-full" rows={1} />
