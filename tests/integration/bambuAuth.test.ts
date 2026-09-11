@@ -18,6 +18,7 @@ describe('bambuAuth actions', () => {
   beforeEach(async () => {
     process.env.BAMBU_CREDENTIAL_KEY = 'a'.repeat(64)
     await prisma.settings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } as never })
+    vi.spyOn(auth, 'fetchUserId').mockResolvedValue('999888777')
   })
 
   it('step1 sinaliza needsCode e não grava nada no banco quando a Bambu pede verificação (senha nunca persiste)', async () => {
@@ -36,15 +37,17 @@ describe('bambuAuth actions', () => {
     expect(result.needsCode).toBe(false)
     const settings = await prisma.settings.findUnique({ where: { id: 1 } })
     expect(settings?.bambuCloudEmail).toBe('a@b.com')
+    expect(settings?.bambuCloudUserId).toBe('999888777')
     expect(settings?.bambuCloudCredentialEncrypted).not.toBeNull()
   })
 
-  it('step2 grava a credencial cifrada em Settings', async () => {
+  it('step2 grava a credencial cifrada e o uid em Settings', async () => {
     vi.spyOn(auth, 'confirmLoginCode').mockResolvedValue({ accessToken: 'token-abc' })
     const result = await connectBambuAccountStep2(fd({ code: '000000', email: 'a@b.com' }))
     expect(result.success).toBe(true)
     const settings = await prisma.settings.findUnique({ where: { id: 1 } })
     expect(settings?.bambuCloudEmail).toBe('a@b.com')
+    expect(settings?.bambuCloudUserId).toBe('999888777')
     expect(settings?.bambuCloudCredentialEncrypted).not.toBeNull()
     expect(settings?.bambuCloudCredentialEncrypted).not.toContain('token-abc')
   })
@@ -54,5 +57,6 @@ describe('bambuAuth actions', () => {
     const settings = await prisma.settings.findUnique({ where: { id: 1 } })
     expect(settings?.bambuCloudCredentialEncrypted).toBeNull()
     expect(settings?.bambuCloudEmail).toBeNull()
+    expect(settings?.bambuCloudUserId).toBeNull()
   })
 })

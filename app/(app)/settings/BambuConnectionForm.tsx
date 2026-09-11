@@ -2,10 +2,24 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { connectBambuAccountStep1, connectBambuAccountStep2, disconnectBambuAccount } from '@/actions/bambuAuth'
-import { reconnectBambuListener } from '@/actions/bambuStatus'
+import { reconnectBambuListener, type getBambuConnectionStatus } from '@/actions/bambuStatus'
 import { SubmitButton } from '@/components/SubmitButton'
 
-export function BambuConnectionForm({ connectedEmail }: { connectedEmail: string | null }) {
+type ConnectionStatus = Awaited<ReturnType<typeof getBambuConnectionStatus>>
+
+const STATUS_BADGE: Record<ConnectionStatus, { label: string; className: string }> = {
+  connected: { label: 'MQTT conectado', className: 'text-emerald-600 dark:text-emerald-400' },
+  expired: { label: 'MQTT com erro — ver logs do servidor', className: 'text-red-600 dark:text-red-400' },
+  not_configured: { label: 'MQTT ainda não conectado', className: 'text-amber-600 dark:text-amber-400' },
+}
+
+export function BambuConnectionForm({
+  connectedEmail,
+  connectionStatus,
+}: {
+  connectedEmail: string | null
+  connectionStatus: ConnectionStatus
+}) {
   const router = useRouter()
   const [step, setStep] = useState<'idle' | 'code'>('idle')
   const [email, setEmail] = useState('')
@@ -63,6 +77,7 @@ export function BambuConnectionForm({ connectedEmail }: { connectedEmail: string
             <p>
               Conectado como <strong>{connectedEmail}</strong>
             </p>
+            <p className={`mt-1 text-xs font-medium ${STATUS_BADGE[connectionStatus].className}`}>{STATUS_BADGE[connectionStatus].label}</p>
             <div className="mt-2 flex gap-3">
               <button type="button" onClick={handleReconnect} className="text-sm text-amber-600 hover:underline dark:text-amber-400">
                 Reconectar
