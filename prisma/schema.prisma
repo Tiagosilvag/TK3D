@@ -47,6 +47,10 @@ model Settings {
   // Configurações §3 — Arredondamento (aplicado só ao preço final sugerido/
   // marketplace via lib/costing.ts#applyRounding, nunca aos componentes)
   roundingMode                  RoundingMode @default(NONE)
+  // Melhoria "Configurações" §7: só usado quando roundingMode=CUSTOM -- os
+  // dois dígitos finais escolhidos (0 a 99, ex.: 50 -> termina em ,50).
+  // Nulo pra qualquer outro modo (settingsSchema zera no submit).
+  roundingCustomCents           Int?
   updatedAt                     DateTime     @updatedAt
 }
 
@@ -55,6 +59,7 @@ enum RoundingMode {
   R90 // termina em ,90
   R99 // termina em ,99
   R00 // termina em ,00
+  CUSTOM // termina em ,roundingCustomCents
 }
 
 model Printer {

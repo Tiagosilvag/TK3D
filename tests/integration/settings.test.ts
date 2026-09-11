@@ -169,4 +169,79 @@ describe('settings actions', () => {
     }))
     expect(result.success).toBe(false)
   })
+
+  it('roundingMode=CUSTOM com roundingCustomCents persiste os dois dígitos finais', async () => {
+    const result = await updateSettings(fd({
+      energyCostPerKwh: '1',
+      laborCostPerHour: '10',
+      failureRatePercent: '0.1',
+      marketplaceFeePercent: '0.2',
+      taxPercent: '0.055',
+      marketplaceFixedFee: '4',
+      defaultMarkup: '2',
+      annualMaintenancePercent: '0.10',
+      annualUsageHours: '2000',
+      ...baseCompositionAndRounding,
+      roundingMode: 'CUSTOM',
+      roundingCustomCents: '50',
+    }))
+    expect(result.success).toBe(true)
+
+    const settings = await prisma.settings.findUniqueOrThrow({ where: { id: 1 } })
+    expect(settings.roundingMode).toBe('CUSTOM')
+    expect(settings.roundingCustomCents).toBe(50)
+  })
+
+  it('rejeita roundingMode=CUSTOM sem roundingCustomCents', async () => {
+    const result = await updateSettings(fd({
+      energyCostPerKwh: '1',
+      laborCostPerHour: '10',
+      failureRatePercent: '0.1',
+      marketplaceFeePercent: '0.2',
+      taxPercent: '0.055',
+      marketplaceFixedFee: '4',
+      defaultMarkup: '2',
+      annualMaintenancePercent: '0.10',
+      annualUsageHours: '2000',
+      ...baseCompositionAndRounding,
+      roundingMode: 'CUSTOM',
+    }))
+    expect(result.success).toBe(false)
+  })
+
+  it('voltar de CUSTOM pra outro modo zera roundingCustomCents (não deixa valor órfão)', async () => {
+    const custom = await updateSettings(fd({
+      energyCostPerKwh: '1',
+      laborCostPerHour: '10',
+      failureRatePercent: '0.1',
+      marketplaceFeePercent: '0.2',
+      taxPercent: '0.055',
+      marketplaceFixedFee: '4',
+      defaultMarkup: '2',
+      annualMaintenancePercent: '0.10',
+      annualUsageHours: '2000',
+      ...baseCompositionAndRounding,
+      roundingMode: 'CUSTOM',
+      roundingCustomCents: '77',
+    }))
+    expect(custom.success).toBe(true)
+
+    const backToNone = await updateSettings(fd({
+      energyCostPerKwh: '1',
+      laborCostPerHour: '10',
+      failureRatePercent: '0.1',
+      marketplaceFeePercent: '0.2',
+      taxPercent: '0.055',
+      marketplaceFixedFee: '4',
+      defaultMarkup: '2',
+      annualMaintenancePercent: '0.10',
+      annualUsageHours: '2000',
+      ...baseCompositionAndRounding,
+    }))
+    expect(backToNone.success).toBe(true)
+
+    const settings = await prisma.settings.findUniqueOrThrow({ where: { id: 1 } })
+    expect(settings.roundingMode).toBe('NONE')
+    expect(settings.roundingCustomCents).toBeNull()
+  })
 })

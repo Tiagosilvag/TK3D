@@ -319,6 +319,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
             taxPercent={settings.taxPercent.toNumber()}
             marketplaceFixedFee={settings.marketplaceFixedFee.toNumber()}
             roundingMode={settings.roundingMode}
+            roundingCustomCents={settings.roundingCustomCents}
             currentSuggestedPrice={product.suggestedPrice?.toNumber() ?? null}
             currentMarketplacePrice={product.marketplacePrice?.toNumber() ?? null}
           />

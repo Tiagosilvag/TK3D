@@ -621,6 +621,17 @@ describe('applyRounding', () => {
   it('R00 em valor já inteiro não muda', () => {
     expect(applyRounding(50, 'R00')).toBeCloseTo(50, 4)
   })
+
+  it('CUSTOM fixa a fração nos dígitos informados (customCents)', () => {
+    expect(applyRounding(23.45, 'CUSTOM', 50)).toBeCloseTo(23.50, 4)
+    expect(applyRounding(23.95, 'CUSTOM', 50)).toBeCloseTo(23.50, 4)
+    expect(applyRounding(24, 'CUSTOM', 0)).toBeCloseTo(24.00, 4)
+    expect(applyRounding(24, 'CUSTOM', 99)).toBeCloseTo(24.99, 4)
+  })
+
+  it('CUSTOM sem customCents informado trata como ,00 (mesmo comportamento de R00)', () => {
+    expect(applyRounding(23.45, 'CUSTOM')).toBeCloseTo(23.00, 4)
+  })
 })
 
 describe('calculateWasteCost', () => {

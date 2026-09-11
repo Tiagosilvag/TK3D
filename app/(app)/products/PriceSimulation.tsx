@@ -24,6 +24,7 @@ export function PriceSimulation({
   taxPercent,
   marketplaceFixedFee,
   roundingMode,
+  roundingCustomCents,
   currentSuggestedPrice,
   currentMarketplacePrice,
 }: {
@@ -41,6 +42,8 @@ export function PriceSimulation({
   // no-op on an already-rounded number, so preview and persisted value
   // always agree).
   roundingMode: RoundingMode
+  // Configurações §7: só usado quando roundingMode='CUSTOM'.
+  roundingCustomCents: number | null
   currentSuggestedPrice: number | null
   currentMarketplacePrice: number | null
 }) {
@@ -64,10 +67,10 @@ export function PriceSimulation({
     // component upstream of it -- applied here, after simulateProductPrice
     // has already produced the final suggested/marketplace figures.
     return {
-      suggestedPrice: applyRounding(raw.suggestedPrice, roundingMode),
-      marketplacePrice: applyRounding(raw.marketplacePrice, roundingMode),
+      suggestedPrice: applyRounding(raw.suggestedPrice, roundingMode, roundingCustomCents ?? undefined),
+      marketplacePrice: applyRounding(raw.marketplacePrice, roundingMode, roundingCustomCents ?? undefined),
     }
-  }, [finalCost, markup, marginPercent, discountPercent, marketplaceFeePercent, taxPercent, marketplaceFixedFee, roundingMode])
+  }, [finalCost, markup, marginPercent, discountPercent, marketplaceFeePercent, taxPercent, marketplaceFixedFee, roundingMode, roundingCustomCents])
 
   async function handleApply() {
     setApplying(true)

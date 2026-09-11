@@ -10,6 +10,9 @@ type ActionResult = { success: boolean; error?: string }
 
 // 4.1: só existem 2 linhas fixas (Shopee/Mercado Livre), seedadas pela
 // migration -- este formulário só edita as taxas, nunca cria/remove linhas.
+// Melhoria "Configurações" §5: as 2 linhas deixaram de ter uma tela própria
+// -- viram parte do card Precificação em /settings (SettingsForm), daí o
+// revalidatePath abaixo.
 const feesSchema = z.object({
   feePercent: z.coerce.number({ invalid_type_error: 'Taxa inválida' }).min(0, 'Taxa não pode ser negativa').max(1, 'Taxa deve ser uma fração entre 0 e 1'),
   feeFixed: z.coerce.number({ invalid_type_error: 'Valor inválido' }).min(0, 'Valor não pode ser negativo'),
@@ -21,7 +24,7 @@ export async function updateMarketplacePlatformFees(platform: MarketplacePlatfor
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
   await prisma.marketplacePlatform.update({ where: { platform }, data: parsed.data })
-  revalidatePath('/settings/marketplace-platforms')
+  revalidatePath('/settings')
   return { success: true }
 }
 

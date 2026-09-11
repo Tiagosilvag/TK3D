@@ -13,9 +13,9 @@ const checkbox = () =>
     .optional()
     .transform((v) => v === 'true' || v === 'on')
 
-export const roundingModeEnum = z.enum(['NONE', 'R90', 'R99', 'R00'])
+export const roundingModeEnum = z.enum(['NONE', 'R90', 'R99', 'R00', 'CUSTOM'])
 
-export const settingsSchema = z.object({
+const baseSettingsSchema = z.object({
   energyCostPerKwh: z.coerce.number().positive('Custo de energia deve ser maior que zero'),
   laborCostPerHour: z.coerce.number().positive('Custo de mão de obra deve ser maior que zero'),
   failureRatePercent: percent(),
@@ -44,6 +44,21 @@ export const settingsSchema = z.object({
   includePackagingCost: checkbox(),
   // Arredondamento do preço final sugerido/marketplace
   roundingMode: roundingModeEnum,
+  // Melhoria "Configurações" §7: só exigido/usado quando roundingMode=CUSTOM
+  // (refine/transform abaixo) -- os 2 dígitos finais escolhidos (0 a 99).
+  roundingCustomCents: z.coerce.number().int('Deve ser um número inteiro').min(0, 'Deve ser entre 0 e 99').max(99, 'Deve ser entre 0 e 99').optional(),
 })
+
+export const settingsSchema = baseSettingsSchema
+  .refine((data) => data.roundingMode !== 'CUSTOM' || data.roundingCustomCents !== undefined, {
+    message: 'Informe os dois dígitos finais para o arredondamento personalizado',
+    path: ['roundingCustomCents'],
+  })
+  .transform((data) => ({
+    ...data,
+    // Nunca deixa um roundingCustomCents "órfão" de um modo CUSTOM anterior
+    // vazando pro modo atual -- só tem valor quando de fato é usado.
+    roundingCustomCents: data.roundingMode === 'CUSTOM' ? (data.roundingCustomCents ?? null) : null,
+  }))
 
 export type SettingsInput = z.infer<typeof settingsSchema>

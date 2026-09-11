@@ -193,9 +193,9 @@ export interface ProductCostBreakdown {
 }
 
 // Configurações §3 — modos de arredondamento do preço final.
-export type RoundingMode = 'NONE' | 'R90' | 'R99' | 'R00'
+export type RoundingMode = 'NONE' | 'R90' | 'R99' | 'R00' | 'CUSTOM'
 
-const ROUNDING_FRACTION: Record<Exclude<RoundingMode, 'NONE'>, number> = {
+const ROUNDING_FRACTION: Record<Exclude<RoundingMode, 'NONE' | 'CUSTOM'>, number> = {
   R90: 0.9,
   R99: 0.99,
   R00: 0,
@@ -212,12 +212,16 @@ const ROUNDING_FRACTION: Record<Exclude<RoundingMode, 'NONE'>, number> = {
  * 23.45 -> 23.90 (fraction goes up) and 23.95 -> 23.90 (fraction goes down)
  * land on the exact same result, matching "R90 (...) ex: 23.45→23.90, mas
  * 23.95→23.90 também" from the brief. R00 fixes the fraction at .00, which
- * is equivalent to Math.floor. NONE is a no-op passthrough.
+ * is equivalent to Math.floor. NONE is a no-op passthrough. CUSTOM reuses
+ * the exact same truncate-and-fix-ending rule, with the ending taken from
+ * `customCents` (0-99, e.g. 50 -> ends in ,50) instead of a fixed table
+ * entry — Settings.roundingCustomCents, only meaningful when mode=CUSTOM.
  */
-export function applyRounding(value: number, mode: RoundingMode): number {
+export function applyRounding(value: number, mode: RoundingMode, customCents?: number): number {
   if (mode === 'NONE') return value
   const integerPart = Math.floor(value)
-  const rounded = integerPart + ROUNDING_FRACTION[mode]
+  const fraction = mode === 'CUSTOM' ? (customCents ?? 0) / 100 : ROUNDING_FRACTION[mode]
+  const rounded = integerPart + fraction
   // Normalize away binary floating-point noise (e.g. 23 + 0.9 !== 23.9 bit
   // for bit) so callers get a clean 2-decimal currency value.
   return Math.round(rounded * 100) / 100
