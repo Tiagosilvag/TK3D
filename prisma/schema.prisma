@@ -32,6 +32,11 @@ model Settings {
   // limiares fixos 30%/10%, não muda — ver lib/costing.ts getStockStatus)
   stockLowThresholdPercent      Decimal      @default(0.30) @db.Decimal(5, 4)
   stockCriticalThresholdPercent Decimal      @default(0.10) @db.Decimal(5, 4)
+  // Melhoria "Meu Estoque" §1/§7: limiar de "pouco estoque" pra Produto
+  // acabado -- número absoluto de unidades (não percentual, ao contrário
+  // dos dois campos acima), porque produto manufaturado não tem um
+  // "estoque inicial"/tamanho de lote de referência pra calcular %.
+  productLowStockThreshold      Int          @default(3)
   // Configurações §3 — Composição do custo (cada flag habilita/desabilita a
   // contribuição do termo correspondente no subtotal/total calculado por
   // calculateProductCost, ver lib/costing.ts)

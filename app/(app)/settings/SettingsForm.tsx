@@ -30,6 +30,7 @@ type SettingsValues = {
   defaultDiscountPercent: number
   stockLowThresholdPercent: number
   stockCriticalThresholdPercent: number
+  productLowStockThreshold: number
   includeDepreciation: boolean
   includeEnergyCost: boolean
   includeMaintenance: boolean
@@ -292,13 +293,16 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
         </div>
       </Card>
 
-      <Card title="Estoque" description="Limiares usados em acessórios e insumos.">
+      <Card title="Estoque" description="Limiares usados em acessórios, insumos e produtos acabados.">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Limiar de estoque baixo">
             <AffixInput name="stockLowThresholdPercent" defaultValue={toPercentDisplay(settings.stockLowThresholdPercent)} suffix="%" max="100" />
           </Field>
           <Field label="Limiar de estoque crítico">
             <AffixInput name="stockCriticalThresholdPercent" defaultValue={toPercentDisplay(settings.stockCriticalThresholdPercent)} suffix="%" max="100" />
+          </Field>
+          <Field label="Pouco estoque de produto acabado (Meu Estoque)">
+            <AffixInput name="productLowStockThreshold" defaultValue={settings.productLowStockThreshold} suffix="un" step="1" />
           </Field>
         </div>
       </Card>

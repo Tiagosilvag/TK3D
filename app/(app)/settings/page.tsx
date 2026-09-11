@@ -34,6 +34,7 @@ export default async function SettingsPage() {
           defaultDiscountPercent: settings.defaultDiscountPercent.toNumber(),
           stockLowThresholdPercent: settings.stockLowThresholdPercent.toNumber(),
           stockCriticalThresholdPercent: settings.stockCriticalThresholdPercent.toNumber(),
+          productLowStockThreshold: settings.productLowStockThreshold,
           includeDepreciation: settings.includeDepreciation,
           includeEnergyCost: settings.includeEnergyCost,
           includeMaintenance: settings.includeMaintenance,

@@ -24,6 +24,7 @@ const baseCompositionAndRounding = {
   defaultDiscountPercent: '0',
   stockLowThresholdPercent: '0.30',
   stockCriticalThresholdPercent: '0.10',
+  productLowStockThreshold: '3',
   includeDepreciation: 'true',
   includeEnergyCost: 'true',
   includeMaintenance: 'true',

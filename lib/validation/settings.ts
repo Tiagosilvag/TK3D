@@ -31,6 +31,11 @@ const baseSettingsSchema = z.object({
   // Estoque (acessórios/insumos — Filamento continua com limiares fixos)
   stockLowThresholdPercent: percent(),
   stockCriticalThresholdPercent: percent(),
+  // Melhoria "Meu Estoque" §1/§7: Produto acabado não tem um "estoque
+  // inicial"/tamanho de lote de referência (ao contrário de Filamento/
+  // Acessório/Insumo) pra calcular um limiar percentual -- é um número
+  // absoluto de unidades, direto.
+  productLowStockThreshold: z.coerce.number().int('Deve ser um número inteiro').nonnegative('Não pode ser negativo'),
   // Composição do custo — cada flag liga/desliga a contribuição do termo
   // correspondente no subtotal/total de calculateProductCost
   includeDepreciation: checkbox(),
