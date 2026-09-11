@@ -56,6 +56,13 @@ model Settings {
   // dois dígitos finais escolhidos (0 a 99, ex.: 50 -> termina em ,50).
   // Nulo pra qualquer outro modo (settingsSchema zera no submit).
   roundingCustomCents           Int?
+  // Integração Bambu Lab (spec 2026-09-11): credencial cifrada da conta
+  // Bambu (AES-256-GCM via BAMBU_CREDENTIAL_KEY) -- senha nunca persiste,
+  // só o token trocado no login 2FA. Status de conexão não é persistido,
+  // lido ao vivo do listener (lib/bambu/listener.ts).
+  bambuCloudEmail               String?
+  bambuCloudCredentialEncrypted String?
+  bambuCloudRegion              String?      @default("US")
   updatedAt                     DateTime     @updatedAt
 }
 
@@ -94,6 +101,11 @@ model Printer {
   // os dois campos explicitamente do usuário, nunca dependem do default.
   energyCostPerKwh       Decimal         @default(1.00) @db.Decimal(10, 4)
   maintenanceCostPerHour Decimal         @default(0) @db.Decimal(10, 4)
+  // Integração Bambu Lab (spec 2026-09-11): opt-in por impressora, somente
+  // leitura via Cloud MQTT -- bambuSerial identifica a impressora dentro
+  // dos tópicos MQTT da conta (Settings.bambuCloudCredentialEncrypted).
+  bambuEnabled           Boolean         @default(false)
+  bambuSerial            String?
   active                 Boolean         @default(true)
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt
@@ -101,6 +113,7 @@ model Printer {
   productionRuns         ProductionRun[]
   productParts           ProductPart[]
   plates                 Plate[]
+  captures               PrinterCapture[]
 }
 
 enum FilamentMaterial {
@@ -557,13 +570,18 @@ model ProductAccessoryColorUsage {
 // ProductionRun sem plateId é "produção individual" (sempre foi assim,
 // nunca precisou de Plate pra existir).
 model Plate {
-  id        String          @id @default(cuid())
-  date      DateTime
-  printerId String
-  printer   Printer         @relation(fields: [printerId], references: [id])
-  notes     String?
-  createdAt DateTime        @default(now())
-  runs      ProductionRun[]
+  id                   String           @id @default(cuid())
+  date                 DateTime
+  printerId            String
+  printer              Printer          @relation(fields: [printerId], references: [id])
+  notes                String?
+  // Integração Bambu Lab (spec 2026-09-11): tempo real capturado via
+  // PrinterCapture (autofill em Registrar Produção) -- puramente
+  // informativo, nunca entra em allocatePlatePrintTime nem custeio.
+  actualPrintTimeHours Decimal?         @db.Decimal(10, 3)
+  createdAt            DateTime         @default(now())
+  runs                 ProductionRun[]
+  captures             PrinterCapture[]
 }
 
 model ProductionRun {
@@ -927,4 +945,34 @@ model StockConsumption {
 
   @@index([resourceType, resourceId])
   @@index([source, sourceId])
+}
+
+// Integração Bambu Lab (spec 2026-09-11): telemetria real de um job de
+// impressão concluído (nunca durante a impressão -- ver
+// lib/bambu/jobTracker.ts). Somente leitura, nunca cria/altera
+// ProductionRun sozinha -- linkedPlateId é preenchido só quando o usuário
+// aceita o autofill em Registrar Produção.
+enum PrinterCaptureOutcome {
+  FINISHED
+  FAILED
+  CANCELLED
+  UNKNOWN
+}
+
+model PrinterCapture {
+  id             String                @id @default(cuid())
+  printerId      String
+  printer        Printer               @relation(fields: [printerId], references: [id])
+  startedAt      DateTime
+  finishedAt     DateTime
+  gcodeFileName  String?
+  durationHours  Decimal               @db.Decimal(10, 3)
+  gramsUsedTotal Decimal?              @db.Decimal(10, 2)
+  amsBreakdown   Json?
+  outcome        PrinterCaptureOutcome
+  linkedPlateId  String?
+  linkedPlate    Plate?                @relation(fields: [linkedPlateId], references: [id])
+  createdAt      DateTime              @default(now())
+
+  @@index([printerId, finishedAt])
 }
