@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { requestLoginCode, confirmLoginCode } from '@/lib/bambu/auth'
+import { requestLoginCode, confirmLoginCode, fetchUserId } from '@/lib/bambu/auth'
 
 describe('bambu auth client', () => {
   const originalFetch = global.fetch
@@ -48,5 +48,18 @@ describe('bambu auth client', () => {
   it('confirmLoginCode lança erro se a Bambu não devolver accessToken', async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }) as unknown as typeof fetch
     await expect(confirmLoginCode('user@example.com', '000000')).rejects.toThrow('Código inválido ou expirado')
+  })
+
+  it('fetchUserId devolve o uid como string, enviando o Bearer token', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ uid: 1234567890 }) })
+    global.fetch = fetchMock as unknown as typeof fetch
+    const uid = await fetchUserId('token-abc')
+    expect(uid).toBe('1234567890')
+    expect(fetchMock).toHaveBeenCalledWith(expect.any(String), { headers: { Authorization: 'Bearer token-abc' } })
+  })
+
+  it('fetchUserId lança erro se a Bambu não devolver uid', async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }) as unknown as typeof fetch
+    await expect(fetchUserId('token-abc')).rejects.toThrow('Bambu não retornou o id da conta')
   })
 })

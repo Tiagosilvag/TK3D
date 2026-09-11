@@ -9,6 +9,7 @@
 // agora com account+code em vez de senha, devolve accessToken.
 const BAMBU_LOGIN_URL = 'https://api.bambulab.com/v1/user-service/user/login'
 const BAMBU_SEND_CODE_URL = 'https://api.bambulab.com/v1/user-service/user/sendemail/code'
+const BAMBU_PREFERENCE_URL = 'https://api.bambulab.com/v1/design-user-service/my/preference'
 
 export type LoginStep1Result = { status: 'code_required' } | { status: 'authenticated'; accessToken: string }
 
@@ -45,4 +46,16 @@ export async function confirmLoginCode(email: string, code: string): Promise<{ a
   const data = (await res.json()) as { accessToken?: string }
   if (!data.accessToken) throw new Error('Código inválido ou expirado')
   return { accessToken: data.accessToken }
+}
+
+// O username do broker MQTT da nuvem é "u_{uid}" (id numérico da conta),
+// nunca o e-mail -- só descoberto depois de autenticado.
+export async function fetchUserId(accessToken: string): Promise<string> {
+  const res = await fetch(BAMBU_PREFERENCE_URL, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!res.ok) throw new Error('Falha ao obter o id da conta Bambu')
+  const data = (await res.json()) as { uid?: number | string }
+  if (data.uid === undefined || data.uid === null) throw new Error('Bambu não retornou o id da conta')
+  return String(data.uid)
 }

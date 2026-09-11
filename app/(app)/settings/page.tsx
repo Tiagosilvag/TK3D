@@ -1,17 +1,19 @@
 import { prisma } from '@/lib/prisma'
 import { SettingsForm } from './SettingsForm'
 import { BambuConnectionForm } from './BambuConnectionForm'
+import { getBambuConnectionStatus } from '@/actions/bambuStatus'
 
 export const dynamic = 'force-dynamic'
 
 export default async function SettingsPage() {
-  const [settings, platforms] = await Promise.all([
+  const [settings, platforms, bambuConnectionStatus] = await Promise.all([
     prisma.settings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } }),
     // Melhoria "Configurações" §5: as 2 linhas fixas (Shopee/Mercado Livre)
     // deixam de ter tela própria e viram uma lista embutida no card
     // Precificação -- mantidas fixas (sem criar/remover/renomear), só
     // reformatadas visualmente junto do resto de Configurações.
     prisma.marketplacePlatform.findMany({ orderBy: { platform: 'asc' } }),
+    getBambuConnectionStatus(),
   ])
 
   return (
@@ -56,7 +58,7 @@ export default async function SettingsPage() {
         }))}
       />
       <div className="mt-4">
-        <BambuConnectionForm connectedEmail={settings.bambuCloudEmail} />
+        <BambuConnectionForm connectedEmail={settings.bambuCloudEmail} connectionStatus={bambuConnectionStatus} />
       </div>
     </div>
   )

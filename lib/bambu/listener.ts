@@ -56,7 +56,7 @@ const BROKER_BY_REGION: Record<string, string> = {
 
 export async function startBambuListener(): Promise<void> {
   const settings = await prisma.settings.findUnique({ where: { id: 1 } })
-  if (!settings?.bambuCloudCredentialEncrypted || !settings.bambuCloudEmail) {
+  if (!settings?.bambuCloudCredentialEncrypted || !settings.bambuCloudUserId) {
     connectionStatus = 'not_configured'
     return
   }
@@ -74,7 +74,10 @@ export async function startBambuListener(): Promise<void> {
   const brokerUrl = BROKER_BY_REGION[settings.bambuCloudRegion ?? 'US'] ?? BROKER_BY_REGION.US
 
   client = mqtt.connect(brokerUrl, {
-    username: settings.bambuCloudEmail,
+    // Username do broker MQTT da nuvem é "u_{uid}", nunca o e-mail --
+    // bug real encontrado testando com a conta do usuário (a conexão
+    // nunca fechava, ficava presa em not_configured/expired).
+    username: `u_${settings.bambuCloudUserId}`,
     password: token,
     reconnectPeriod: 5000,
   })
@@ -82,8 +85,9 @@ export async function startBambuListener(): Promise<void> {
   client.on('connect', () => {
     connectionStatus = 'connected'
   })
-  client.on('error', () => {
+  client.on('error', (err) => {
     connectionStatus = 'expired'
+    console.error('[bambu] erro na conexão MQTT:', err.message)
   })
 
   core = createListenerCore({

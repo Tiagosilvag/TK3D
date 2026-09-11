@@ -61,6 +61,12 @@ model Settings {
   // só o token trocado no login 2FA. Status de conexão não é persistido,
   // lido ao vivo do listener (lib/bambu/listener.ts).
   bambuCloudEmail               String?
+  // Ajuste "fix login MQTT" (esta sessão): o username do broker MQTT da
+  // nuvem Bambu não é o e-mail -- é "u_{uid}", onde uid é o id numérico da
+  // conta, obtido de /v1/design-user-service/my/preference logo após o
+  // login. Guardado à parte pra não precisar dessa chamada extra a cada
+  // boot do listener.
+  bambuCloudUserId              String?
   bambuCloudCredentialEncrypted String?
   bambuCloudRegion              String?      @default("US")
   updatedAt                     DateTime     @updatedAt
