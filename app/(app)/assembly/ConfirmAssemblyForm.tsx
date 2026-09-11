@@ -1,17 +1,38 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { confirmAssembly, type AssemblyPartStatus, type AssemblyResourceRequirement } from '@/actions/assembly'
+import { confirmAssembly, type AssemblyPartStatus, type AssemblyComponentStatus, type AssemblyResourceRequirement } from '@/actions/assembly'
 import { SubmitButton } from '@/components/SubmitButton'
 import { ComponentCategoryCard, type ComponentOption, type ComponentRow } from './ComponentCategoryCard'
 
-// Ajuste "cor na montagem": pra cada peça de cor variável (colorOptions
-// não nulo), a montagem precisa escolher QUAL cor está sendo consumida
-// nesta leva -- a quantidade máxima que dá pra montar depende de qual cor
-// foi escolhida em cada peça, então recalcula a cada mudança de seleção.
-function defaultColorChoice(part: AssemblyPartStatus): string {
-  if (!part.colorOptions || part.colorOptions.length === 0) return ''
-  const best = part.colorOptions.reduce((a, b) => (b.available > a.available ? b : a))
+// Melhoria "Produto-como-componente": peça (ProductPart) e componente
+// (outro Product usado como ingrediente) compartilham a mesma UX de
+// "escolher cor" -- unifica os dois num shape só (`key` = partId OU
+// componentProductId, sem conflito de namespace) pra não duplicar toda a
+// seção "Cor de cada peça nesta leva".
+interface ColorSelectable {
+  key: string
+  name: string
+  quantityPerUnit: number
+  colorOptions: AssemblyPartStatus['colorOptions']
+  maxUnits: number
+}
+
+function toSelectables(parts: AssemblyPartStatus[], components: AssemblyComponentStatus[]): ColorSelectable[] {
+  return [
+    ...parts.map((p): ColorSelectable => ({ key: p.partId, name: p.name, quantityPerUnit: p.quantityPerUnit, colorOptions: p.colorOptions, maxUnits: p.maxUnitsFromThisPart })),
+    ...components.map((c): ColorSelectable => ({ key: c.componentProductId, name: c.name, quantityPerUnit: c.quantityPerUnit, colorOptions: c.colorOptions, maxUnits: c.maxUnitsFromThisComponent })),
+  ]
+}
+
+// Ajuste "cor na montagem": pra cada peça/componente de cor variável
+// (colorOptions não nulo), a montagem precisa escolher QUAL cor está
+// sendo consumida nesta leva -- a quantidade máxima que dá pra montar
+// depende de qual cor foi escolhida, então recalcula a cada mudança de
+// seleção.
+function defaultColorChoice(item: ColorSelectable): string {
+  if (!item.colorOptions || item.colorOptions.length === 0) return ''
+  const best = item.colorOptions.reduce((a, b) => (b.available > a.available ? b : a))
   return best.key
 }
 
@@ -22,6 +43,7 @@ function toRows(requirements: AssemblyResourceRequirement[]): ComponentRow[] {
 export function ConfirmAssemblyForm({
   productId,
   parts,
+  components,
   accessoryRequirements,
   supplyRequirements,
   packagingRequirements,
@@ -31,6 +53,7 @@ export function ConfirmAssemblyForm({
 }: {
   productId: string
   parts: AssemblyPartStatus[]
+  components: AssemblyComponentStatus[]
   accessoryRequirements: AssemblyResourceRequirement[]
   supplyRequirements: AssemblyResourceRequirement[]
   packagingRequirements: AssemblyResourceRequirement[]
@@ -39,9 +62,10 @@ export function ConfirmAssemblyForm({
   allPackaging: ComponentOption[]
 }) {
   const router = useRouter()
-  const colorParts = useMemo(() => parts.filter((p) => p.colorOptions), [parts])
+  const selectables = useMemo(() => toSelectables(parts, components), [parts, components])
+  const colorSelectables = useMemo(() => selectables.filter((s) => s.colorOptions), [selectables])
   const [colorChoices, setColorChoices] = useState<Record<string, string>>(() =>
-    Object.fromEntries(colorParts.map((p) => [p.partId, defaultColorChoice(p)])),
+    Object.fromEntries(colorSelectables.map((s) => [s.key, defaultColorChoice(s)])),
   )
   const [accessoryRows, setAccessoryRows] = useState<ComponentRow[]>(() => toRows(accessoryRequirements))
   const [supplyRows, setSupplyRows] = useState<ComponentRow[]>(() => toRows(supplyRequirements))
@@ -50,31 +74,28 @@ export function ConfirmAssemblyForm({
   // aqui pra alimentar o próprio ComponentCategoryCard (readOnly).
   const packagingRows = useMemo(() => toRows(packagingRequirements), [packagingRequirements])
 
-  // Melhoria "Montagem" §4/§6: só a peça (via cor escolhida) trava quanto
-  // dá pra montar -- falta de acessório/insumo não entra mais neste
-  // cálculo (era isso antes; agora só avisa, nunca bloqueia).
+  // Melhoria "Montagem" §4/§6, "Produto-como-componente": só peça/
+  // componente (via `maxUnits`, que já soma entre combos de cor) trava
+  // quanto dá pra montar -- falta de acessório/insumo não entra mais neste
+  // cálculo (só avisa, nunca bloqueia).
   const effectiveMax = useMemo(() => {
-    const partLimits = parts.map((part) => {
-      if (!part.colorOptions) return part.maxUnitsFromThisPart
-      const chosen = part.colorOptions.find((o) => o.key === colorChoices[part.partId])
-      return chosen ? Math.floor(chosen.available / part.quantityPerUnit) : 0
-    })
-    return partLimits.length === 0 ? 0 : Math.max(0, Math.min(...partLimits))
-  }, [parts, colorChoices])
+    const limits = selectables.map((s) => s.maxUnits)
+    return limits.length === 0 ? 0 : Math.max(0, Math.min(...limits))
+  }, [selectables])
 
   const [quantity, setQuantity] = useState(String(effectiveMax))
 
   // Melhoria "Montagem" §7: quantidade sempre parte pré-preenchida do
-  // máximo permitido -- reajusta automaticamente quando a cor escolhida
-  // muda o máximo (o campo continua livremente editável depois disso).
+  // máximo permitido -- reajusta automaticamente quando o teto muda (o
+  // campo continua livremente editável depois disso).
   useEffect(() => {
     setQuantity(String(effectiveMax))
     // eslint-disable-next-line react-hooks/exhaustive-deps -- só quando o teto muda, não a cada keystroke do próprio campo
   }, [effectiveMax])
 
   async function action(formData: FormData) {
-    if (colorParts.some((p) => !colorChoices[p.partId])) {
-      alert('Selecione a cor de cada peça antes de confirmar.')
+    if (colorSelectables.some((s) => !colorChoices[s.key])) {
+      alert('Selecione a cor de cada peça/componente antes de confirmar.')
       return
     }
     if ([...accessoryRows, ...supplyRows].some((r) => !r.id)) {
@@ -94,21 +115,21 @@ export function ConfirmAssemblyForm({
 
   return (
     <>
-      {colorParts.length > 0 && (
+      {colorSelectables.length > 0 && (
         <div className="tk-panel p-4">
-          <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Cor de cada peça nesta leva</h2>
+          <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Cor de cada peça/componente nesta leva</h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {colorParts.map((part) => (
-              <label key={part.partId} className="text-sm">
-                {part.name}
+            {colorSelectables.map((item) => (
+              <label key={item.key} className="text-sm">
+                {item.name}
                 <select
-                  value={colorChoices[part.partId] ?? ''}
-                  onChange={(e) => setColorChoices((prev) => ({ ...prev, [part.partId]: e.target.value }))}
+                  value={colorChoices[item.key] ?? ''}
+                  onChange={(e) => setColorChoices((prev) => ({ ...prev, [item.key]: e.target.value }))}
                   className="tk-input-full"
                   required
                 >
                   <option value="" disabled>Selecione a cor</option>
-                  {part.colorOptions!.map((o) => (
+                  {item.colorOptions!.map((o) => (
                     <option key={o.key} value={o.key} disabled={o.available <= 0}>
                       {o.label} ({o.available} disponível{o.available === 1 ? '' : 'is'})
                     </option>

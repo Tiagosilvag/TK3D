@@ -1,21 +1,34 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { EditProductionRunForm } from './EditProductionRunForm'
-import { ProductionRunsExplorer, type ProductionEventRow } from './ProductionRunsExplorer'
+import { ProductionRunsExplorer, type ProductionRunRow } from './ProductionRunsExplorer'
+import { getProductionByProduct, getPlates } from '@/actions/productionRuns'
 import type { ProductionCostSnapshot } from '@/lib/costing'
-import { formatCurrency } from '@/lib/format'
+import { calculateFilamentPricePerGram } from '@/lib/costing'
+import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
 import { resolveDateRange } from '@/lib/dateRange'
+import type { ProductionStatus } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
 const PAGE_SIZE = 25
+const STATUS_OPTIONS: ProductionStatus[] = ['CONCLUIDA', 'PARCIAL', 'COM_FALHAS', 'CANCELADA']
 
 export default async function ProductionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ editId?: string; from?: string; to?: string; page?: string; productId?: string; printerId?: string }>
+  searchParams: Promise<{
+    editId?: string
+    from?: string
+    to?: string
+    page?: string
+    productId?: string
+    printerId?: string
+    plateId?: string
+    status?: string
+  }>
 }) {
-  const { editId, from, to, page, productId, printerId } = await searchParams
+  const { editId, from, to, page, productId, printerId, plateId, status } = await searchParams
   const range = resolveDateRange({ from, to })
   const currentPage = Math.max(1, parseInt(page ?? '1', 10) || 1)
 
@@ -23,9 +36,11 @@ export default async function ProductionPage({
     date: { gte: range.gte, lte: range.lte },
     ...(productId ? { productId } : {}),
     ...(printerId ? { printerId } : {}),
+    ...(plateId ? { plateId } : {}),
+    ...(status ? { status: status as ProductionStatus } : {}),
   }
 
-  const [runs, totalRuns, summaryRuns, products, printers, filaments, editingRunRecord] = await Promise.all([
+  const [runRecords, totalRuns, summaryRuns, products, printers, filamentRecords, editingRunRecord, byProduct, plates] = await Promise.all([
     prisma.productionRun.findMany({
       where: runsWhere,
       orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
@@ -44,6 +59,12 @@ export default async function ProductionPage({
     editId
       ? prisma.productionRun.findUnique({ where: { id: editId }, include: { product: true, printer: true, filament: true, productPart: true, filamentUsages: true } })
       : null,
+    // Melhoria "Produção" (reformulação Plate) §5: visões "Por produto" e
+    // "Plates" -- independentes do filtro de período/produto/impressora
+    // acima (são visões agregadas de TODO o histórico, não uma lista
+    // paginada), mesmo padrão de getAssemblyOverview em Meu Estoque.
+    getProductionByProduct(),
+    getPlates(),
   ])
 
   const totalPages = Math.max(1, Math.ceil(totalRuns / PAGE_SIZE))
@@ -60,18 +81,24 @@ export default async function ProductionPage({
     qs.set('to', range.to)
     if (productId) qs.set('productId', productId)
     if (printerId) qs.set('printerId', printerId)
+    if (plateId) qs.set('plateId', plateId)
+    if (status) qs.set('status', status)
     qs.set('page', String(targetPage))
     return `/production?${qs.toString()}`
   }
 
-  function filterHref(params: { productId?: string; printerId?: string }): string {
+  function filterHref(params: { productId?: string; printerId?: string; plateId?: string; status?: string }): string {
     const qs = new URLSearchParams()
     qs.set('from', range.from)
     qs.set('to', range.to)
     const nextProductId = 'productId' in params ? params.productId : productId
     const nextPrinterId = 'printerId' in params ? params.printerId : printerId
+    const nextPlateId = 'plateId' in params ? params.plateId : plateId
+    const nextStatus = 'status' in params ? params.status : status
     if (nextProductId) qs.set('productId', nextProductId)
     if (nextPrinterId) qs.set('printerId', nextPrinterId)
+    if (nextPlateId) qs.set('plateId', nextPlateId)
+    if (nextStatus) qs.set('status', nextStatus)
     return `/production?${qs.toString()}`
   }
 
@@ -95,31 +122,32 @@ export default async function ProductionPage({
       }
     : undefined
 
-  // Melhoria "Produção" §4: agrupa por batchId -- uma linha por EVENTO de
-  // produção (Data + Produto), não mais uma linha por peça.
-  const eventsMap = new Map<string, ProductionEventRow>()
-  for (const run of runs) {
-    const event = eventsMap.get(run.batchId) ?? {
-      batchId: run.batchId,
+  // Melhoria "Produção" (reformulação Plate) §5: volta a ser uma linha por
+  // PEÇA/run -- não mais agrupada por batchId, que deixou de representar
+  // "1 evento" desde que cada peça tem sua própria data (ver
+  // ProductionRunBatchForm). plateId (quando presente) aponta pra uma Plate
+  // real, exibida como link "Ver Plate" na explorer.
+  const runs: ProductionRunRow[] = runRecords.map((run) => {
+    const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+    return {
+      id: run.id,
       date: run.date.toISOString(),
       productName: run.product.name,
-      items: [],
-    }
-    const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
-    event.items.push({
-      id: run.id,
       partName: run.productPart?.name ?? null,
+      plateId: run.plateId,
       quantitySuccess: run.quantitySuccess,
       quantityFailed: run.quantityFailed,
       status: run.status,
       cost: snapshot ? snapshot.total : null,
       cancelReason: run.cancelReason,
-    })
-    eventsMap.set(run.batchId, event)
-  }
-  // findMany já vem ordenado por date/createdAt desc -- Map preserva a
-  // ordem de primeira inserção, então os eventos já saem na ordem certa.
-  const events = [...eventsMap.values()]
+    }
+  })
+
+  const filaments = filamentRecords.map((f) => ({
+    id: f.id,
+    name: `${f.manufacturer} ${f.colorName} (${f.material}) — Rolo #${String(f.rollNumber).padStart(3, '0')} (${f.currentStockGrams.toNumber()}g restantes)`,
+    pricePerGram: calculateFilamentPricePerGram({ spoolPrice: f.spoolPrice.toNumber(), spoolWeightKg: f.spoolWeightKg.toNumber() }),
+  }))
 
   return (
     <div className="tk-page">
@@ -170,11 +198,29 @@ export default async function ProductionPage({
           Até
           <input type="date" name="to" defaultValue={range.to} className="tk-input-full mt-1" />
         </label>
+        <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+          Plate
+          <select name="plateId" defaultValue={plateId ?? ''} className="tk-input-full mt-1">
+            <option value="">Todas</option>
+            {plates.map((p) => (
+              <option key={p.id} value={p.id}>{new Date(p.date).toLocaleDateString('pt-BR')} — {p.printerName}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+          Status
+          <select name="status" defaultValue={status ?? ''} className="tk-input-full mt-1">
+            <option value="">Todos</option>
+            {STATUS_OPTIONS.map((s) => (
+              <option key={s} value={s}>{getProductionStatusBadge(s).label}</option>
+            ))}
+          </select>
+        </label>
         <button type="submit" className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white dark:bg-amber-500 dark:text-slate-950">
           Filtrar
         </button>
-        {(productId || printerId) && (
-          <Link href={filterHref({ productId: undefined, printerId: undefined })} className="text-sm font-medium text-slate-500 underline-offset-2 hover:underline dark:text-slate-400">
+        {(productId || printerId || plateId || status) && (
+          <Link href={filterHref({ productId: undefined, printerId: undefined, plateId: undefined, status: undefined })} className="text-sm font-medium text-slate-500 underline-offset-2 hover:underline dark:text-slate-400">
             Limpar
           </Link>
         )}
@@ -183,10 +229,12 @@ export default async function ProductionPage({
       {editingRun && <div className="mt-6"><EditProductionRunForm editingRun={editingRun} /></div>}
 
       <ProductionRunsExplorer
-        events={events}
+        runs={runs}
+        byProduct={byProduct}
+        plates={plates}
         products={products.map((p) => ({ id: p.id, name: p.name }))}
         printers={printers.map((p) => ({ id: p.id, name: p.name }))}
-        filaments={filaments.map((f) => ({ id: f.id, name: `${f.manufacturer} ${f.colorName} (${f.material}) — Rolo #${String(f.rollNumber).padStart(3, '0')} (${f.currentStockGrams.toNumber()}g restantes)` }))}
+        filaments={filaments}
       />
 
       {totalPages > 1 && (

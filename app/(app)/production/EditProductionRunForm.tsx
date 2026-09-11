@@ -52,7 +52,7 @@ export function EditProductionRunForm({ editingRun }: { editingRun: EditingRun }
   return (
     <form action={action} className="mb-4 grid grid-cols-2 gap-3 tk-panel p-4 md:grid-cols-4">
       <p className="col-span-full text-sm text-slate-500 dark:text-slate-400">
-        Produção concluída — quantidade e filamento ficam somente leitura para preservar o histórico. Apenas desperdício e observações podem ser corrigidos.
+        Produção concluída — quantidade e qual filamento ficam somente leitura para preservar o histórico. Consumo (gramas usadas/desperdiçadas), tempo e observações podem ser corrigidos; o estoque de filamento é ajustado automaticamente pela diferença.
       </p>
       <div className="text-sm">
         <span className="block text-slate-500 dark:text-slate-400">Produto</span>
@@ -80,18 +80,30 @@ export function EditProductionRunForm({ editingRun }: { editingRun: EditingRun }
         <span className="block text-slate-500 dark:text-slate-400">Qtd. planejada / sucesso / falhas</span>
         <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.quantityPlanned} / {editingRun.quantitySuccess} / {editingRun.quantityFailed}</span>
       </div>
-      <div className="text-sm">
-        <span className="block text-slate-500 dark:text-slate-400">Filamento usado (g)</span>
-        <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.gramsUsed}g</span>
-      </div>
 
       {editingRun.isMultiFilament ? (
-        <p className="col-span-full text-sm text-amber-600 dark:text-amber-400">
-          Esta produção usou mais de um filamento -- não é possível corrigir o desperdício aqui, porque não dá pra saber qual cor mudou.
-          Cancele esta produção e registre de novo com os valores corretos.
-        </p>
+        <>
+          <div className="text-sm">
+            <span className="block text-slate-500 dark:text-slate-400">Filamento usado (g)</span>
+            <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.gramsUsed}g</span>
+          </div>
+          <p className="col-span-full text-sm text-amber-600 dark:text-amber-400">
+            Esta produção usou mais de um filamento -- não é possível corrigir consumo/desperdício aqui, porque não dá pra saber qual cor mudou.
+            Cancele esta produção e registre de novo com os valores corretos.
+          </p>
+        </>
       ) : (
         <>
+          {/* Melhoria "Produção" (reformulação Plate) §42: consumo real
+              (gramas) passa a ser editável também -- mesmo aviso de
+              recálculo automático já dado pro desperdício abaixo. Editar
+              este campo NUNCA muda unitCost/total do costSnapshot (que são
+              derivados do peso da ficha técnica, não do consumo real) -- só
+              o estoque de filamento decrementado e o consumo registrado. */}
+          <label className="text-sm">
+            Filamento usado (g)
+            <input name="gramsUsed" type="number" step="0.01" min="0" defaultValue={editingRun.gramsUsed} className="tk-input-full" />
+          </label>
           <label className="text-sm">
             Filamento desperdiçado (g)
             <input name="gramsWasted" type="number" step="0.01" min="0" defaultValue={editingRun.gramsWasted} className="tk-input-full" />

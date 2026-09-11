@@ -42,13 +42,14 @@ export default async function ConsignmentDeliveriesPage({
   if (missingProductIds.length > 0) {
     const missingProducts = await prisma.product.findMany({
       where: { id: { in: missingProductIds } },
-      include: { _count: { select: { accessoryUsages: true, supplyUsages: true } } },
+      include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
     })
     await Promise.all(missingProducts.map(async (p) => {
       const needsAssembly = productNeedsAssembly({
         isComposite: p.isComposite,
         accessoryUsagesCount: p._count.accessoryUsages,
         supplyUsagesCount: p._count.supplyUsages,
+        componentUsagesCount: p._count.componentUsages,
       })
       const breakdown = await getProductVariantBreakdown(p.id, needsAssembly)
       for (const v of breakdown) labelByProductAndKey.set(`${p.id}::${v.key}`, { label: v.label, colorHex: v.colorHex })

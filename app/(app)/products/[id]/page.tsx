@@ -11,11 +11,12 @@ import {
 import { ProductForm } from '../ProductForm'
 import { CostBreakdown, type MarketplacePlatformPrice } from '../CostBreakdown'
 import { PriceSimulation } from '../PriceSimulation'
-import { ComponentsSection, type ComponentRow } from '../ComponentsSection'
+import { ComponentsSection, type ComponentRow, type ProductOption } from '../ComponentsSection'
 import { PhotoGallery } from '../PhotoGallery'
 import {
   getProductCostBreakdown,
   getEditableFilamentOptions,
+  getProductAverageProductionCost,
   addProductAccessoryColorUsage,
   removeProductAccessoryColorUsage,
   deleteProduct,
@@ -41,6 +42,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
       packagingUsages: { include: { packagingItem: true } },
       photos: { orderBy: { createdAt: 'asc' }, select: { id: true, isCover: true } },
       parts: { orderBy: { createdAt: 'asc' }, include: { filamentComponents: true } },
+      componentUsages: { include: { componentProduct: true } },
     },
   })
   if (!product) notFound()
@@ -49,9 +51,10 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     isComposite: product.isComposite,
     accessoryUsagesCount: product.accessoryUsages.length,
     supplyUsagesCount: product.supplyUsages.length,
+    componentUsagesCount: product.componentUsages.length,
   })
 
-  const [printers, filamentOptions, packagingItems, supplies, accessories, breakdown, settings, platforms, partRuns, colorVariants, accessoryColorUsages] = await Promise.all([
+  const [printers, filamentOptions, packagingItems, supplies, accessories, breakdown, settings, platforms, partRuns, colorVariants, accessoryColorUsages, productCandidates] = await Promise.all([
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getEditableFilamentOptions(product.id),
     prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
@@ -71,7 +74,26 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     // pra associar acessório", nunca uma lista pré-declarada à parte.
     getProductVariantBreakdown(product.id, needsAssembly),
     prisma.productAccessoryColorUsage.findMany({ where: { productId: product.id }, include: { accessory: true } }),
+    // Melhoria "Produto-como-componente": candidatos elegíveis pra usar
+    // como ingrediente deste produto -- ativos, NÃO compostos (restrição
+    // desta rodada), excluindo o próprio produto. Ciclo é revalidado no
+    // servidor em addProductComponentUsage (mais barato checar aqui só o
+    // óbvio, sem percorrer o grafo inteiro pra montar a lista).
+    prisma.product.findMany({
+      where: { active: true, isComposite: false, id: { not: product.id } },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+    }),
   ])
+
+  const productOptions: ProductOption[] = productCandidates
+
+  // Melhoria "Produto-como-componente": custo médio de produção de cada
+  // componente-produto já cadastrado na ficha técnica, ao vivo, pra
+  // exibir na coluna "Custo" da lista unificada de componentes.
+  const componentAvgCosts = await Promise.all(
+    product.componentUsages.map((u) => getProductAverageProductionCost(u.componentProductId)),
+  )
 
   // 2.1: "peça pronta" reaproveita o ProductionStatus já existente
   // (CONCLUIDA = sucesso atingiu o planejado) -- aqui só pega a produção
@@ -131,6 +153,17 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
       quantity: u.quantity.toNumber(),
       unitSuffix: '',
       cost: u.quantity.toNumber() * u.packagingItem.avgUnitCost.toNumber(),
+    })),
+    // Melhoria "Produto-como-componente": outros PRODUTOS usados como
+    // ingrediente (ex.: Mosquetão dentro de Chaveiro Café) -- custo é
+    // quantidade × custo médio de produção do componente, ao vivo.
+    ...product.componentUsages.map((u, i): ComponentRow => ({
+      id: u.id,
+      type: 'PRODUCT',
+      name: u.componentProduct.name,
+      quantity: u.quantity,
+      unitSuffix: '',
+      cost: u.quantity * componentAvgCosts[i],
     })),
   ]
 
@@ -244,6 +277,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
             accessories={accessories.map((a) => ({ id: a.id, name: a.name, colorName: a.colorName }))}
             supplies={supplies.map((s) => ({ id: s.id, name: s.name, unit: s.unit, defaultUsage: s.defaultUsage?.toNumber() ?? null }))}
             packagingItems={packagingItems.map((p) => ({ id: p.id, name: p.name }))}
+            products={product.isComposite ? productOptions : []}
           />
 
           {/* Melhoria "Parceiros de consignação" §5: mapa opcional de "quais

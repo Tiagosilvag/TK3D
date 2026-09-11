@@ -183,6 +183,12 @@ export interface ProductCostBreakdown {
   suppliesCost: number
   packagingCost: number
   accessoryCost: number
+  // Melhoria "Produto-como-componente": custo dos outros PRODUTOS usados
+  // como ingrediente (ex.: Mosquetão dentro de Chaveiro Café) -- sempre 0
+  // pra produto simples (nunca tem componentUsages). Somado no subtotal sob
+  // a MESMA flag includeAccessoriesCost (ver combineProductCost) -- decisão
+  // deliberada pra não precisar de um toggle novo em Settings só pra isso.
+  componentProductsCost: number
   // Always calculated (subtotal * failureRatePercent) regardless of
   // includeFailureRate, same transparency rule as every other term.
   failureRateCost: number
@@ -278,6 +284,8 @@ export interface ProductCostTerms {
   suppliesCost: number
   packagingCost: number
   accessoryCost: number
+  // Melhoria "Produto-como-componente" -- ver ProductCostBreakdown.componentProductsCost.
+  componentProductsCost: number
 }
 
 // Grosses up a suggested price so that, after a percentage fee/tax cut and
@@ -298,7 +306,8 @@ export function combineProductCost(terms: ProductCostTerms, flags: ProductCostFl
     terms.laborCost * on(flags.includeLaborCost) +
     terms.suppliesCost * on(flags.includeSuppliesCost) +
     terms.packagingCost * on(flags.includePackagingCost) +
-    terms.accessoryCost * on(flags.includeAccessoriesCost)
+    terms.accessoryCost * on(flags.includeAccessoriesCost) +
+    terms.componentProductsCost * on(flags.includeAccessoriesCost)
 
   // Failure rate is applied as a markup on top of subtotal (not a flat
   // additive term), same shape as before the flags existed — always
@@ -319,6 +328,7 @@ export function combineProductCost(terms: ProductCostTerms, flags: ProductCostFl
     suppliesCost: terms.suppliesCost,
     packagingCost: terms.packagingCost,
     accessoryCost: terms.accessoryCost,
+    componentProductsCost: terms.componentProductsCost,
     failureRateCost,
     subtotal,
     finalCost,
@@ -339,7 +349,7 @@ export function calculateProductCost(input: ProductCostInput, settings: Settings
   const laborCost = settings.laborCostPerHour * input.laborTimeHours
 
   return combineProductCost(
-    { filamentCost, electricityCost, printerCost, maintenanceCost, laborCost, suppliesCost: input.suppliesCost, packagingCost: input.packagingCost, accessoryCost: input.accessoryCost },
+    { filamentCost, electricityCost, printerCost, maintenanceCost, laborCost, suppliesCost: input.suppliesCost, packagingCost: input.packagingCost, accessoryCost: input.accessoryCost, componentProductsCost: 0 },
     input,
     settings,
   )
@@ -409,6 +419,9 @@ export interface CompositeProductCostInput extends ProductCostFlags {
   suppliesCost: number
   packagingCost: number
   accessoryCost: number
+  // Melhoria "Produto-como-componente" -- ver ProductCostBreakdown.componentProductsCost.
+  // Opcional (default 0) pra não quebrar chamadas existentes sem componente-produto.
+  componentProductsCost?: number
 }
 
 export function calculateCompositeProductCost(input: CompositeProductCostInput, settings: Settings): ProductCostBreakdown {
@@ -416,7 +429,14 @@ export function calculateCompositeProductCost(input: CompositeProductCostInput, 
   const laborCost = settings.laborCostPerHour * input.laborTimeHours
 
   return combineProductCost(
-    { ...partsSum, laborCost, suppliesCost: input.suppliesCost, packagingCost: input.packagingCost, accessoryCost: input.accessoryCost },
+    {
+      ...partsSum,
+      laborCost,
+      suppliesCost: input.suppliesCost,
+      packagingCost: input.packagingCost,
+      accessoryCost: input.accessoryCost,
+      componentProductsCost: input.componentProductsCost ?? 0,
+    },
     input,
     settings,
   )
@@ -666,6 +686,46 @@ export function buildProductionCostSnapshot(
     total,
     consumedResources,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Plate / impressão simultânea (reformulação "Produção")
+//
+// Várias peças impressas juntas na mesma impressão física compartilham o
+// custo de impressora (depreciação+manutenção+energia) em vez de cada uma
+// pagar o valor cheio -- REGRA 11/21 do pedido. printerCost/maintenanceCost/
+// electricityCost em calculateProductCost acima são todos LINEARES em
+// printTimeHours (taxa_por_hora × printTimeHours), então ratear não exige
+// nenhuma fórmula nova: basta o chamador (buildProductionCostSnapshot,
+// actions/productionRuns.ts) passar um printTimeHours "alocado" no lugar do
+// tempo cru da ficha técnica, só para o cálculo de custo -- o "Tempo de
+// impressão esperado" exibido em qualquer outro lugar continua lendo
+// ProductPart/Product.printTimeHours direto do catálogo, sem alteração
+// nenhuma (REGRA 15/16: não mexer na lógica de tempo existente).
+export interface PlateAllocationItem {
+  printTimeHoursPerUnit: number
+  quantityPlanned: number
+}
+
+// Critério confirmado com o usuário: percentual de cada peça = seu peso
+// (tempo esperado × quantidade planejada) sobre a soma dos pesos de todas
+// as peças da Plate. Tempo total da Plate = o tempo da peça mais lenta --
+// impressão simultânea é limitada pelo gargalo (todas terminam juntas,
+// junto com a mais demorada), não pela soma sequencial de cada uma; isso
+// não exige nenhum campo novo de "tempo real" digitado pelo usuário.
+// Retorna, na mesma ordem de `items`, o printTimeHours alocado de cada
+// peça -- a soma dos retornados bate exatamente com o tempo total da Plate.
+export function allocatePlatePrintTime(items: PlateAllocationItem[]): number[] {
+  if (items.length === 0) return []
+  const weights = items.map((i) => i.printTimeHoursPerUnit * i.quantityPlanned)
+  const totalWeight = weights.reduce((sum, w) => sum + w, 0)
+  const plateTotalTimeHours = Math.max(...items.map((i) => i.printTimeHoursPerUnit))
+  // Nenhum peso real (ex.: toda peça com tempo/quantidade zerados) -- não
+  // há base pra ratear, divide igualmente em vez de devolver NaN/Infinity.
+  if (totalWeight <= 0) {
+    return items.map(() => plateTotalTimeHours / items.length)
+  }
+  return weights.map((w) => (w / totalWeight) * plateTotalTimeHours)
 }
 
 // ---------------------------------------------------------------------------

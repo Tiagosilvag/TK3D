@@ -10,15 +10,22 @@ import {
   removeProductAccessoryUsage,
   addProductPackagingUsage,
   removeProductPackagingUsage,
+  addProductComponentUsage,
+  removeProductComponentUsage,
 } from '@/actions/products'
 import type { SupplyUnit } from '@prisma/client'
 
-type ComponentType = 'ACCESSORY' | 'SUPPLY' | 'PACKAGING'
+// Melhoria "Produto-como-componente": 'PRODUCT' é outro Product usado como
+// ingrediente (ex.: Mosquetão dentro de Chaveiro Café) -- mesmo fluxo
+// "tipo → item → quantidade" que Acessório/Insumo/Embalagem já usam, só
+// apontando pra addProductComponentUsage/removeProductComponentUsage.
+type ComponentType = 'ACCESSORY' | 'SUPPLY' | 'PACKAGING' | 'PRODUCT'
 
 const TYPE_LABELS: Record<ComponentType, string> = {
   ACCESSORY: 'Acessório',
   SUPPLY: 'Insumo',
   PACKAGING: 'Embalagem',
+  PRODUCT: 'Produto',
 }
 
 export interface ComponentRow {
@@ -48,6 +55,15 @@ export interface PackagingOption {
   name: string
 }
 
+// Melhoria "Produto-como-componente": outro Product elegível como
+// ingrediente -- já filtrado no server (ativo, não-composto, excluindo o
+// próprio produto); o servidor ainda revalida tudo isso de novo (mais o
+// ciclo) em addProductComponentUsage.
+export interface ProductOption {
+  id: string
+  name: string
+}
+
 function accessoryOptionLabel(a: AccessoryOption): string {
   return a.colorName ? `${a.name} — ${a.colorName}` : a.name
 }
@@ -64,12 +80,14 @@ export function ComponentsSection({
   accessories,
   supplies,
   packagingItems,
+  products,
 }: {
   productId: string
   components: ComponentRow[]
   accessories: AccessoryOption[]
   supplies: SupplyOption[]
   packagingItems: PackagingOption[]
+  products: ProductOption[]
 }) {
   const router = useRouter()
   const [adding, setAdding] = useState(false)
@@ -116,9 +134,12 @@ export function ComponentsSection({
     } else if (type === 'SUPPLY') {
       fd.set('supplyId', itemId)
       result = await addProductSupplyUsage(fd)
-    } else {
+    } else if (type === 'PACKAGING') {
       fd.set('packagingItemId', itemId)
       result = await addProductPackagingUsage(fd)
+    } else {
+      fd.set('componentProductId', itemId)
+      result = await addProductComponentUsage(fd)
     }
     if (!result.success) {
       alert(result.error)
@@ -129,7 +150,13 @@ export function ComponentsSection({
   }
 
   async function handleRemove(row: ComponentRow) {
-    const action = row.type === 'ACCESSORY' ? removeProductAccessoryUsage : row.type === 'SUPPLY' ? removeProductSupplyUsage : removeProductPackagingUsage
+    const action = row.type === 'ACCESSORY'
+      ? removeProductAccessoryUsage
+      : row.type === 'SUPPLY'
+        ? removeProductSupplyUsage
+        : row.type === 'PACKAGING'
+          ? removeProductPackagingUsage
+          : removeProductComponentUsage
     const result = await action(row.id)
     if (result.success) router.refresh()
   }
@@ -139,13 +166,15 @@ export function ComponentsSection({
       ? accessories.map((a) => ({ id: a.id, label: accessoryOptionLabel(a) }))
       : type === 'SUPPLY'
         ? supplies.map((s) => ({ id: s.id, label: s.name }))
-        : packagingItems.map((p) => ({ id: p.id, label: p.name }))
+        : type === 'PACKAGING'
+          ? packagingItems.map((p) => ({ id: p.id, label: p.name }))
+          : products.map((p) => ({ id: p.id, label: p.name }))
 
   const selectedSupply = type === 'SUPPLY' ? supplies.find((s) => s.id === itemId) : undefined
 
   return (
     <div className="mt-6 tk-panel p-4">
-      <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Componentes (acessórios, insumos, embalagem)</h2>
+      <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Componentes (acessórios, insumos, embalagem, produtos)</h2>
       {components.length === 0 ? (
         <p className="text-sm text-slate-500 dark:text-slate-400">Nenhum componente cadastrado.</p>
       ) : (
@@ -183,6 +212,7 @@ export function ComponentsSection({
               <option value="ACCESSORY">Acessório</option>
               <option value="SUPPLY">Insumo</option>
               <option value="PACKAGING">Embalagem</option>
+              <option value="PRODUCT">Produto</option>
             </select>
           </label>
           <label className="text-xs">
@@ -199,8 +229,8 @@ export function ComponentsSection({
             <div className="mt-1 flex items-center gap-1">
               <input
                 type="number"
-                step="0.001"
-                min="0.001"
+                step={type === 'PRODUCT' ? '1' : '0.001'}
+                min={type === 'PRODUCT' ? '1' : '0.001'}
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
                 className="tk-input"

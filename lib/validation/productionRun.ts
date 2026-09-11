@@ -62,11 +62,16 @@ export const productionRunBatchItemFilamentSchema = z.object({
   gramsWasted: z.coerce.number().nonnegative('Gramas desperdiçadas não pode ser negativo').default(0),
 })
 
+// Melhoria "Produção" (reformulação Plate): `date` deixou de ser um campo
+// único pro lote inteiro -- cada peça pode ter sido produzida em um dia
+// diferente (REGRA 7), então entra aqui, por item, em vez de em
+// productionRunBatchSchema.
 export const productionRunBatchItemSchema = z.object({
   // Presente pra peça de produto composto; ausente pra linha única de um
   // produto simples (mesma convenção de productionRunSchema acima).
   productPartId: z.string().optional().nullable(),
   printerId: z.string().min(1),
+  date: z.coerce.date(),
   quantityPlanned: z.coerce.number().int('Quantidade planejada deve ser um número inteiro').positive('Quantidade planejada deve ser maior que zero'),
   quantitySuccess: z.coerce.number().int('Quantidade de sucesso deve ser um número inteiro').nonnegative('Quantidade de sucesso não pode ser negativa'),
   // 1 item pra peça de cor única (a maioria) ou produto simples; >1 pra
@@ -82,15 +87,45 @@ export const productionRunBatchItemSchema = z.object({
 
 export const productionRunBatchSchema = z.object({
   productId: z.string().min(1),
-  date: z.coerce.date(),
   items: z.array(productionRunBatchItemSchema).min(1, 'Marque ao menos uma peça'),
+})
+
+// Melhoria "Produção" (reformulação Plate): um item de uma Plate -- mesmo
+// shape do item de lote acima, exceto `printerId`/`date`, que a peça NÃO
+// tem mais individualmente aqui: são herdados da Plate (mesma impressão
+// física = mesma impressora/data por definição, REGRA 8). `productId`
+// aparece aqui (não existe um productId único pro item todo, já que uma
+// Plate pode misturar peças de produtos diferentes -- REGRA 9).
+export const productionRunPlateItemSchema = z.object({
+  productId: z.string().min(1),
+  productPartId: z.string().optional().nullable(),
+  quantityPlanned: z.coerce.number().int('Quantidade planejada deve ser um número inteiro').positive('Quantidade planejada deve ser maior que zero'),
+  quantitySuccess: z.coerce.number().int('Quantidade de sucesso deve ser um número inteiro').nonnegative('Quantidade de sucesso não pode ser negativa'),
+  filaments: z.array(productionRunBatchItemFilamentSchema).min(1, 'Selecione ao menos um filamento'),
+  timeWastedHours: z.coerce.number().nonnegative('Tempo desperdiçado não pode ser negativo').default(0),
+  wasteReason: wasteReasonEnum.nullable().optional(),
+  notes: z.string().optional().nullable(),
+}).refine((item) => item.quantitySuccess <= item.quantityPlanned, {
+  message: 'Sucesso não pode ser maior que o planejado',
+  path: ['quantitySuccess'],
+})
+
+export const createPlateSchema = z.object({
+  date: z.coerce.date(),
+  printerId: z.string().min(1),
+  notes: z.string().optional().nullable(),
+  items: z.array(productionRunPlateItemSchema).min(1, 'Adicione ao menos uma peça à Plate'),
 })
 
 // Edição de uma produção já registrada (spec do módulo Produção): quantidade
 // e filamento ficam sempre somente leitura para preservar integridade
-// histórica -- só os campos de desperdício e observações podem mudar,
-// qualquer que seja o status (exceto Cancelada, que não é editável).
+// histórica. Melhoria "Produção" §42: `gramsUsed` (consumo real) passa a
+// ser editável também -- opcional aqui porque o formulário só o envia
+// quando o usuário de fato mexeu nele; ausente = mantém o valor já
+// registrado (updateProductionRun trata undefined como "sem mudança", só
+// recalculando a diferença de estoque quando o valor realmente muda).
 export const productionRunWasteUpdateSchema = z.object({
+  gramsUsed: z.coerce.number({ invalid_type_error: 'Peso inválido' }).nonnegative('Não pode ser negativo').optional(),
   gramsWasted: z.coerce.number().nonnegative('Gramas desperdiçadas não pode ser negativo'),
   timeWastedHours: z.coerce.number().nonnegative('Tempo desperdiçado não pode ser negativo'),
   wasteReason: wasteReasonEnum.nullable().optional(),

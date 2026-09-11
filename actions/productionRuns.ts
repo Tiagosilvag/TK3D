@@ -2,17 +2,24 @@
 import { randomUUID } from 'crypto'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { productionRunSchema, productionRunWasteUpdateSchema, productionRunBatchSchema } from '@/lib/validation/productionRun'
+import {
+  productionRunSchema,
+  productionRunWasteUpdateSchema,
+  productionRunBatchSchema,
+  createPlateSchema,
+} from '@/lib/validation/productionRun'
 import {
   buildProductionCostSnapshot,
   calculatePrinterDepreciationCostPerHour,
   calculateFilamentPricePerKg,
   calculateWasteCost,
+  allocatePlatePrintTime,
   type ProductionCostSnapshot,
 } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 import { Prisma, type ProductionStatus, type SupplyUnit } from '@prisma/client'
 import { productNeedsAssembly } from '@/lib/products'
+import { getAssemblyStatus } from '@/actions/assembly'
 
 type ActionResult = { success: boolean; error?: string }
 
@@ -102,7 +109,12 @@ interface ResourceCheck {
 // esta mesma função -- o comportamento de cada produção individual
 // (checagem de estoque, snapshot de custo, consumo de recursos) nunca muda
 // entre os dois call sites.
-type RunCreationData = Omit<z.infer<typeof productionRunSchema>, 'filamentUsages'> & { batchId: string }
+//
+// Melhoria "Produção" (reformulação Plate): `plateId` opcional -- presente
+// quando esta run pertence a uma Plate (createPlate abaixo), gravado direto
+// na ProductionRun via o spread de `data` no create (nenhuma mudança extra
+// necessária aqui pra isso fluir).
+type RunCreationData = Omit<z.infer<typeof productionRunSchema>, 'filamentUsages'> & { batchId: string; plateId?: string | null }
 
 async function prepareProductionRunCreation(
   data: RunCreationData,
@@ -118,6 +130,15 @@ async function prepareProductionRunCreation(
   // atualizado aqui mesmo após um sucesso -- createProductionRun (1 item
   // só) passa um Map novo a cada chamada, então nunca tem nada reservado.
   reservedGramsByFilament: Map<string, number> = new Map(),
+  // Melhoria "Produção" (reformulação Plate): quando presente, substitui o
+  // printTimeHours lido da ficha técnica (productPart/product) SÓ na
+  // chamada a buildProductionCostSnapshot abaixo -- é o "tempo alocado"
+  // desta peça dentro da Plate (lib/costing.ts#allocatePlatePrintTime),
+  // calculado uma vez por createPlate para todos os itens da mesma Plate.
+  // O "Tempo de impressão esperado" exibido em qualquer outra tela continua
+  // lendo o campo do catálogo direto, nunca este valor (REGRA 15/16: não
+  // mexer nessa lógica existente).
+  allocatedPrintTimeHours?: number,
 ): Promise<{ success: true; ops: Prisma.PrismaPromise<unknown>[] } | { success: false; error: string }> {
   // Ajuste "peça multi-filamento": os componentes REAIS consumidos nesta
   // produção -- filamentUsages (1 por cor da receita) quando a peça tem
@@ -135,6 +156,7 @@ async function prepareProductionRunCreation(
         packagingUsages: { include: { packagingItem: true } },
         accessoryUsages: { include: { accessory: true } },
         supplyUsages: { include: { supply: true } },
+        componentUsages: true,
       },
     }),
     prisma.printer.findUniqueOrThrow({ where: { id: data.printerId } }),
@@ -157,6 +179,7 @@ async function prepareProductionRunCreation(
     isComposite: product.isComposite,
     accessoryUsagesCount: product.accessoryUsages.length,
     supplyUsagesCount: product.supplyUsages.length,
+    componentUsagesCount: product.componentUsages.length,
   })
 
   // --- Pre-transaction check across ALL resources (spec §5.2) -- um check
@@ -248,7 +271,7 @@ async function prepareProductionRunCreation(
       // zerados aqui e entram no custo só na montagem (spec 2.3, ainda não
       // implementada), nunca duplicados na impressão de cada peça avulsa.
       weightGrams,
-      printTimeHours: productPart ? productPart.printTimeHours.toNumber() : product.printTimeHours.toNumber(),
+      printTimeHours: allocatedPrintTimeHours ?? (productPart ? productPart.printTimeHours.toNumber() : product.printTimeHours.toNumber()),
       // Mão de obra/embalagem/insumos/acessórios são conceito de produto
       // MONTADO -- ficam zerados aqui e entram no custo só na montagem,
       // tanto pra peça de produto composto quanto pra produto simples que
@@ -363,13 +386,16 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
 // simples) numa SÓ submissão -- cada peça marcada vira uma ProductionRun
 // própria (mesmas regras de checagem de estoque/snapshot de custo de
 // sempre, via prepareProductionRunCreation), todas compartilhando um
-// batchId -- é o que permite a lista principal (§4) agrupar de volta numa
-// única linha por EVENTO (Data + Produto), igual
-// ConsignmentDelivery.batchId já faz pra Entregas em consignação. Tudo ou
-// nada: se qualquer peça do lote não tem estoque suficiente, a mensagem de
-// erro é dela e NENHUMA peça do lote é gravada (nem as que passariam no
-// check sozinhas) -- só roda o $transaction depois de montar as ops de
-// TODAS as peças com sucesso.
+// batchId. Melhoria "Produção" (reformulação Plate): cada peça agora tem
+// sua PRÓPRIA data (não mais uma data única pro lote inteiro), então
+// batchId deixou de ser "1 evento" -- é só um token técnico de "vieram da
+// mesma submissão de formulário", sem uso na exibição (a lista principal
+// volta a ser 1 linha por peça, agrupando visualmente só por Plate quando
+// aplicável -- ver createPlate abaixo). Tudo ou nada: se qualquer peça do
+// lote não tem estoque suficiente, a mensagem de erro é dela e NENHUMA
+// peça do lote é gravada (nem as que passariam no check sozinhas) -- só
+// roda o $transaction depois de montar as ops de TODAS as peças com
+// sucesso.
 export async function createProductionRunBatch(formData: FormData): Promise<ActionResult> {
   const raw = Object.fromEntries(formData)
   let items: unknown = []
@@ -378,7 +404,7 @@ export async function createProductionRunBatch(formData: FormData): Promise<Acti
   } catch {
     items = []
   }
-  const parsed = productionRunBatchSchema.safeParse({ productId: raw.productId, date: raw.date, items })
+  const parsed = productionRunBatchSchema.safeParse({ productId: raw.productId, items })
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
   const batchId = randomUUID()
@@ -405,7 +431,7 @@ export async function createProductionRunBatch(formData: FormData): Promise<Acti
         productPartId: item.productPartId ?? null,
         printerId: item.printerId,
         filamentId: first.filamentId,
-        date: parsed.data.date,
+        date: item.date,
         quantityPlanned: item.quantityPlanned,
         quantitySuccess: item.quantitySuccess,
         quantityFailed,
@@ -437,15 +463,122 @@ export async function createProductionRunBatch(formData: FormData): Promise<Acti
   return { success: true }
 }
 
+// Melhoria "Produção" (reformulação Plate): registra uma Plate -- N peças,
+// possivelmente de PRODUTOS DIFERENTES (REGRA 9), impressas juntas na
+// mesma impressão física. Data/impressora são únicas pro formulário
+// inteiro (é a MESMA impressão) e copiadas pra cada ProductionRun criada
+// (run.date/run.printerId), então nenhum código existente que já lê esses
+// campos direto precisa de join com Plate. Custo de impressora
+// (depreciação+manutenção+energia) é rateado entre as peças
+// proporcionalmente a tempo×quantidade (lib/costing.ts#
+// allocatePlatePrintTime), calculado uma única vez com o tempo de TODOS os
+// itens antes de montar qualquer op -- custo de filamento nunca é rateado,
+// continua 100% por peça (REGRA 10/19). Mesma garantia "tudo ou nada" de
+// createProductionRunBatch: a Plate e todas as runs só são gravadas numa
+// única transação, depois de checar estoque de TODAS as peças (reutiliza
+// o mesmo reservedGramsByFilament pra evitar double-booking entre peças da
+// Plate que compartilham filamento).
+export async function createPlate(formData: FormData): Promise<ActionResult> {
+  const raw = Object.fromEntries(formData)
+  let items: unknown = []
+  try {
+    items = JSON.parse(String(raw.itemsJson ?? '[]'))
+  } catch {
+    items = []
+  }
+  const parsed = createPlateSchema.safeParse({ date: raw.date, printerId: raw.printerId, notes: raw.notes || null, items })
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+
+  // Tempo por unidade de cada item (do catálogo -- productPart quando
+  // presente, senão o produto simples) -- precisa ser conhecido ANTES de
+  // montar as ops de cada peça, pra rodar allocatePlatePrintTime de uma vez
+  // só com todos os itens da Plate (o rateio depende do peso relativo de
+  // CADA peça, não dá pra calcular peça a peça isoladamente).
+  const printTimePerItem = await Promise.all(
+    parsed.data.items.map(async (item) => {
+      if (item.productPartId) {
+        const part = await prisma.productPart.findUniqueOrThrow({ where: { id: item.productPartId } })
+        return part.printTimeHours.toNumber()
+      }
+      const product = await prisma.product.findUniqueOrThrow({ where: { id: item.productId } })
+      return product.printTimeHours.toNumber()
+    }),
+  )
+  const allocatedTimes = allocatePlatePrintTime(
+    parsed.data.items.map((item, i) => ({ printTimeHoursPerUnit: printTimePerItem[i], quantityPlanned: item.quantityPlanned })),
+  )
+
+  const plateId = randomUUID()
+  const batchId = randomUUID()
+  const allOps: Prisma.PrismaPromise<unknown>[] = []
+  const reservedGramsByFilament = new Map<string, number>()
+
+  for (let i = 0; i < parsed.data.items.length; i++) {
+    const item = parsed.data.items[i]
+    const quantityFailed = Math.max(0, item.quantityPlanned - item.quantitySuccess)
+    const [first, ...restFilaments] = item.filaments
+    const filamentUsages = restFilaments.length > 0
+      ? item.filaments.map((f) => ({
+          filamentId: f.filamentId,
+          gramsUsed: f.weightGramsPerUnit * item.quantityPlanned,
+          gramsWasted: f.gramsWasted,
+        }))
+      : undefined
+
+    const result = await prepareProductionRunCreation(
+      {
+        productId: item.productId,
+        productPartId: item.productPartId ?? null,
+        printerId: parsed.data.printerId,
+        filamentId: first.filamentId,
+        date: parsed.data.date,
+        quantityPlanned: item.quantityPlanned,
+        quantitySuccess: item.quantitySuccess,
+        quantityFailed,
+        gramsUsed: first.weightGramsPerUnit * item.quantityPlanned,
+        gramsWasted: first.gramsWasted,
+        timeWastedHours: item.timeWastedHours,
+        wasteReason: item.wasteReason ?? null,
+        notes: item.notes ?? null,
+        batchId,
+        plateId,
+      },
+      filamentUsages,
+      reservedGramsByFilament,
+      allocatedTimes[i],
+    )
+    if (!result.success) return result
+    allOps.push(...result.ops)
+  }
+
+  await prisma.$transaction([
+    prisma.plate.create({ data: { id: plateId, date: parsed.data.date, printerId: parsed.data.printerId, notes: parsed.data.notes } }),
+    ...allOps,
+  ])
+
+  revalidatePath('/production')
+  revalidatePath('/filaments')
+  revalidatePath('/accessories')
+  revalidatePath('/supplies')
+  return { success: true }
+}
+
 // Edita uma produção já registrada (spec do módulo Produção): quantidade e
-// filamento ficam sempre somente leitura -- só desperdício (gramas/tempo/
-// motivo) e observações mudam, preservando a integridade histórica. Ajusta
-// o estoque de filamento pela DIFERENÇA de gramas desperdiçadas (não
-// reaplica o total) e recalcula wasteCost/total do costSnapshot a partir
-// das taxas ATUAIS de impressora/filamento/energia -- mesma limitação já
-// aceita em getSaleProfit/legacy fallback pra runs sem snapshot: sem uma
-// cópia congelada das taxas originais além do próprio unitCost, não há como
-// reconstruir o wasteCost exatamente como era no momento da criação.
+// filamento (qual filamento) ficam sempre somente leitura -- desperdício
+// (gramas/tempo/motivo) e observações mudam, preservando a integridade
+// histórica. Melhoria "Produção" (reformulação Plate) §42: "Filamento usado
+// (g)" (consumo real) passa a ser editável também -- gramsUsed é opcional
+// no schema porque o formulário só o envia quando o usuário de fato mexeu
+// nele. Ajusta o estoque de filamento pela DIFERENÇA combinada de gramas
+// usadas+desperdiçadas (não reaplica o total) e recalcula wasteCost/total
+// do costSnapshot a partir das taxas ATUAIS de impressora/filamento/energia
+// -- mesma limitação já aceita em getSaleProfit/legacy fallback pra runs
+// sem snapshot: sem uma cópia congelada das taxas originais além do
+// próprio unitCost, não há como reconstruir o wasteCost exatamente como
+// era no momento da criação. unitCost/total do snapshot são derivados do
+// PESO DA FICHA TÉCNICA (weightGrams), não de gramsUsed -- então editar
+// gramsUsed nunca muda unitCost/total, só o consumo físico registrado
+// (consumedResources.filament.gramsUsed) e o estoque decrementado.
 // Cancelada nunca é editável (já revertida, nada a preservar).
 export async function updateProductionRun(id: string, formData: FormData): Promise<ActionResult> {
   const run = await prisma.productionRun.findUniqueOrThrow({ where: { id }, include: { filamentUsages: true } })
@@ -461,22 +594,31 @@ export async function updateProductionRun(id: string, formData: FormData): Promi
     return { success: false, error: 'Produções com mais de um filamento não podem ser editadas aqui -- cancele e registre de novo com os valores corretos.' }
   }
 
-  const parsed = productionRunWasteUpdateSchema.safeParse(Object.fromEntries(formData))
+  // wasteReason/notes chegam como string vazia quando o <select>/<textarea>
+  // do formulário está em "Nenhum"/vazio (mesma normalização que parse()
+  // já faz pro create acima) -- sem isso, '' falha wasteReasonEnum (que só
+  // aceita um dos valores do enum, nulo ou ausente).
+  const raw = Object.fromEntries(formData)
+  const parsed = productionRunWasteUpdateSchema.safeParse({ ...raw, wasteReason: raw.wasteReason || null, notes: raw.notes || null })
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
-  const { gramsWasted, timeWastedHours, wasteReason, notes } = parsed.data
+  const { gramsUsed, gramsWasted, timeWastedHours, wasteReason, notes } = parsed.data
 
   const [printer, filament] = await Promise.all([
     prisma.printer.findUniqueOrThrow({ where: { id: run.printerId } }),
     prisma.filament.findUniqueOrThrow({ where: { id: run.filamentId } }),
   ])
 
+  const oldGramsUsed = run.gramsUsed.toNumber()
   const oldGramsWasted = run.gramsWasted.toNumber()
-  const deltaGrams = gramsWasted - oldGramsWasted
+  const deltaWasted = gramsWasted - oldGramsWasted
+  // gramsUsed undefined = campo não mexido pelo formulário -- sem delta.
+  const deltaUsed = gramsUsed !== undefined ? gramsUsed - oldGramsUsed : 0
+  const deltaGrams = deltaWasted + deltaUsed
   const filamentAvailable = filament.currentStockGrams.toNumber()
   if (deltaGrams > filamentAvailable) {
     return {
       success: false,
-      error: `Estoque insuficiente de filamento para esse desperdício (necessário ${deltaGrams}g a mais, disponível ${filamentAvailable}g)`,
+      error: `Estoque insuficiente de filamento para essa alteração (necessário ${deltaGrams}g a mais, disponível ${filamentAvailable}g)`,
     }
   }
 
@@ -507,7 +649,11 @@ export async function updateProductionRun(id: string, formData: FormData): Promi
         total: oldSnapshot.unitCost.finalCost * oldSnapshot.quantitySuccess + newWasteCost,
         consumedResources: {
           ...oldSnapshot.consumedResources,
-          filament: { ...oldSnapshot.consumedResources.filament, gramsWasted },
+          filament: {
+            ...oldSnapshot.consumedResources.filament,
+            gramsWasted,
+            ...(gramsUsed !== undefined ? { gramsUsed } : {}),
+          },
         },
       }
     : null
@@ -516,6 +662,7 @@ export async function updateProductionRun(id: string, formData: FormData): Promi
     prisma.productionRun.update({
       where: { id },
       data: {
+        ...(gramsUsed !== undefined ? { gramsUsed } : {}),
         gramsWasted,
         timeWastedHours,
         wasteReason,
@@ -673,4 +820,160 @@ export async function cancelProductionRun(id: string, reason: string): Promise<A
   revalidatePath('/accessories')
   revalidatePath('/supplies')
   return { success: true }
+}
+
+// ---------------------------------------------------------------------------
+// Melhoria "Produção" (reformulação Plate): novas visões -- "Por produto" e
+// "Plates" (§5 do plano). Nenhuma delas escreve nada; leem o que já está
+// gravado (ProductionRun/Plate) e, pra "conjuntos completos", reaproveitam
+// getAssemblyStatus (actions/assembly.ts) em vez de reimplementar a mesma
+// conta aqui -- é literalmente "Disponível para montagem" já existente na
+// tela de Montagem, só exibida também nesta visão.
+
+export interface ProductionByProductPart {
+  // null = produto simples sem nenhuma ProductPart (a peça é o próprio
+  // produto) -- mesma convenção de ProductionRun.productPartId.
+  partId: string | null
+  partName: string
+  produced: number
+  runsCount: number
+}
+
+export interface ProductionByProductRow {
+  productId: string
+  productName: string
+  isComposite: boolean
+  parts: ProductionByProductPart[]
+  // Reaproveita getAssemblyStatus(productId).maxAssemblableUnits -- nenhuma
+  // fórmula nova (ver comentário acima).
+  completeSets: number
+}
+
+export async function getProductionByProduct(): Promise<ProductionByProductRow[]> {
+  const products = await prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } })
+
+  const rows: ProductionByProductRow[] = []
+  for (const product of products) {
+    const runs = await prisma.productionRun.findMany({
+      where: { productId: product.id, status: { not: 'CANCELADA' } },
+      include: { productPart: true },
+    })
+    if (runs.length === 0) continue
+
+    const partsMap = new Map<string, ProductionByProductPart>()
+    for (const run of runs) {
+      const key = run.productPartId ?? '__simple__'
+      const existing = partsMap.get(key) ?? {
+        partId: run.productPartId,
+        partName: run.productPart?.name ?? product.name,
+        produced: 0,
+        runsCount: 0,
+      }
+      existing.produced += run.quantitySuccess
+      existing.runsCount += 1
+      partsMap.set(key, existing)
+    }
+
+    const status = await getAssemblyStatus(product.id)
+    rows.push({
+      productId: product.id,
+      productName: product.name,
+      isComposite: product.isComposite,
+      parts: [...partsMap.values()],
+      completeSets: status.maxAssemblableUnits,
+    })
+  }
+  return rows
+}
+
+export interface PlateListRow {
+  id: string
+  date: string
+  printerName: string
+  itemCount: number
+  productNames: string[]
+  totalGramsUsed: number
+  totalCost: number
+  // Pior status entre as runs da Plate (mesma severidade usada na tabela
+  // principal: COM_FALHAS > PARCIAL > CONCLUIDA), CANCELADA ignorada no
+  // agregado (run cancelada não representa o resultado físico da Plate).
+  status: ProductionStatus
+}
+
+const STATUS_SEVERITY: Record<ProductionStatus, number> = { COM_FALHAS: 3, PARCIAL: 2, CANCELADA: 0, CONCLUIDA: 1 }
+
+export async function getPlates(): Promise<PlateListRow[]> {
+  const plates = await prisma.plate.findMany({
+    orderBy: { date: 'desc' },
+    include: { printer: true, runs: { include: { product: true } } },
+  })
+
+  return plates.map((plate) => {
+    const activeRuns = plate.runs.filter((r) => r.status !== 'CANCELADA')
+    const relevantRuns = activeRuns.length > 0 ? activeRuns : plate.runs
+    const worstStatus = relevantRuns.reduce<ProductionStatus>(
+      (worst, r) => (STATUS_SEVERITY[r.status] > STATUS_SEVERITY[worst] ? r.status : worst),
+      relevantRuns[0]?.status ?? 'CONCLUIDA',
+    )
+    return {
+      id: plate.id,
+      date: plate.date.toISOString(),
+      printerName: plate.printer.name,
+      itemCount: plate.runs.length,
+      productNames: [...new Set(plate.runs.map((r) => r.product.name))],
+      totalGramsUsed: plate.runs.reduce((sum, r) => sum + r.gramsUsed.toNumber() + r.gramsWasted.toNumber(), 0),
+      totalCost: plate.runs.reduce((sum, r) => sum + ((r.costSnapshot as unknown as ProductionCostSnapshot | null)?.total ?? 0), 0),
+      status: worstStatus,
+    }
+  })
+}
+
+export interface PlateDetailRun {
+  id: string
+  productName: string
+  partName: string | null
+  filamentName: string
+  quantityPlanned: number
+  quantitySuccess: number
+  quantityFailed: number
+  gramsUsed: number
+  gramsWasted: number
+  status: ProductionStatus
+  cost: number | null
+}
+
+export interface PlateDetail {
+  id: string
+  date: string
+  printerName: string
+  notes: string | null
+  runs: PlateDetailRun[]
+}
+
+export async function getPlateDetail(id: string): Promise<PlateDetail | null> {
+  const plate = await prisma.plate.findUnique({
+    where: { id },
+    include: { printer: true, runs: { include: { product: true, productPart: true, filament: true } } },
+  })
+  if (!plate) return null
+
+  return {
+    id: plate.id,
+    date: plate.date.toISOString(),
+    printerName: plate.printer.name,
+    notes: plate.notes,
+    runs: plate.runs.map((run) => ({
+      id: run.id,
+      productName: run.product.name,
+      partName: run.productPart?.name ?? null,
+      filamentName: `${run.filament.manufacturer} ${run.filament.colorName} — Rolo #${String(run.filament.rollNumber).padStart(3, '0')}`,
+      quantityPlanned: run.quantityPlanned,
+      quantitySuccess: run.quantitySuccess,
+      quantityFailed: run.quantityFailed,
+      gramsUsed: run.gramsUsed.toNumber(),
+      gramsWasted: run.gramsWasted.toNumber(),
+      status: run.status,
+      cost: (run.costSnapshot as unknown as ProductionCostSnapshot | null)?.total ?? null,
+    })),
+  }
 }

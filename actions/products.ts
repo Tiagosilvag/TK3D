@@ -12,6 +12,7 @@ import {
   applyRounding,
   type ProductCostBreakdown,
   type ProductPartCostInput,
+  type ProductionCostSnapshot,
 } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 
@@ -189,6 +190,32 @@ export async function deleteProduct(id: string): Promise<ActionResult> {
   return { success: true }
 }
 
+// Melhoria "Produto-como-componente": custo médio de produção de UM
+// produto (usado quando ele é consumido como componente de outro, ex.:
+// Mosquetão dentro de Chaveiro Café) -- média ponderada por unidade bem-
+// sucedida do costSnapshot.total de cada ProductionRun não cancelada
+// (productPartId nulo, ou seja, produção do PRÓPRIO produto). Não é uma
+// coluna em Product (filosofia "estoque/custo derivado, não contador
+// redundante" do CLAUDE.md) -- recalculado ao vivo sempre que chamado;
+// quem precisa congelar o valor (ProductAssembly.costSnapshot) lê isto UMA
+// VEZ no momento da montagem e nunca mais. Retorna 0 se o produto nunca
+// foi produzido com sucesso (nunca inventa um custo).
+export async function getProductAverageProductionCost(productId: string): Promise<number> {
+  const runs = await prisma.productionRun.findMany({
+    where: { productId, productPartId: null, status: { not: 'CANCELADA' }, quantitySuccess: { gt: 0 } },
+    select: { costSnapshot: true, quantitySuccess: true },
+  })
+  let totalCost = 0
+  let totalUnits = 0
+  for (const run of runs) {
+    const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+    if (!snapshot) continue
+    totalCost += snapshot.total
+    totalUnits += run.quantitySuccess
+  }
+  return totalUnits > 0 ? totalCost / totalUnits : 0
+}
+
 export async function getProductCostBreakdown(productId: string): Promise<ProductCostBreakdown> {
   const [product, settings] = await Promise.all([
     prisma.product.findUniqueOrThrow({
@@ -200,6 +227,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
         accessoryUsages: { include: { accessory: true } },
         supplyUsages: { include: { supply: true } },
         parts: { include: { printer: true, filamentComponents: { include: { filament: true } } } },
+        componentUsages: true,
       },
     }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
@@ -261,6 +289,17 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
       printerMaintenanceCostPerHour: part.printer.maintenanceCostPerHour.toNumber(),
     }))
 
+    // Melhoria "Produto-como-componente": custo de cada componente-produto
+    // (ex.: Mosquetão) na ficha técnica -- quantidade × custo médio de
+    // produção DELE (getProductAverageProductionCost acima), ao vivo, pra
+    // prévia de preço. Não é peça (ProductPart) nem acessório de verdade,
+    // mas entra no mesmo balde/toggle de custo de acessórios (ver
+    // lib/costing.ts#calculateCompositeProductCost) -- decisão deliberada
+    // pra não precisar de uma coluna nova em Settings só pra isso.
+    const componentProductsCost = (
+      await Promise.all(product.componentUsages.map(async (u) => u.quantity * (await getProductAverageProductionCost(u.componentProductId))))
+    ).reduce((sum, c) => sum + c, 0)
+
     return calculateCompositeProductCost(
       {
         parts,
@@ -268,6 +307,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
         suppliesCost,
         packagingCost,
         accessoryCost: accessoriesCost,
+        componentProductsCost,
         ...flags,
       },
       settingsInput,
@@ -485,6 +525,90 @@ export async function addProductAccessoryUsage(formData: FormData): Promise<Acti
 
 export async function removeProductAccessoryUsage(usageId: string): Promise<ActionResult> {
   await prisma.productAccessoryUsage.delete({ where: { id: usageId } })
+  revalidatePath('/products')
+  return { success: true }
+}
+
+// Melhoria "Produto-como-componente": percorre a árvore de componentes A
+// PARTIR de `componentProductId` (seguindo componentUsages, ou seja, "o que
+// componentProductId usa") e devolve true se `parentProductId` for
+// alcançável -- usado por addProductComponentUsage pra recusar um vínculo
+// que fecharia um ciclo (A usa B usa A). BFS simples; a árvore de
+// componentes na prática é pequena (poucos produtos, poucos níveis), sem
+// necessidade de otimizar.
+async function wouldCreateComponentCycle(parentProductId: string, componentProductId: string): Promise<boolean> {
+  if (parentProductId === componentProductId) return true
+  const visited = new Set<string>([componentProductId])
+  let frontier = [componentProductId]
+  while (frontier.length > 0) {
+    const usages = await prisma.productComponentUsage.findMany({
+      where: { productId: { in: frontier } },
+      select: { componentProductId: true },
+    })
+    const next: string[] = []
+    for (const u of usages) {
+      if (u.componentProductId === parentProductId) return true
+      if (!visited.has(u.componentProductId)) {
+        visited.add(u.componentProductId)
+        next.push(u.componentProductId)
+      }
+    }
+    frontier = next
+  }
+  return false
+}
+
+// Melhoria "Produto-como-componente": mirrors addProductAccessoryUsage/
+// removeProductAccessoryUsage acima, mas o "item" é outro Product (ex.:
+// Mosquetão dentro de Chaveiro Café) -- só produto composto tem
+// componente (mesma regra implícita de ProductPart), só produto ATIVO e
+// NÃO COMPOSTO pode ser componente (evita custo/ciclo recursivo de
+// "composto dentro de composto" nesta rodada -- dá pra remover essa
+// restrição depois), e o vínculo nunca pode fechar um ciclo.
+const componentUsageSchema = z.object({
+  productId: z.string().min(1),
+  componentProductId: z.string().min(1),
+  quantity: z.coerce.number().int('Quantidade deve ser um número inteiro').positive('Quantidade deve ser maior que zero'),
+})
+
+export async function addProductComponentUsage(formData: FormData): Promise<ActionResult> {
+  const parsed = componentUsageSchema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  const { productId, componentProductId, quantity } = parsed.data
+
+  if (productId === componentProductId) {
+    return { success: false, error: 'Um produto não pode ser componente dele mesmo.' }
+  }
+
+  const [parent, component] = await Promise.all([
+    prisma.product.findUnique({ where: { id: productId } }),
+    prisma.product.findUnique({ where: { id: componentProductId } }),
+  ])
+  if (!parent || !component) return { success: false, error: 'Produto não encontrado.' }
+  if (!parent.isComposite) {
+    return { success: false, error: 'Só um produto composto pode ter componentes.' }
+  }
+  if (!component.active) {
+    return { success: false, error: 'Este produto está inativo -- reative-o antes de usá-lo como componente.' }
+  }
+  if (component.isComposite) {
+    return { success: false, error: 'Um produto composto não pode ser usado como componente de outro produto (ainda não suportado).' }
+  }
+  if (await wouldCreateComponentCycle(productId, componentProductId)) {
+    return { success: false, error: 'Esse vínculo criaria um ciclo (um produto usando a si mesmo indiretamente).' }
+  }
+
+  await prisma.productComponentUsage.upsert({
+    where: { productId_componentProductId: { productId, componentProductId } },
+    update: { quantity },
+    create: { productId, componentProductId, quantity },
+  })
+  revalidatePath('/products')
+  return { success: true }
+}
+
+export async function removeProductComponentUsage(usageId: string): Promise<ActionResult> {
+  await prisma.productComponentUsage.delete({ where: { id: usageId } })
   revalidatePath('/products')
   return { success: true }
 }

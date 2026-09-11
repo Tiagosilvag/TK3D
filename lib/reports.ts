@@ -323,6 +323,11 @@ export interface OwnStockRow {
   deliveredToPartners: number
   consignmentRemaining: number
   inProduction: number
+  // Melhoria "Produto-como-componente": quantas unidades já foram
+  // consumidas por OUTRO produto que usa este como ingrediente (ex.:
+  // Mosquetão consumido pela montagem de Chaveiro Café) -- 0 pra produto
+  // que nunca é usado como componente. Já descontado de `available` abaixo.
+  consumedAsComponent: number
   available: number
 }
 
@@ -486,7 +491,7 @@ export async function getProductDeliveryOptions(): Promise<ProductDeliveryOption
   const products = await prisma.product.findMany({
     where: { active: true },
     orderBy: { name: 'asc' },
-    include: { _count: { select: { accessoryUsages: true, supplyUsages: true } } },
+    include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
   })
   if (products.length === 0) return []
 
@@ -505,6 +510,7 @@ export async function getProductDeliveryOptions(): Promise<ProductDeliveryOption
       isComposite: p.isComposite,
       accessoryUsagesCount: p._count.accessoryUsages,
       supplyUsagesCount: p._count.supplyUsages,
+      componentUsagesCount: p._count.componentUsages,
     })
     const breakdown = await getProductVariantBreakdown(p.id, needsAssembly)
     return {
@@ -526,7 +532,7 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
     prisma.product.findMany({
       where: { active: true },
       orderBy: { name: 'asc' },
-      include: { _count: { select: { accessoryUsages: true, supplyUsages: true } } },
+      include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
     }),
     prisma.productionRun.groupBy({
       by: ['productId'],
@@ -538,6 +544,31 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
     prisma.consignmentDelivery.findMany({ include: { saleReports: true } }),
     prisma.order.groupBy({ by: ['productId'], where: { status: { not: 'CONCLUIDO' } }, _sum: { quantity: true } }),
   ])
+
+  // Melhoria "Produto-como-componente": quanto de cada produto já foi
+  // consumido como INGREDIENTE de outro produto (ex.: Mosquetão consumido
+  // pela montagem de Chaveiro Café) -- em lote, pra toda a listagem de uma
+  // vez (não N+1), mesmo algoritmo de
+  // actions/assembly.ts#getComponentColorAvailability, só que somando por
+  // componentProductId direto (sem quebra por combo, que essa tela não
+  // precisa). ProductComponentUsage é uma tabela pequena (poucos vínculos),
+  // então buscar tudo de uma vez é barato.
+  const [componentUsages, assembliesWithColorChoices] = await Promise.all([
+    prisma.productComponentUsage.findMany(),
+    prisma.productAssembly.findMany({ select: { productId: true, quantity: true, colorChoices: true } }),
+  ])
+  const usageByParentAndComponent = new Map<string, number>()
+  for (const u of componentUsages) usageByParentAndComponent.set(`${u.productId}::${u.componentProductId}`, u.quantity)
+  const consumedAsComponentMap = new Map<string, number>()
+  for (const a of assembliesWithColorChoices) {
+    const choices = a.colorChoices as Record<string, string> | null
+    if (!choices) continue
+    for (const key of Object.keys(choices)) {
+      const quantityPerUnit = usageByParentAndComponent.get(`${a.productId}::${key}`)
+      if (quantityPerUnit === undefined) continue // essa chave é uma ProductPart, não um componente-produto
+      consumedAsComponentMap.set(key, (consumedAsComponentMap.get(key) ?? 0) + a.quantity * quantityPerUnit)
+    }
+  }
 
   // 2.6: ajustes de estoque de Product são o único termo que não tem uma
   // tabela própria pra somar -- StockAdjustment.difference (positivo ou
@@ -570,11 +601,13 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
       isComposite: p.isComposite,
       accessoryUsagesCount: p._count.accessoryUsages,
       supplyUsagesCount: p._count.supplyUsages,
+      componentUsagesCount: p._count.componentUsages,
     })
     const produced = needsAssembly ? (assembledMap.get(p.id) ?? 0) : (producedMap.get(p.id) ?? 0)
     const soldDirect = soldMap.get(p.id) ?? 0
     const delivery = deliveredMap.get(p.id) ?? { delivered: 0, consignmentSold: 0 }
     const adjustment = adjustmentMap.get(p.id) ?? 0
+    const consumedAsComponent = consumedAsComponentMap.get(p.id) ?? 0
     return {
       productId: p.id,
       productName: p.name,
@@ -593,7 +626,12 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
       // físico que precisa ser fisicamente descontado em cascata.
       consignmentRemaining: Math.max(0, delivery.delivered - delivery.consignmentSold),
       inProduction: openOrdersMap.get(p.id) ?? 0,
-      available: Math.max(0, produced - soldDirect - delivery.delivered + adjustment),
+      consumedAsComponent,
+      // Melhoria "Produto-como-componente": desconta também o que já foi
+      // usado como ingrediente de outro produto -- sem isso, Mosquetão
+      // continuaria aparecendo com estoque "disponível" mesmo depois de já
+      // ter virado Chaveiro Café.
+      available: Math.max(0, produced - soldDirect - delivery.delivered + adjustment - consumedAsComponent),
     }
   })
 }
@@ -695,7 +733,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
   const productIds = [...new Set(partner.deliveries.map((d) => d.productId))]
   const products = productIds.length > 0 ? await prisma.product.findMany({
     where: { id: { in: productIds } },
-    include: { _count: { select: { accessoryUsages: true, supplyUsages: true } } },
+    include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
   }) : []
   const variantInfoByProductAndKey = new Map<string, { label: string; colorHex: string | null }>()
   await Promise.all(products.map(async (p) => {
@@ -703,6 +741,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
       isComposite: p.isComposite,
       accessoryUsagesCount: p._count.accessoryUsages,
       supplyUsagesCount: p._count.supplyUsages,
+      componentUsagesCount: p._count.componentUsages,
     })
     const breakdown = await getProductVariantBreakdown(p.id, needsAssembly)
     for (const v of breakdown) variantInfoByProductAndKey.set(`${p.id}::${v.key}`, { label: v.label, colorHex: v.colorHex })

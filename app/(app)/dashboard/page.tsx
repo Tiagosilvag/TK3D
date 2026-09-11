@@ -12,6 +12,13 @@ import {
   getPrinterUsage,
   type ProductionReportFilters,
 } from '@/lib/reports'
+// Melhoria "Produção" (reformulação Plate) §6: "Plates realizadas" e
+// "produtos completos vs. parciais" -- reaproveita getProductionByProduct
+// de actions/productionRuns.ts (que já traz completeSets via
+// getAssemblyStatus) em vez de reimplementar "conjuntos completos" aqui;
+// aliado pra não colidir com o getProductionByProduct de lib/reports acima
+// (função diferente, shape diferente, mesmo nome por coincidência).
+import { getProductionByProduct as getPlateProductionByProduct } from '@/actions/productionRuns'
 import { calculateStockReferenceQuantity, calculateStockPercentRemaining, getStockStatusWithThresholds } from '@/lib/costing'
 import { formatCurrency, getProductionStatusBadge, WASTE_REASON_LABELS } from '@/lib/format'
 import type { ProductionStatus, WasteReason } from '@prisma/client'
@@ -122,6 +129,8 @@ export default async function DashboardPage({
     filterPrinters,
     supplies,
     settings,
+    platesInRangeCount,
+    plateProductionByProduct,
   ] = await Promise.all([
     getRevenueByChannel(),
     getTopProducts(5),
@@ -135,7 +144,16 @@ export default async function DashboardPage({
     prisma.printer.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     prisma.supply.findMany({ include: { purchases: { orderBy: { purchaseDate: 'desc' } } }, orderBy: { name: 'asc' } }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
+    prisma.plate.count({ where: { date: { gte: fromDate, lte: toDate }, ...(activePrinterId ? { printerId: activePrinterId } : {}) } }),
+    // Melhoria "Produção" (reformulação Plate) §6: "produtos completos vs.
+    // parciais" -- sempre sobre TODO o histórico (não aplica os filtros de
+    // período/status/motivo acima), mesmo padrão de getAssemblyOverview em
+    // Meu Estoque (visão agregada, não uma lista filtrada).
+    getPlateProductionByProduct(),
   ])
+
+  const completeProductsCount = plateProductionByProduct.filter((p) => p.completeSets > 0).length
+  const partialProductsCount = plateProductionByProduct.filter((p) => p.completeSets === 0).length
 
   // Card de alerta (spec do módulo Insumos): insumos esgotados ou em estoque
   // crítico, mesmo cálculo de status usado em app/(app)/supplies/page.tsx.
@@ -435,6 +453,18 @@ export default async function DashboardPage({
           <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Desperdício total</p>
             <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-amber-600 dark:text-amber-400">{formatCurrency(productionSummary.totalWasteCost)}</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Plates realizadas</p>
+            <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">{integer.format(platesInRangeCount)}</p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Produtos completos / parciais</p>
+            <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+              <span className="text-emerald-600 dark:text-emerald-400">{integer.format(completeProductsCount)}</span>
+              {' / '}
+              <span className="text-amber-600 dark:text-amber-400">{integer.format(partialProductsCount)}</span>
+            </p>
           </div>
         </div>
       </section>

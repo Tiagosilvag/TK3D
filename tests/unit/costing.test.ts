@@ -17,6 +17,7 @@ import {
   simulateProductPrice,
   sumProductPartsCost,
   calculateCompositeProductCost,
+  allocatePlatePrintTime,
   type ProductionCostSnapshotInput,
   type ProductCostBreakdown,
   type ProductPartCostInput,
@@ -877,6 +878,7 @@ describe('buildSaleCostSnapshot (task-10 brief, new feature -- Sale cost snapsho
     suppliesCost: 0.2,
     packagingCost: 0.3,
     accessoryCost: 0.4,
+    componentProductsCost: 0,
     failureRateCost: 0.71,
     subtotal: 7.1,
     finalCost: 7.81,
@@ -977,5 +979,55 @@ describe('simulateProductPrice (task-6 brief — Simulação de preço)', () => 
     })
     // suggestedPrice 18 -> marketplacePrice = 18 / (1 - 0.20 - 0.055) + 4
     expect(result.marketplacePrice).toBeCloseTo(18 / 0.745 + 4, 4)
+  })
+})
+
+describe('allocatePlatePrintTime', () => {
+  it('reproduz o exemplo do pedido: Mosquetão 30% / Caneca 70%', () => {
+    // Mosquetão: 0.3h/un × 1un = peso 0.3; Caneca: 0.7h/un × 1un = peso 0.7
+    // -- soma 1.0, Mosquetão fica com 30% do tempo total da Plate (o maior
+    // tempo entre as duas, 0.7h) e Caneca com 70%.
+    const [mosquetao, caneca] = allocatePlatePrintTime([
+      { printTimeHoursPerUnit: 0.3, quantityPlanned: 1 },
+      { printTimeHoursPerUnit: 0.7, quantityPlanned: 1 },
+    ])
+    expect(mosquetao).toBeCloseTo(0.7 * 0.3, 6) // 0.21h
+    expect(caneca).toBeCloseTo(0.7 * 0.7, 6) // 0.49h
+  })
+
+  it('tempo total da Plate = o tempo da peça mais lenta (gargalo da impressão simultânea)', () => {
+    const allocated = allocatePlatePrintTime([
+      { printTimeHoursPerUnit: 1, quantityPlanned: 1 },
+      { printTimeHoursPerUnit: 3, quantityPlanned: 1 },
+    ])
+    expect(allocated.reduce((sum, h) => sum + h, 0)).toBeCloseTo(3, 6)
+  })
+
+  it('considera a quantidade planejada no peso, não só o tempo por unidade', () => {
+    // Peça A: 1h/un × 2un = peso 2; Peça B: 1h/un × 1un = peso 1 -- A fica
+    // com 2/3 do tempo total (1h, o maior entre as duas por unidade).
+    const [a, b] = allocatePlatePrintTime([
+      { printTimeHoursPerUnit: 1, quantityPlanned: 2 },
+      { printTimeHoursPerUnit: 1, quantityPlanned: 1 },
+    ])
+    expect(a).toBeCloseTo((2 / 3) * 1, 6)
+    expect(b).toBeCloseTo((1 / 3) * 1, 6)
+  })
+
+  it('uma peça sozinha na Plate recebe 100% do próprio tempo (caso degenerado)', () => {
+    const [only] = allocatePlatePrintTime([{ printTimeHoursPerUnit: 0.5, quantityPlanned: 4 }])
+    expect(only).toBeCloseTo(0.5, 6)
+  })
+
+  it('lista vazia devolve lista vazia', () => {
+    expect(allocatePlatePrintTime([])).toEqual([])
+  })
+
+  it('todo peso zerado divide o tempo igualmente em vez de gerar NaN', () => {
+    const allocated = allocatePlatePrintTime([
+      { printTimeHoursPerUnit: 0, quantityPlanned: 0 },
+      { printTimeHoursPerUnit: 0, quantityPlanned: 0 },
+    ])
+    expect(allocated).toEqual([0, 0])
   })
 })

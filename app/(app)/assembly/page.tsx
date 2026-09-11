@@ -21,10 +21,13 @@ export default async function AssemblyPage({
     prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
   ])
 
-  // Melhoria "Montagem" §6: alertas separados -- falta de PEÇA bloqueia
-  // (vermelho), falta de componente só avisa (neutro), calculado aqui a
-  // partir do que a tela de detalhe já carregou.
+  // Melhoria "Montagem" §6, "Produto-como-componente": alertas separados --
+  // falta de PEÇA ou de COMPONENTE-PRODUTO bloqueia (vermelho, mesma
+  // severidade -- é uma peça física necessária), falta de insumo/acessório
+  // só avisa (neutro), calculado aqui a partir do que a tela de detalhe já
+  // carregou.
   const insufficientParts = status?.parts.filter((p) => p.maxUnitsFromThisPart <= 0) ?? []
+  const insufficientComponentProducts = status?.components.filter((c) => c.maxUnitsFromThisComponent <= 0) ?? []
   const lowStockComponents = status
     ? [...status.accessoryRequirements, ...status.supplyRequirements, ...status.packagingRequirements].filter((r) => r.available < r.quantityPerUnit)
     : []
@@ -100,15 +103,59 @@ export default async function AssemblyPage({
             </table>
           </div>
 
-          {insufficientParts.length > 0 && (
+          {/* Melhoria "Produto-como-componente": tabela irmã da de peças --
+              outros PRODUTOS usados como ingrediente (ex.: Mosquetão dentro
+              de Chaveiro Café), estoque COMPARTILHADO entre todos os
+              produtos pai que os usam. */}
+          {status.components.length > 0 && (
+            <div className="tk-panel p-4">
+              <h3 className="mb-2 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Componentes</h3>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="tk-table-head-row">
+                    <th className="py-2">Produto</th>
+                    <th>Qtd/unidade</th>
+                    <th>Produzido</th>
+                    <th>Disponível</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {status.components.map((component) => {
+                    const repColor = component.colorOptions && component.colorOptions.length > 0
+                      ? component.colorOptions.reduce((a, b) => (b.available > a.available ? b : a))
+                      : null
+                    return (
+                      <tr key={component.componentProductId} className={`tk-row align-top ${component.maxUnitsFromThisComponent <= 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
+                        <td className="py-2">
+                          {component.name}
+                          {repColor && (
+                            <span className="mt-0.5 flex items-center gap-1.5 text-xs font-normal text-slate-500 dark:text-slate-400">
+                              {repColor.colorHex && <span style={{ background: repColor.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                              {repColor.label}
+                            </span>
+                          )}
+                        </td>
+                        <td>{component.quantityPerUnit}</td>
+                        <td>{component.produced}</td>
+                        <td>{component.available}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {(insufficientParts.length > 0 || insufficientComponentProducts.length > 0) && (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">
-              ⚠ Peça insuficiente: {insufficientParts.map((p) => p.name).join(', ')}
+              ⚠ Peça/componente insuficiente: {[...insufficientParts, ...insufficientComponentProducts].map((p) => p.name).join(', ')}
             </p>
           )}
 
           <ConfirmAssemblyForm
             productId={status.productId}
             parts={status.parts}
+            components={status.components}
             accessoryRequirements={status.accessoryRequirements}
             supplyRequirements={status.supplyRequirements}
             packagingRequirements={status.packagingRequirements}

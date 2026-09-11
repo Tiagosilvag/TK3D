@@ -2,6 +2,9 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { revalidatePath } from 'next/cache'
+import { productNeedsAssembly } from '@/lib/products'
+import { getProductVariantBreakdown } from '@/lib/reports'
+import { getProductAverageProductionCost } from '@/actions/products'
 
 type ActionResult = { success: boolean; error?: string }
 
@@ -48,6 +51,22 @@ export interface AssemblyPartStatus {
   colorOptions: AssemblyPartColorOption[] | null
 }
 
+// Melhoria "Produto-como-componente": mesmo shape de AssemblyPartStatus,
+// mas pra um PRODUTO inteiro usado como ingrediente (ex.: Mosquetão dentro
+// de Chaveiro Café) em vez de uma ProductPart exclusiva deste produto --
+// ver getComponentColorAvailability abaixo pro que torna esse estoque
+// COMPARTILHADO entre vários produtos pai.
+export interface AssemblyComponentStatus {
+  componentProductId: string
+  name: string
+  quantityPerUnit: number
+  produced: number
+  consumed: number
+  available: number
+  maxUnitsFromThisComponent: number
+  colorOptions: AssemblyPartColorOption[] | null
+}
+
 // Ajuste "produção → montagem → estoque": insumo/acessório cadastrado na
 // ficha técnica do produto (composto OU simples) -- disponível em estoque
 // AGORA, pra travar quantas unidades dá pra montar junto com as peças.
@@ -64,6 +83,10 @@ export interface AssemblyStatus {
   productName: string
   isComposite: boolean
   parts: AssemblyPartStatus[]
+  // Melhoria "Produto-como-componente": outros PRODUTOS usados como
+  // ingrediente (ProductComponentUsage) -- falta de componente bloqueia a
+  // montagem igual falta de peça (ver maxAssemblableUnits abaixo).
+  components: AssemblyComponentStatus[]
   accessoryRequirements: AssemblyResourceRequirement[]
   supplyRequirements: AssemblyResourceRequirement[]
   // Melhoria "Montagem" §5: puramente informativo -- Embalagem continua
@@ -78,6 +101,68 @@ export interface AssemblyStatus {
   // (antes era uma coluna dentro da tabela de peças) e alimenta a lista
   // geral (getAssemblyOverview).
   alreadyAssembled: number
+}
+
+// Melhoria "Produto-como-componente": disponibilidade por cor de um
+// PRODUTO usado como componente de outro (ex.: Mosquetão dentro de
+// Chaveiro Café) -- estoque COMPARTILHADO entre TODOS os produtos pai que
+// o usam (decisão confirmada com o usuário: um único pool, não um estoque
+// duplicado por produto pai). "Produzido por combo" reaproveita
+// getProductVariantBreakdown (lib/reports.ts, já lida com o componente
+// precisar ou não de montagem própria -- o formato exato da chave que ela
+// devolve não importa aqui, só precisa ser estável: é a mesma chave que
+// confirmAssembly grava de volta em ProductAssembly.colorChoices e que
+// esta função relê depois, nunca comparada contra nenhum outro formato).
+// "Consumido por combo" soma TODAS as ProductAssembly de QUALQUER produto
+// pai que declarou este componente na ficha técnica, multiplicando pela
+// quantidade DAQUELE produto pai especificamente (produtos pai diferentes
+// podem pedir quantidades diferentes do mesmo componente).
+//
+// Limitação aceita (documentada, mesmo padrão já usado em
+// getProductDeliveryOptions pra consignação): venda direta/consignação
+// deste componente NÃO é descontada por cor aqui, só consumo-como-
+// componente -- a agregada 100% líquida é getOwnStockSummary (lib/reports.ts),
+// usada em Meu Estoque.
+async function getComponentColorAvailability(componentProductId: string): Promise<AssemblyPartColorOption[]> {
+  const component = await prisma.product.findUniqueOrThrow({
+    where: { id: componentProductId },
+    include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
+  })
+  const needsAssemblyOfComponent = productNeedsAssembly({
+    isComposite: component.isComposite,
+    accessoryUsagesCount: component._count.accessoryUsages,
+    supplyUsagesCount: component._count.supplyUsages,
+    componentUsagesCount: component._count.componentUsages,
+  })
+  const produced = await getProductVariantBreakdown(componentProductId, needsAssemblyOfComponent)
+  if (produced.length === 0) return []
+
+  const usagesOfThisComponent = await prisma.productComponentUsage.findMany({ where: { componentProductId } })
+  const quantityByParentId = new Map(usagesOfThisComponent.map((u) => [u.productId, u.quantity]))
+  const parentIds = usagesOfThisComponent.map((u) => u.productId)
+
+  const consumedByCombo = new Map<string, number>()
+  if (parentIds.length > 0) {
+    const assemblies = await prisma.productAssembly.findMany({
+      where: { productId: { in: parentIds } },
+      select: { productId: true, quantity: true, colorChoices: true },
+    })
+    for (const a of assemblies) {
+      const choices = a.colorChoices as Record<string, string> | null
+      const key = choices?.[componentProductId]
+      if (!key) continue
+      const qtyPerUnit = quantityByParentId.get(a.productId) ?? 0
+      consumedByCombo.set(key, (consumedByCombo.get(key) ?? 0) + a.quantity * qtyPerUnit)
+    }
+  }
+
+  return produced.map((p) => ({
+    key: p.key,
+    filamentIds: [],
+    label: p.label,
+    available: Math.max(0, p.quantity - (consumedByCombo.get(p.key) ?? 0)),
+    colorHex: p.colorHex,
+  }))
 }
 
 // 2.3: pra cada peça do produto, "disponível" = soma de tudo que já foi
@@ -108,6 +193,7 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
       accessoryUsages: { include: { accessory: true } },
       supplyUsages: { include: { supply: true } },
       packagingUsages: { include: { packagingItem: true } },
+      componentUsages: { include: { componentProduct: true } },
     },
   })
 
@@ -337,20 +423,49 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
     available: Math.max(0, u.packagingItem.currentStock.toNumber()),
   }))
 
-  // Melhoria "Montagem" §4/§5/§6: só falta de PEÇA bloqueia a montagem --
-  // não existe substituto pra uma peça não impressa. Falta de acessório/
-  // insumo (e embalagem, nunca consumida aqui) não trava mais o cálculo de
-  // quanto dá pra montar, só gera aviso (calculado à parte pela tela a
-  // partir de accessoryRequirements/supplyRequirements/packagingRequirements
-  // -- ver comentário em confirmAssembly abaixo sobre o mesmo ajuste do
-  // lado da escrita).
-  const maxAssemblableUnits = parts.length === 0 ? 0 : Math.max(0, Math.min(...parts.map((p) => p.maxUnitsFromThisPart)))
+  // Melhoria "Produto-como-componente": outros PRODUTOS usados como
+  // ingrediente (ex.: Mosquetão dentro de Chaveiro Café) -- mesma
+  // severidade de bloqueio que peça (não insumo/acessório): é uma peça
+  // física necessária, sem substituto. Estoque compartilhado entre todos
+  // os produtos pai que usam o mesmo componente (getComponentColorAvailability).
+  const components: AssemblyComponentStatus[] = await Promise.all(
+    product.componentUsages.map(async (usage) => {
+      const colorOptions = await getComponentColorAvailability(usage.componentProductId)
+      const produced = colorOptions.reduce((sum, c) => sum + c.available, 0) // aproximação: soma do disponível por combo (não existe "produzido bruto" único aqui, ver getComponentColorAvailability)
+      const available = produced
+      const maxUnitsFromThisComponent = colorOptions.length === 0
+        ? 0
+        : Math.max(...colorOptions.map((c) => Math.floor(c.available / usage.quantity)))
+      return {
+        componentProductId: usage.componentProductId,
+        name: usage.componentProduct.name,
+        quantityPerUnit: usage.quantity,
+        produced,
+        consumed: 0,
+        available,
+        maxUnitsFromThisComponent,
+        colorOptions: colorOptions.length > 0 ? colorOptions : null,
+      }
+    }),
+  )
+
+  // Melhoria "Montagem" §4/§5/§6: só falta de PEÇA (ou, agora, de
+  // componente-produto) bloqueia a montagem -- não existe substituto pra
+  // uma peça não impressa. Falta de acessório/insumo (e embalagem, nunca
+  // consumida aqui) não trava mais o cálculo de quanto dá pra montar, só
+  // gera aviso (calculado à parte pela tela a partir de
+  // accessoryRequirements/supplyRequirements/packagingRequirements -- ver
+  // comentário em confirmAssembly abaixo sobre o mesmo ajuste do lado da
+  // escrita).
+  const allLimits = [...parts.map((p) => p.maxUnitsFromThisPart), ...components.map((c) => c.maxUnitsFromThisComponent)]
+  const maxAssemblableUnits = allLimits.length === 0 ? 0 : Math.max(0, Math.min(...allLimits))
 
   return {
     productId: product.id,
     productName: product.name,
     isComposite: product.isComposite,
     parts,
+    components,
     accessoryRequirements,
     supplyRequirements,
     packagingRequirements,
@@ -380,7 +495,7 @@ export async function getAssemblyOverview(): Promise<AssemblyOverviewRow[]> {
   const products = await prisma.product.findMany({
     where: {
       active: true,
-      OR: [{ isComposite: true }, { accessoryUsages: { some: {} } }, { supplyUsages: { some: {} } }],
+      OR: [{ isComposite: true }, { accessoryUsages: { some: {} } }, { supplyUsages: { some: {} } }, { componentUsages: { some: {} } }],
     },
     orderBy: { name: 'asc' },
     select: { id: true, name: true },
@@ -487,6 +602,33 @@ export async function confirmAssembly(formData: FormData): Promise<ActionResult>
     colorChoicesToStore[part.partId] = chosenKey
   }
 
+  // Melhoria "Produto-como-componente": mesma checagem/escolha de cor da
+  // peça acima, agora pra outros PRODUTOS usados como ingrediente --
+  // chaveado por componentProductId em colorChoicesToStore (mesmo mapa,
+  // sem conflito de namespace com productPartId).
+  const componentProductsConsumed: { componentProductId: string; quantityConsumed: number }[] = []
+  for (const component of status.components) {
+    if (!component.colorOptions) {
+      if (component.maxUnitsFromThisComponent < quantity) {
+        insufficient.push(`${component.name} (dá pra montar só ${component.maxUnitsFromThisComponent})`)
+      }
+      continue
+    }
+    const chosenKey = submittedColorChoices[component.componentProductId]
+    const chosenOption = component.colorOptions.find((o) => o.key === chosenKey)
+    if (!chosenOption) {
+      insufficient.push(`${component.name} (selecione a cor)`)
+      continue
+    }
+    const maxUnitsForColor = Math.floor(chosenOption.available / component.quantityPerUnit)
+    if (maxUnitsForColor < quantity) {
+      insufficient.push(`${component.name} ${chosenOption.label} (dá pra montar só ${maxUnitsForColor})`)
+      continue
+    }
+    colorChoicesToStore[component.componentProductId] = chosenKey
+    componentProductsConsumed.push({ componentProductId: component.componentProductId, quantityConsumed: component.quantityPerUnit * quantity })
+  }
+
   // Revalida insumo/acessório contra o estoque ATUAL (não o já carregado
   // em `status`, pra evitar corrida com outra montagem/reposição
   // simultânea) -- a lista é editável nesta leva, então busca de novo
@@ -527,6 +669,17 @@ export async function confirmAssembly(formData: FormData): Promise<ActionResult>
     return { success: false, error: `Estoque insuficiente: ${insufficient.join('; ')}` }
   }
 
+  // Melhoria "Produto-como-componente": custo dos componentes-produto
+  // consumidos nesta leva -- quantidade × custo médio de produção do
+  // componente NO MOMENTO desta montagem (getProductAverageProductionCost,
+  // ao vivo), congelado em ProductAssembly.costSnapshot e nunca
+  // recalculado depois (mesmo padrão de ProductionRun.costSnapshot).
+  const componentCosts = await Promise.all(
+    componentProductsConsumed.map(async (c) => c.quantityConsumed * (await getProductAverageProductionCost(c.componentProductId))),
+  )
+  const componentProductsCost = componentCosts.reduce((sum, c) => sum + c, 0)
+  const costSnapshot = componentProductsConsumed.length > 0 ? { componentProductsCost, total: componentProductsCost } : undefined
+
   // Melhoria "Histórico de consumo": cada decremento ganha uma linha em
   // StockConsumption (source ASSEMBLY, sourceId = esta montagem) -- até
   // aqui o decremento acontecia sem deixar NENHUM rastro de quanto foi
@@ -540,6 +693,7 @@ export async function confirmAssembly(formData: FormData): Promise<ActionResult>
         quantity,
         notes,
         colorChoices: Object.keys(colorChoicesToStore).length > 0 ? colorChoicesToStore : undefined,
+        costSnapshot,
       },
     })
     for (const c of accessoryConsumption) {

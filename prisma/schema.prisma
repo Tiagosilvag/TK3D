@@ -100,6 +100,7 @@ model Printer {
   products               Product[]
   productionRuns         ProductionRun[]
   productParts           ProductPart[]
+  plates                 Plate[]
 }
 
 enum FilamentMaterial {
@@ -332,6 +333,42 @@ model Product {
   photos                ProductPhoto[]
   orders                Order[]
   stockConsumptions     StockConsumption[]
+  // Melhoria "Produto-como-componente": o que ESTE produto usa como
+  // ingrediente de outros produtos (ex.: Chaveiro Café usa Mosquetão) --
+  // ver comentário completo em ProductComponentUsage abaixo.
+  componentUsages       ProductComponentUsage[] @relation("ComponentUsageParent")
+  // Onde ESTE produto é usado como ingrediente de outros produtos (ex.:
+  // Mosquetão sendo usado por Chaveiro Café E Chaveiro Presente ao mesmo
+  // tempo, com um único estoque compartilhado entre os dois).
+  usedAsComponentIn     ProductComponentUsage[] @relation("ComponentUsageComponent")
+}
+
+// Melhoria "Produto-como-componente": produto usado como INGREDIENTE de
+// outro produto composto (ex.: Mosquetão dentro de Chaveiro Café) --
+// diferente de ProductPart (peça exclusiva de UM produto composto), aqui o
+// MESMO Product pode ser componente de VÁRIOS produtos pai ao mesmo tempo,
+// com um único estoque compartilhado entre todos eles
+// (getOwnStockSummary/getAssemblyStatus.getComponentColorAvailability
+// descontam o consumo de QUALQUER produto pai do mesmo pool, não um por
+// produto). O produto pai precisa ser composto (isComposite=true, mesma
+// regra implícita de ProductPart); o produto componente precisa ser
+// NÃO composto (validado em actions/products.ts#addProductComponentUsage --
+// evita custo/ciclo recursivo de "composto dentro de composto" nesta
+// rodada) e não pode formar ciclo (A usa B usa A), também validado lá.
+// onDelete Cascade no lado do pai (a linha só existe pra descrever a ficha
+// técnica DELE, some com ele, mesmo padrão de ProductAccessoryUsage);
+// Restrict no lado do componente (não dá pra apagar fisicamente um produto
+// componente enquanto ele for usado em algum lugar -- na prática nunca
+// dispara, porque deleteProduct é soft-delete/active=false).
+model ProductComponentUsage {
+  id                 String  @id @default(cuid())
+  productId          String
+  product            Product @relation("ComponentUsageParent", fields: [productId], references: [id], onDelete: Cascade)
+  componentProductId String
+  componentProduct   Product @relation("ComponentUsageComponent", fields: [componentProductId], references: [id], onDelete: Restrict)
+  quantity           Int     @default(1)
+
+  @@unique([productId, componentProductId])
 }
 
 // 2.1 Produto composto (BOM): uma peça que precisa ser impressa
@@ -408,6 +445,13 @@ model ProductAssembly {
   // esse ajuste (histórico sem informação de cor, nunca inventada
   // retroativamente).
   colorChoices Json?
+  // Melhoria "Produto-como-componente": custo dos componentes-produto
+  // consumidos nesta leva (ex.: N Mosquetões × custo médio de produção do
+  // Mosquetão NO MOMENTO desta montagem) -- congelado aqui, nunca
+  // recalculado depois, mesmo padrão de ProductionRun.costSnapshot. Nulo em
+  // montagens sem nenhum componente-produto (só peça/acessório/insumo) ou
+  // anteriores a este ajuste -- nunca inventado retroativamente.
+  costSnapshot Json?
   assembledAt DateTime @default(now())
   notes       String?
   createdAt   DateTime @default(now())
@@ -502,8 +546,38 @@ model ProductAccessoryColorUsage {
   @@unique([productId, colorComboKey, accessoryId])
 }
 
+// Melhoria "Produção" (reformulação Plate): várias peças -- do mesmo
+// produto ou de produtos DIFERENTES (REGRA 9) -- impressas juntas na
+// mesma impressão física. Diferente de `batchId` (token técnico de "essas
+// runs vieram da mesma submissão de formulário", só usado internamente),
+// Plate é um conceito real do domínio: tem sua própria data/impressora
+// (compartilhadas por definição -- é a MESMA impressão), aparece em telas
+// e relatórios próprios, e é a base do rateio de custo de impressora
+// entre as peças (ver lib/costing.ts#allocatePlatePrintTime). Uma
+// ProductionRun sem plateId é "produção individual" (sempre foi assim,
+// nunca precisou de Plate pra existir).
+model Plate {
+  id        String          @id @default(cuid())
+  date      DateTime
+  printerId String
+  printer   Printer         @relation(fields: [printerId], references: [id])
+  notes     String?
+  createdAt DateTime        @default(now())
+  runs      ProductionRun[]
+}
+
 model ProductionRun {
   id              String           @id @default(cuid())
+  // Melhoria "Produção" (reformulação Plate): presente quando esta run foi
+  // impressa junto de outras na mesma Plate -- nulo pra produção
+  // individual (sempre foi assim). `date`/`printerId` abaixo recebem uma
+  // CÓPIA dos valores da Plate na criação (mesma impressão física = mesma
+  // data/impressora por definição), então todo código existente que já lê
+  // run.date/run.printerId direto continua funcionando sem join nenhum --
+  // Plate só precisa ser consultada pra telas que mostram o agrupamento em
+  // si (visão por Plate) ou o rateio de custo.
+  plateId         String?
+  plate           Plate?           @relation(fields: [plateId], references: [id])
   // Melhoria "Produção" §3/§4: uma sessão de produção real pode cobrir
   // várias peças de um produto composto de uma vez (marcadas via checkbox
   // no modal "Registrar produção") -- cada peça marcada continua virando
@@ -574,6 +648,7 @@ model ProductionRun {
   filamentUsages  ProductionRunFilamentUsage[]
 
   @@index([batchId])
+  @@index([plateId])
 }
 
 // Consumo real de UM componente de filamento de uma produção de peça
