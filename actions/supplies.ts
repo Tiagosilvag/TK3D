@@ -25,7 +25,7 @@ function isForeignKeyConstraintError(err: unknown): boolean {
 export async function createSupply(formData: FormData): Promise<ActionResult> {
   const parsed = supplySchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
-  const { name, unit, quantity, totalCost, purchaseDate, notes } = parsed.data
+  const { name, unit, quantity, totalCost, purchaseDate, notes, defaultUsage } = parsed.data
 
   const avgUnitCost = calculateWeightedAverageCost({
     currentStock: 0,
@@ -37,7 +37,7 @@ export async function createSupply(formData: FormData): Promise<ActionResult> {
   try {
     await prisma.$transaction(async (tx) => {
       const supply = await tx.supply.create({
-        data: { name, unit, currentStock: quantity, avgUnitCost },
+        data: { name, unit, currentStock: quantity, avgUnitCost, defaultUsage },
       })
       await tx.supplyPurchase.create({
         data: { supplyId: supply.id, quantity, totalCost, purchaseDate, notes },

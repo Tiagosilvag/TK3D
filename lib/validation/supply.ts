@@ -2,6 +2,16 @@ import { z } from 'zod'
 
 export const supplyUnitEnum = z.enum(['UN', 'ML', 'G', 'M', 'OUTRO'])
 
+// Melhoria "Insumos": "Uso padrão" é opcional (insumo cadastrado antes
+// dessa melhoria não tem valor, e nada obriga informar um na hora) --
+// "" (campo vazio) vira null, valor preenchido precisa ser > 0. Mesmo
+// padrão de campo opcional já usado por accessorySchema's colorHexField
+// (lib/validation/accessory.ts).
+const optionalDefaultUsage = z
+  .union([z.literal(''), z.coerce.number({ invalid_type_error: 'Uso padrão inválido' }).positive('Uso padrão deve ser maior que zero')])
+  .optional()
+  .transform((v) => (v === '' || v == null ? null : v))
+
 // Cadastro de um Supply NOVO = a primeira compra (task-4 brief, mirroring
 // task-3's Accessory): nome + unidade + quantidade + valor total da
 // primeira compra. createSupply derives avgUnitCost/currentStock from
@@ -14,6 +24,7 @@ export const supplySchema = z.object({
   totalCost: z.coerce.number({ invalid_type_error: 'Valor inválido' }).positive('Valor total deve ser maior que zero'),
   purchaseDate: z.coerce.date({ errorMap: () => ({ message: 'Data inválida' }) }),
   notes: z.string().optional().nullable(),
+  defaultUsage: optionalDefaultUsage,
 })
 
 export type SupplyInput = z.infer<typeof supplySchema>
@@ -36,6 +47,7 @@ export type SupplyPurchaseInput = z.infer<typeof supplyPurchaseSchema>
 export const supplyUpdateSchema = z.object({
   name: z.string().min(1, 'Nome é obrigatório'),
   unit: supplyUnitEnum,
+  defaultUsage: optionalDefaultUsage,
 })
 
 export type SupplyUpdateInput = z.infer<typeof supplyUpdateSchema>

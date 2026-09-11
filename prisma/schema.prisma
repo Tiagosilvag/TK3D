@@ -230,6 +230,16 @@ model Supply {
   unit         SupplyUnit
   currentStock Decimal              @db.Decimal(10, 3)
   avgUnitCost  Decimal              @db.Decimal(10, 4) // custo médio por unidade de medida cadastrada, recalculado a cada compra
+  // Melhoria "Insumos": quanto desse insumo uma peça/produção costuma
+  // consumir (ex.: 1ml de cola), informado manualmente UMA VEZ no
+  // cadastro -- não tem histórico de uso pra calcular uma média (ao
+  // contrário de currentStock/avgUnitCost, que vêm de compras reais),
+  // então é só um valor de referência pra pré-preencher o campo de
+  // quantidade sempre que esse insumo é adicionado numa ficha técnica
+  // (actions/products.ts#addProductSupplyUsage), continuando editável
+  // ali. Opcional -- insumo cadastrado antes dessa melhoria não tem
+  // valor nenhum, nunca inventado retroativamente.
+  defaultUsage Decimal?             @db.Decimal(10, 3)
   active       Boolean              @default(true)
   createdAt    DateTime             @default(now())
   updatedAt    DateTime             @updatedAt

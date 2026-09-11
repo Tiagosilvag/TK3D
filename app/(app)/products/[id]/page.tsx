@@ -13,18 +13,20 @@ import { PriceSimulation } from '../PriceSimulation'
 import {
   getProductCostBreakdown,
   getEditableFilamentOptions,
-  addProductSupplyUsage,
   removeProductSupplyUsage,
   addProductAccessoryUsage,
   removeProductAccessoryUsage,
 } from '@/actions/products'
 import { addProductPhoto, removeProductPhoto } from '@/actions/productPhotos'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { AddSupplyUsageForm } from '../AddSupplyUsageForm'
 
 const SUPPLY_UNIT_LABELS: Record<string, string> = {
   UN: 'Unidade',
   ML: 'Mililitro',
   G: 'Grama',
+  M: 'Metro',
+  OUTRO: 'Outro',
 }
 
 function accessoryOptionLabel(a: { name: string; colorName: string }): string {
@@ -212,17 +214,10 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               </table>
             )}
 
-            <form action={async (formData: FormData) => { 'use server'; await addProductSupplyUsage(formData) }} className="mt-4 grid grid-cols-3 gap-2">
-              <input type="hidden" name="productId" value={product.id} />
-              <select name="supplyId" className="tk-input" required defaultValue="">
-                <option value="" disabled>Selecione um insumo</option>
-                {supplies.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-              <input name="quantity" type="number" step="0.001" min="0.001" placeholder="Quantidade" className="tk-input" required />
-              <button className="tk-btn-primary">Adicionar</button>
-            </form>
+            <AddSupplyUsageForm
+              productId={product.id}
+              supplies={supplies.map((s) => ({ id: s.id, name: s.name, unit: s.unit, defaultUsage: s.defaultUsage?.toNumber() ?? null }))}
+            />
           </details>
 
           <details className="mt-6 tk-panel p-4">
