@@ -327,8 +327,32 @@ export interface OwnStockRow {
 }
 
 export interface ProductVariantBreakdownRow {
+  // Melhoria "Parceiros de consignação" §5: identificador estável da
+  // variante, usado por ConsignmentDelivery.colorComboKey e
+  // ProductAccessoryColorUsage.colorComboKey -- pra produto sem montagem
+  // (needsAssembly=false) é o filamentId direto (mesma convenção de peça de
+  // 1 filamento só); pra produto com montagem é o colorChoices inteiro
+  // (Record<partId, comboKey>, ver actions/assembly.ts) serializado como
+  // "partId:comboKey" ordenado e unido por "|" -- degenera pra um valor só
+  // no caso comum (peça sintética ou produto de 1 peça), mas continua
+  // correto pra produto composto de verdade com várias peças de cor
+  // independente.
+  key: string
   label: string
   quantity: number
+  // Melhoria "Parceiros de consignação" §5: bolinha de cor no detalhe por
+  // variante -- só preenchido quando a variante corresponde a EXATAMENTE 1
+  // filamento (caso comum: peça de cor única ou peça sintética de produto
+  // simples); nulo pra combo multi-filamento (peça com 2+ componentes ao
+  // mesmo tempo), onde uma única cor não representaria a variante direito.
+  colorHex: string | null
+}
+
+function serializeColorChoices(choices: Record<string, string>): string {
+  return Object.entries(choices)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([partId, comboKey]) => `${partId}:${comboKey}`)
+    .join('|')
 }
 
 // Ajuste "cor na montagem": quanto já foi montado de cada variante
@@ -362,7 +386,12 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
     const filaments = await prisma.filament.findMany({ where: { id: { in: runs.map((r) => r.filamentId) } } })
     const filamentById = new Map(filaments.map((f) => [f.id, f]))
     return runs
-      .map((r) => ({ label: filamentById.get(r.filamentId)?.colorName ?? r.filamentId, quantity: r._sum.quantitySuccess ?? 0 }))
+      .map((r) => ({
+        key: r.filamentId,
+        label: filamentById.get(r.filamentId)?.colorName ?? r.filamentId,
+        quantity: r._sum.quantitySuccess ?? 0,
+        colorHex: filamentById.get(r.filamentId)?.colorHex ?? null,
+      }))
       .sort((a, b) => b.quantity - a.quantity)
   }
 
@@ -393,10 +422,11 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
   // função). Essa quantidade continua contando normalmente em "Produzido"
   // (getOwnStockSummary, tabela principal de /stock), só não aparece
   // detalhada aqui.
-  const totals = new Map<string, number>()
+  const totals = new Map<string, { label: string; quantity: number; colorHex: string | null }>()
   for (const a of assemblies) {
     const choices = a.colorChoices as Record<string, string> | null
     if (!choices || Object.keys(choices).length === 0) continue
+    const key = serializeColorChoices(choices)
     const label = Object.entries(choices)
       .map(([partId, rawKey]) => {
         const colorNames = rawKey.split(',').map((id) => filamentById.get(id)?.colorName ?? id)
@@ -406,12 +436,89 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
       })
       .sort()
       .join(', ')
-    totals.set(label, (totals.get(label) ?? 0) + a.quantity)
+    // Bolinha de cor: só quando a variante inteira se resolve num único
+    // filamento (1 peça, sem multi-filamento) -- qualquer combinação com
+    // mais de uma cor não tem uma bolinha que a represente direito.
+    const choiceValues = Object.values(choices)
+    const colorHex = choiceValues.length === 1 && !choiceValues[0].includes(',')
+      ? (filamentById.get(choiceValues[0])?.colorHex ?? null)
+      : null
+    const entry = totals.get(key) ?? { label, quantity: 0, colorHex }
+    entry.quantity += a.quantity
+    totals.set(key, entry)
   }
 
   return Array.from(totals.entries())
-    .map(([label, quantity]) => ({ label, quantity }))
+    .map(([key, { label, quantity, colorHex }]) => ({ key, label, quantity, colorHex }))
     .sort((a, b) => b.quantity - a.quantity)
+}
+
+export interface ProductDeliveryVariantOption {
+  key: string
+  label: string
+  colorHex: string | null
+  available: number
+}
+
+export interface ProductDeliveryOption {
+  productId: string
+  productName: string
+  suggestedPrice: number | null
+  // Vazio = produto sem variante conhecida (getProductVariantBreakdown não
+  // achou nenhuma) -- o modal de entrega pede só uma quantidade "sem cor"
+  // nesse caso, sem oferecer combo nenhum.
+  variants: ProductDeliveryVariantOption[]
+}
+
+// Melhoria "Entregas em consignação" §3/§6: pra cada produto ativo, suas
+// variantes de cor já produzidas/montadas (getProductVariantBreakdown) com
+// "disponível" = produzido menos o que já foi entregue em consignação
+// daquela cor (agora rastreável via ConsignmentDelivery.colorComboKey,
+// desde a melhoria "Parceiros de consignação"). Aproximação: NÃO desconta
+// venda direta (Sale) por variante, porque Sale continua sem rastrear cor
+// (mesma limitação documentada em getProductVariantBreakdown) -- pode
+// superestimar levemente o disponível de um produto com venda direta
+// recente da mesma cor, mas é a mesma fonte confiável ("produzido por
+// variante") que o resto do app já usa, nunca um número inventado. Preço
+// sugerido pré-preenche "Preço unitário" no modal (item 6), continua
+// editável por linha.
+export async function getProductDeliveryOptions(): Promise<ProductDeliveryOption[]> {
+  const products = await prisma.product.findMany({
+    where: { active: true },
+    orderBy: { name: 'asc' },
+    include: { _count: { select: { accessoryUsages: true, supplyUsages: true } } },
+  })
+  if (products.length === 0) return []
+
+  const alreadyDelivered = await prisma.consignmentDelivery.groupBy({
+    by: ['productId', 'colorComboKey'],
+    _sum: { quantityDelivered: true },
+  })
+  const deliveredByProductAndKey = new Map<string, number>()
+  for (const d of alreadyDelivered) {
+    if (!d.colorComboKey) continue
+    deliveredByProductAndKey.set(`${d.productId}::${d.colorComboKey}`, d._sum.quantityDelivered ?? 0)
+  }
+
+  return Promise.all(products.map(async (p) => {
+    const needsAssembly = productNeedsAssembly({
+      isComposite: p.isComposite,
+      accessoryUsagesCount: p._count.accessoryUsages,
+      supplyUsagesCount: p._count.supplyUsages,
+    })
+    const breakdown = await getProductVariantBreakdown(p.id, needsAssembly)
+    return {
+      productId: p.id,
+      productName: p.name,
+      suggestedPrice: p.suggestedPrice?.toNumber() ?? null,
+      variants: breakdown.map((v) => ({
+        key: v.key,
+        label: v.label,
+        colorHex: v.colorHex,
+        available: Math.max(0, v.quantity - (deliveredByProductAndKey.get(`${p.id}::${v.key}`) ?? 0)),
+      })),
+    }
+  }))
 }
 
 export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
@@ -491,33 +598,87 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
   })
 }
 
-// 2.5 Estoque por parceiro aprimorado: saldo agregado por parceiro+produto
-// (múltiplas entregas do mesmo produto pro mesmo parceiro somadas, não uma
-// linha por entrega crua como getConsignmentStockSummary abaixo) + um
-// histórico cronológico misturando entregas e relatórios de venda -- tudo
-// derivado de ConsignmentDelivery/ConsignmentSaleReport, que já são a
-// única fonte real dessa informação (um relatório de venda continua sendo
-// preenchido manualmente porque é informação que só o parceiro tem — o que
-// fica automático aqui é a agregação/relatório em cima disso, não a
-// captura do evento em si).
+// Melhoria "Parceiros de consignação" §7: leve, só pra alimentar o card de
+// cada parceiro na grade da lista ("10 itens com ela" / "Nenhum item em
+// mãos") -- o detalhe completo (por produto/cor/histórico) fica em
+// getConsignmentPartnerDetail, carregado só na página dedicada de cada
+// parceiro (item 3), não na lista inteira de uma vez.
+export interface ConsignmentPartnerListSummary {
+  partnerId: string
+  itemsWithPartner: number
+}
+
+export async function getConsignmentPartnerSummary(): Promise<ConsignmentPartnerListSummary[]> {
+  const deliveries = await prisma.consignmentDelivery.findMany({
+    where: { partner: { active: true } },
+    select: { partnerId: true, quantityDelivered: true, saleReports: { select: { quantitySold: true } } },
+  })
+  const totals = new Map<string, number>()
+  for (const d of deliveries) {
+    const sold = d.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
+    totals.set(d.partnerId, (totals.get(d.partnerId) ?? 0) + Math.max(0, d.quantityDelivered - sold))
+  }
+  return [...totals.entries()].map(([partnerId, itemsWithPartner]) => ({ partnerId, itemsWithPartner }))
+}
+
+// Melhoria "Parceiros de consignação" §4/§5: tudo que a página dedicada de
+// UM parceiro precisa -- resumo (itens com ela/total vendido/comissão a
+// pagar), estoque agrupado por produto com quebra por variante de cor
+// (delivered/sold/remaining POR combo, não só o total do produto) e, pra
+// cada combo, os acessórios que aquela cor usa (ProductAccessoryColorUsage,
+// puramente informativo, cadastrado na ficha técnica do Produto -- ver
+// prisma/schema.prisma). Histórico cronológico com a cor de cada evento
+// (cada entrega/venda É de uma cor específica, então não tem por que
+// agrupar histórico por combo como o estoque).
+export interface ConsignmentAccessoryChip {
+  id: string
+  name: string
+  colorName: string
+  colorHex: string | null
+}
+
+export interface ConsignmentVariantBreakdown {
+  key: string | null // null = entregas sem cor registrada (produto sem variante, ou anteriores a este ajuste)
+  label: string | null
+  colorHex: string | null
+  delivered: number
+  sold: number
+  remaining: number
+  accessories: ConsignmentAccessoryChip[]
+}
+
+export interface ConsignmentProductBreakdown {
+  productId: string
+  productName: string
+  delivered: number
+  sold: number
+  remaining: number
+  variants: ConsignmentVariantBreakdown[]
+}
+
 export interface ConsignmentHistoryEvent {
   date: Date
   type: 'entrega' | 'venda'
   productName: string
+  colorLabel: string | null
   quantity: number
 }
 
-export interface ConsignmentPartnerSummary {
+export interface ConsignmentPartnerDetail {
   partnerId: string
   partnerName: string
-  products: { productName: string; delivered: number; sold: number; remaining: number }[]
+  defaultCommissionPercent: number
+  notes: string | null
+  itemsWithPartner: number
+  totalSold: number
+  commissionOwed: number
+  products: ConsignmentProductBreakdown[]
   history: ConsignmentHistoryEvent[]
 }
 
-export async function getConsignmentPartnerSummary(): Promise<ConsignmentPartnerSummary[]> {
-  const partners = await prisma.consignmentPartner.findMany({
-    where: { active: true },
-    orderBy: { name: 'asc' },
+export async function getConsignmentPartnerDetail(partnerId: string): Promise<ConsignmentPartnerDetail | null> {
+  const partner = await prisma.consignmentPartner.findUnique({
+    where: { id: partnerId },
     include: {
       deliveries: {
         include: { product: true, saleReports: true },
@@ -525,36 +686,106 @@ export async function getConsignmentPartnerSummary(): Promise<ConsignmentPartner
       },
     },
   })
+  if (!partner) return null
 
-  return partners.map((partner) => {
-    const byProduct = new Map<string, { delivered: number; sold: number }>()
-    const history: ConsignmentHistoryEvent[] = []
+  // Rótulo de cada colorComboKey já usado nas entregas deste parceiro --
+  // reaproveita a mesma quebra de variante que /stock já mostra
+  // (getProductVariantBreakdown), pra "Rosa"/"Azul" aqui serem exatamente a
+  // mesma cor que aparece em Estoque, nunca um rótulo inventado à parte.
+  const productIds = [...new Set(partner.deliveries.map((d) => d.productId))]
+  const products = productIds.length > 0 ? await prisma.product.findMany({
+    where: { id: { in: productIds } },
+    include: { _count: { select: { accessoryUsages: true, supplyUsages: true } } },
+  }) : []
+  const variantInfoByProductAndKey = new Map<string, { label: string; colorHex: string | null }>()
+  await Promise.all(products.map(async (p) => {
+    const needsAssembly = productNeedsAssembly({
+      isComposite: p.isComposite,
+      accessoryUsagesCount: p._count.accessoryUsages,
+      supplyUsagesCount: p._count.supplyUsages,
+    })
+    const breakdown = await getProductVariantBreakdown(p.id, needsAssembly)
+    for (const v of breakdown) variantInfoByProductAndKey.set(`${p.id}::${v.key}`, { label: v.label, colorHex: v.colorHex })
+  }))
 
-    for (const delivery of partner.deliveries) {
-      const entry = byProduct.get(delivery.product.name) ?? { delivered: 0, sold: 0 }
-      entry.delivered += delivery.quantityDelivered
-      history.push({ date: delivery.deliveryDate, type: 'entrega', productName: delivery.product.name, quantity: delivery.quantityDelivered })
-      for (const report of delivery.saleReports) {
-        entry.sold += report.quantitySold
-        history.push({ date: report.reportDate, type: 'venda', productName: delivery.product.name, quantity: report.quantitySold })
-      }
-      byProduct.set(delivery.product.name, entry)
+  // Acessórios por combo: só busca pros pares (productId, colorComboKey)
+  // que de fato aparecem nas entregas deste parceiro.
+  const comboPairs = [...new Set(
+    partner.deliveries.filter((d) => d.colorComboKey).map((d) => `${d.productId}::${d.colorComboKey}`),
+  )]
+  const accessoryColorUsages = comboPairs.length > 0 ? await prisma.productAccessoryColorUsage.findMany({
+    where: { OR: comboPairs.map((pair) => { const [productId, colorComboKey] = pair.split('::'); return { productId, colorComboKey } }) },
+    include: { accessory: true },
+  }) : []
+  const accessoriesByComboPair = new Map<string, ConsignmentAccessoryChip[]>()
+  for (const u of accessoryColorUsages) {
+    const pairKey = `${u.productId}::${u.colorComboKey}`
+    const list = accessoriesByComboPair.get(pairKey) ?? []
+    list.push({ id: u.accessory.id, name: u.accessory.name, colorName: u.accessory.colorName, colorHex: u.accessory.colorHex })
+    accessoriesByComboPair.set(pairKey, list)
+  }
+
+  const byProduct = new Map<string, { productName: string; delivered: number; sold: number; variants: Map<string, { key: string | null; delivered: number; sold: number }> }>()
+  const history: ConsignmentHistoryEvent[] = []
+  let totalSold = 0
+  let commissionOwed = 0
+
+  for (const delivery of partner.deliveries) {
+    const variantKey = delivery.colorComboKey
+    const colorLabel = variantKey ? (variantInfoByProductAndKey.get(`${delivery.productId}::${variantKey}`)?.label ?? null) : null
+
+    const product = byProduct.get(delivery.productId) ?? { productName: delivery.product.name, delivered: 0, sold: 0, variants: new Map() }
+    product.delivered += delivery.quantityDelivered
+    const variantMapKey = variantKey ?? '__none__'
+    const variant = product.variants.get(variantMapKey) ?? { key: variantKey, delivered: 0, sold: 0 }
+    variant.delivered += delivery.quantityDelivered
+
+    history.push({ date: delivery.deliveryDate, type: 'entrega', productName: delivery.product.name, colorLabel, quantity: delivery.quantityDelivered })
+
+    for (const report of delivery.saleReports) {
+      product.sold += report.quantitySold
+      variant.sold += report.quantitySold
+      totalSold += report.quantitySold
+      commissionOwed += report.quantitySold * delivery.unitPrice.toNumber() * report.commissionPercent.toNumber()
+      history.push({ date: report.reportDate, type: 'venda', productName: delivery.product.name, colorLabel, quantity: report.quantitySold })
     }
 
-    history.sort((a, b) => b.date.getTime() - a.date.getTime())
+    product.variants.set(variantMapKey, variant)
+    byProduct.set(delivery.productId, product)
+  }
 
-    return {
-      partnerId: partner.id,
-      partnerName: partner.name,
-      products: [...byProduct.entries()].map(([productName, { delivered, sold }]) => ({
-        productName,
-        delivered,
-        sold,
-        remaining: Math.max(0, delivered - sold),
-      })),
-      history,
-    }
-  })
+  history.sort((a, b) => b.date.getTime() - a.date.getTime())
+
+  const productsBreakdown: ConsignmentProductBreakdown[] = [...byProduct.entries()].map(([productId, { productName, delivered, sold, variants }]) => ({
+    productId,
+    productName,
+    delivered,
+    sold,
+    remaining: Math.max(0, delivered - sold),
+    variants: [...variants.values()].map((v) => ({
+      key: v.key,
+      label: v.key ? (variantInfoByProductAndKey.get(`${productId}::${v.key}`)?.label ?? v.key) : null,
+      colorHex: v.key ? (variantInfoByProductAndKey.get(`${productId}::${v.key}`)?.colorHex ?? null) : null,
+      delivered: v.delivered,
+      sold: v.sold,
+      remaining: Math.max(0, v.delivered - v.sold),
+      accessories: v.key ? (accessoriesByComboPair.get(`${productId}::${v.key}`) ?? []) : [],
+    })),
+  }))
+
+  const itemsWithPartner = productsBreakdown.reduce((sum, p) => sum + p.remaining, 0)
+
+  return {
+    partnerId: partner.id,
+    partnerName: partner.name,
+    defaultCommissionPercent: partner.defaultCommissionPercent.toNumber(),
+    notes: partner.notes,
+    itemsWithPartner,
+    totalSold,
+    commissionOwed,
+    products: productsBreakdown,
+    history,
+  }
 }
 
 export async function getConsignmentStockSummary() {

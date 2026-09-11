@@ -16,10 +16,14 @@ import {
   removeProductSupplyUsage,
   addProductAccessoryUsage,
   removeProductAccessoryUsage,
+  addProductAccessoryColorUsage,
+  removeProductAccessoryColorUsage,
 } from '@/actions/products'
 import { addProductPhoto, removeProductPhoto } from '@/actions/productPhotos'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { AddSupplyUsageForm } from '../AddSupplyUsageForm'
+import { getProductVariantBreakdown } from '@/lib/reports'
+import { productNeedsAssembly } from '@/lib/products'
 
 const SUPPLY_UNIT_LABELS: Record<string, string> = {
   UN: 'Unidade',
@@ -46,7 +50,13 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
   })
   if (!product) notFound()
 
-  const [printers, filamentOptions, packagingItems, supplies, accessories, breakdown, settings, partRuns] = await Promise.all([
+  const needsAssembly = productNeedsAssembly({
+    isComposite: product.isComposite,
+    accessoryUsagesCount: product.accessoryUsages.length,
+    supplyUsagesCount: product.supplyUsages.length,
+  })
+
+  const [printers, filamentOptions, packagingItems, supplies, accessories, breakdown, settings, partRuns, colorVariants, accessoryColorUsages] = await Promise.all([
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getEditableFilamentOptions(product.id),
     prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
@@ -60,6 +70,11 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
           orderBy: { createdAt: 'desc' },
         })
       : Promise.resolve([]),
+    // Melhoria "Parceiros de consignação" §5: combos de cor já produzidos/
+    // montados deste produto -- fonte de verdade pra "quais cores existem
+    // pra associar acessório", nunca uma lista pré-declarada à parte.
+    getProductVariantBreakdown(product.id, needsAssembly),
+    prisma.productAccessoryColorUsage.findMany({ where: { productId: product.id }, include: { accessory: true } }),
   ])
 
   // 2.1: "peça pronta" reaproveita o ProductionStatus já existente
@@ -264,6 +279,72 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               <button className="tk-btn-primary">Adicionar</button>
             </form>
           </details>
+
+          {/* Melhoria "Parceiros de consignação" §5: mapa opcional de "quais
+              acessórios (variação exata, já com cor) cada COMBINAÇÃO DE COR
+              deste produto usa" -- só existe pra alimentar os chips de
+              acessório no detalhe por cor da tela de Parceiros, nunca muda
+              Montagem/custeio (a lista flat "Acessórios usados" acima
+              continua sendo a única que confirmAssembly consome). Só
+              aparece quando o produto já tem alguma cor conhecida
+              (colorVariants vem de getProductVariantBreakdown, nunca uma
+              lista pré-declarada). */}
+          {colorVariants.length > 0 && (
+            <details className="mt-6 tk-panel p-4">
+              <summary className="tk-summary">Acessórios por cor (opcional)</summary>
+              <p className="mb-3 mt-3 text-sm text-slate-500 dark:text-slate-400">
+                Pra cada cor já produzida deste produto, quais acessórios (com a cor exata) foram usados -- usado só pra exibir na tela de Parceiros de consignação, não afeta Montagem.
+              </p>
+              <div className="space-y-4">
+                {colorVariants.map((variant) => {
+                  const usagesForCombo = accessoryColorUsages.filter((u) => u.colorComboKey === variant.key)
+                  return (
+                    <div key={variant.key} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+                      <h3 className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">{variant.label}</h3>
+                      {usagesForCombo.length === 0 ? (
+                        <p className="text-xs text-slate-400 dark:text-slate-500">Nenhum acessório associado a esta cor.</p>
+                      ) : (
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="tk-table-head-row">
+                              <th className="py-1">Acessório</th>
+                              <th>Quantidade</th>
+                              <th></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {usagesForCombo.map((usage) => (
+                              <tr key={usage.id} className="tk-row">
+                                <td className="py-1">{accessoryOptionLabel(usage.accessory)}</td>
+                                <td>{usage.quantity.toNumber()}</td>
+                                <td>
+                                  <form action={async () => { 'use server'; await removeProductAccessoryColorUsage(usage.id) }}>
+                                    <button className="tk-link-danger">Remover</button>
+                                  </form>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                      <form action={async (formData: FormData) => { 'use server'; await addProductAccessoryColorUsage(formData) }} className="mt-3 grid grid-cols-3 gap-2">
+                        <input type="hidden" name="productId" value={product.id} />
+                        <input type="hidden" name="colorComboKey" value={variant.key} />
+                        <select name="accessoryId" className="tk-input" required defaultValue="">
+                          <option value="" disabled>Selecione um acessório</option>
+                          {accessories.map((a) => (
+                            <option key={a.id} value={a.id}>{accessoryOptionLabel(a)}</option>
+                          ))}
+                        </select>
+                        <input name="quantity" type="number" step="0.01" min="0.01" placeholder="Quantidade" className="tk-input" required />
+                        <button className="tk-btn-primary">Adicionar</button>
+                      </form>
+                    </div>
+                  )
+                })}
+              </div>
+            </details>
+          )}
 
           <div className="mt-6 tk-panel p-4">
             <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Fotos da peça</h2>

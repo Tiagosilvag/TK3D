@@ -202,6 +202,7 @@ model Accessory {
   updatedAt     DateTime                @updatedAt
   purchases     AccessoryPurchase[]
   usages        ProductAccessoryUsage[]
+  colorUsages   ProductAccessoryColorUsage[]
 
   @@unique([name, type, colorName])
 }
@@ -320,6 +321,7 @@ model Product {
   // mesmo padrão de ProductSupplyUsage, uma lista produto↔acessório com
   // quantidade em vez de "no máximo um acessório".
   accessoryUsages       ProductAccessoryUsage[]
+  accessoryColorUsages  ProductAccessoryColorUsage[]
   productionRuns        ProductionRun[]
   sales                 Sale[]
   consignmentDeliveries ConsignmentDelivery[]
@@ -444,6 +446,31 @@ model ProductAccessoryUsage {
   quantity    Decimal   @db.Decimal(10, 2)
 
   @@unique([productId, accessoryId])
+}
+
+// Melhoria "Parceiros de consignação" §5: mapa OPCIONAL e adicional (não
+// substitui ProductAccessoryUsage acima, que continua sendo a lista flat
+// usada por Montagem/custeio, sem nenhuma mudança) de "quais acessórios
+// (variação exata, já com cor) uma COMBINAÇÃO DE COR específica do produto
+// usa" -- só existe pra alimentar os chips de acessório no detalhe por cor
+// da tela de Parceiros, puramente informativo. `colorComboKey` usa a MESMA
+// convenção de ProductAssembly.colorChoices/AssemblyPartColorOption
+// (actions/assembly.ts): 1+ filamentIds ordenados e unidos por vírgula, ou
+// o próprio productId pra produto simples ("peça sintética", sem
+// ProductPart) -- as combinações realmente já produzidas/montadas vêm de
+// getProductVariantBreakdown (lib/reports.ts), nunca uma lista pré-
+// declarada à parte. Cadastrado na ficha técnica do Produto (não na tela
+// de Parceiros, que só reflete o que já foi definido aqui).
+model ProductAccessoryColorUsage {
+  id            String    @id @default(cuid())
+  productId     String
+  product       Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  colorComboKey String
+  accessoryId   String
+  accessory     Accessory @relation(fields: [accessoryId], references: [id])
+  quantity      Decimal   @db.Decimal(10, 2)
+
+  @@unique([productId, colorComboKey, accessoryId])
 }
 
 model ProductionRun {
@@ -644,6 +671,21 @@ model ConsignmentPartner {
 
 model ConsignmentDelivery {
   id                String                  @id @default(cuid())
+  // Melhoria "Entregas em consignação" §1/§4: uma entrega real leva vários
+  // produtos/cores de uma vez -- cada linha desta tabela continua sendo UM
+  // produto+cor (mesma granularidade que ConsignmentSaleReport referencia
+  // via deliveryId, sem mudar), mas linhas criadas na MESMA submissão do
+  // modal "Registrar entrega" compartilham um `batchId` (gerado uma vez por
+  // submissão, ver actions/consignmentDeliveries.ts#createConsignmentDeliveryBatch)
+  // -- é o que permite a lista principal mostrar UMA linha por evento de
+  // entrega (Data+Parceiro), agrupando por esse valor, em vez de uma linha
+  // por produto. Nunca uma FK pra outra tabela (não precisa de uma tabela
+  // "evento" própria só pra isso) -- é só um token de agrupamento opaco.
+  // Toda linha pré-existente a este ajuste foi retroativamente colocada
+  // num "lote" só com ela mesma (batchId = seu próprio id), preservando o
+  // comportamento antigo (1 entrega = 1 produto) sem inventar agrupamento
+  // que nunca existiu.
+  batchId           String
   partnerId         String
   partner           ConsignmentPartner      @relation(fields: [partnerId], references: [id])
   productId         String
@@ -651,6 +693,15 @@ model ConsignmentDelivery {
   quantityDelivered Int
   unitPrice         Decimal                 @db.Decimal(10, 2)
   deliveryDate      DateTime
+  // Melhoria "Parceiros de consignação" §5: qual variante de cor foi
+  // entregue -- mesma convenção de comboKey de ProductAssembly.colorChoices
+  // (ver comentário de ProductAccessoryColorUsage acima). Nulo pra produto
+  // sem variante conhecida (nunca montado/produzido em mais de uma cor) OU
+  // entrega registrada antes deste ajuste -- nunca inventado
+  // retroativamente. ConsignmentSaleReport não precisa do próprio campo:
+  // toda venda referencia uma entrega específica (deliveryId), então herda
+  // a cor dali.
+  colorComboKey     String?
   notes             String?
   createdAt         DateTime                @default(now())
   saleReports       ConsignmentSaleReport[]

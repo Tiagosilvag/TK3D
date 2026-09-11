@@ -458,6 +458,44 @@ export async function removeProductAccessoryUsage(usageId: string): Promise<Acti
   return { success: true }
 }
 
+// Melhoria "Parceiros de consignação" §5: mapa opcional/adicional de "quais
+// acessórios (variação exata) uma combinação de cor do produto usa" --
+// mirrors addProductAccessoryUsage/removeProductAccessoryUsage acima, só
+// que chaveado também por colorComboKey (ver comentário de
+// ProductAccessoryColorUsage em prisma/schema.prisma). Nunca toca
+// ProductAccessoryUsage nem a lógica de Montagem -- puramente informativo,
+// consumido só pelos chips de acessório em getConsignmentPartnerDetail.
+const accessoryColorUsageSchema = z.object({
+  productId: z.string().min(1),
+  colorComboKey: z.string().min(1),
+  accessoryId: z.string().min(1),
+  quantity: z.coerce.number().positive('Quantidade deve ser maior que zero'),
+})
+
+export async function addProductAccessoryColorUsage(formData: FormData): Promise<ActionResult> {
+  const parsed = accessoryColorUsageSchema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  await prisma.productAccessoryColorUsage.upsert({
+    where: {
+      productId_colorComboKey_accessoryId: {
+        productId: parsed.data.productId,
+        colorComboKey: parsed.data.colorComboKey,
+        accessoryId: parsed.data.accessoryId,
+      },
+    },
+    update: { quantity: parsed.data.quantity },
+    create: parsed.data,
+  })
+  revalidatePath('/products')
+  return { success: true }
+}
+
+export async function removeProductAccessoryColorUsage(usageId: string): Promise<ActionResult> {
+  await prisma.productAccessoryColorUsage.delete({ where: { id: usageId } })
+  revalidatePath('/products')
+  return { success: true }
+}
+
 // Preço §2 (task-6 brief): the ONLY thing that ever writes suggestedPrice/
 // marketplacePrice to the DB. The "Simulação de preço" section on the
 // product edit page (lib/costing.ts's simulateProductPrice, client-side,
@@ -492,8 +530,8 @@ export async function applyProductPrice(
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
   const settings = await prisma.settings.findUniqueOrThrow({ where: { id: 1 } })
-  const roundedSuggestedPrice = applyRounding(parsed.data.suggestedPrice, settings.roundingMode)
-  const roundedMarketplacePrice = applyRounding(parsed.data.marketplacePrice, settings.roundingMode)
+  const roundedSuggestedPrice = applyRounding(parsed.data.suggestedPrice, settings.roundingMode, settings.roundingCustomCents ?? undefined)
+  const roundedMarketplacePrice = applyRounding(parsed.data.marketplacePrice, settings.roundingMode, settings.roundingCustomCents ?? undefined)
 
   await prisma.product.update({
     where: { id: parsed.data.productId },

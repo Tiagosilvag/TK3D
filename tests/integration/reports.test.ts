@@ -110,14 +110,14 @@ describe('getConsignmentRevenue', () => {
     const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
 
     const deliveryA = await prisma.consignmentDelivery.create({
-      data: { partnerId: partner.id, productId: product.id, quantityDelivered: 10, unitPrice: 25, deliveryDate: new Date() },
+      data: { batchId: 'batch-a', partnerId: partner.id, productId: product.id, quantityDelivered: 10, unitPrice: 25, deliveryDate: new Date() },
     })
     await prisma.consignmentSaleReport.create({
       data: { deliveryId: deliveryA.id, quantitySold: 4, reportDate: new Date(), commissionPercent: 0.3 },
     })
 
     const deliveryB = await prisma.consignmentDelivery.create({
-      data: { partnerId: partner.id, productId: product.id, quantityDelivered: 5, unitPrice: 50, deliveryDate: new Date() },
+      data: { batchId: 'batch-b', partnerId: partner.id, productId: product.id, quantityDelivered: 5, unitPrice: 50, deliveryDate: new Date() },
     })
     await prisma.consignmentSaleReport.create({
       data: { deliveryId: deliveryB.id, quantitySold: 2, reportDate: new Date(), commissionPercent: 0.2 },
@@ -142,14 +142,14 @@ describe('getConsignmentStockSummary', () => {
     const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
 
     const deliveryWithBalance = await prisma.consignmentDelivery.create({
-      data: { partnerId: partner.id, productId: product.id, quantityDelivered: 10, unitPrice: 25, deliveryDate: new Date() },
+      data: { batchId: 'batch-with-balance', partnerId: partner.id, productId: product.id, quantityDelivered: 10, unitPrice: 25, deliveryDate: new Date() },
     })
     await prisma.consignmentSaleReport.create({
       data: { deliveryId: deliveryWithBalance.id, quantitySold: 4, reportDate: new Date(), commissionPercent: 0.3 },
     })
 
     const deliveryFullySold = await prisma.consignmentDelivery.create({
-      data: { partnerId: partner.id, productId: product.id, quantityDelivered: 5, unitPrice: 25, deliveryDate: new Date() },
+      data: { batchId: 'batch-fully-sold', partnerId: partner.id, productId: product.id, quantityDelivered: 5, unitPrice: 25, deliveryDate: new Date() },
     })
     await prisma.consignmentSaleReport.create({
       data: { deliveryId: deliveryFullySold.id, quantitySold: 5, reportDate: new Date(), commissionPercent: 0.3 },
