@@ -122,6 +122,22 @@ export function getLiveStatus(printerId: string): BambuStatus | null {
   return core?.getLiveStatus(printerId) ?? null
 }
 
+// Reinicia o listener sem precisar reiniciar o container -- chamado depois
+// de conectar/desconectar a conta Bambu (actions/bambuAuth.ts) e de
+// salvar uma impressora (actions/printers.ts), pra pegar credencial/opt-in
+// novos sem exigir redeploy. Fecha a conexão MQTT antiga antes de abrir
+// outra, pra não vazar socket nem duplicar assinatura de tópico.
+export async function restartBambuListener(): Promise<void> {
+  if (client) {
+    client.removeAllListeners()
+    client.end(true)
+    client = null
+  }
+  core = null
+  connectionStatus = 'not_configured'
+  await startBambuListener()
+}
+
 export function getConnectionStatus(): 'connected' | 'expired' | 'not_configured' {
   return connectionStatus
 }

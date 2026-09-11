@@ -1,9 +1,19 @@
 'use server'
 import { prisma } from '@/lib/prisma'
-import { getLiveStatus, getConnectionStatus } from '@/lib/bambu/listener'
+import { getLiveStatus, getConnectionStatus, restartBambuListener } from '@/lib/bambu/listener'
+import { revalidatePath } from 'next/cache'
 
 export async function getBambuConnectionStatus() {
   return getConnectionStatus()
+}
+
+// Reconecta manualmente (ex.: sessão expirada) sem precisar de restart do
+// container -- ver lib/bambu/listener.ts#restartBambuListener.
+export async function reconnectBambuListener(): Promise<{ success: boolean }> {
+  await restartBambuListener()
+  revalidatePath('/settings')
+  revalidatePath('/monitor')
+  return { success: true }
 }
 
 export async function getAllLiveBambuStatuses() {

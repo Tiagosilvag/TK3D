@@ -2,6 +2,7 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { printerSchema } from '@/lib/validation/printer'
+import { restartBambuListener } from '@/lib/bambu/listener'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
@@ -28,6 +29,9 @@ export async function createPrinter(formData: FormData): Promise<ActionResult> {
     if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe uma impressora com esse nome' }
     throw err
   }
+  // Integração Bambu Lab: nova impressora habilitada precisa entrar na
+  // lista de tópicos assinados pelo listener sem esperar redeploy.
+  if (parsed.data.bambuEnabled) await restartBambuListener()
   revalidatePath('/printers')
   return { success: true }
 }
@@ -41,6 +45,11 @@ export async function updatePrinter(id: string, formData: FormData): Promise<Act
     if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe uma impressora com esse nome' }
     throw err
   }
+  // Só reinicia quando a integração está habilitada (cobre tanto ativar
+  // quanto trocar o número de série de uma já ativa) -- desabilitar não
+  // precisa de restart, o printer some da lista assinada só na próxima
+  // vez que o listener subir por outro motivo.
+  if (parsed.data.bambuEnabled) await restartBambuListener()
   revalidatePath('/printers')
   return { success: true }
 }
