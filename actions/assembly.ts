@@ -185,14 +185,38 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
         }
       })
 
+      // Bug "aviso falso de estoque insuficiente": `available`/
+      // `maxUnitsFromThisPart` cegos a cor (acima) descontam `consumed`
+      // (todas as montagens já feitas, seja qual for a cor) de `produced`
+      // (soma de todas as cores) -- se alguma montagem antiga não tem
+      // colorChoices registrado (anterior a esse ajuste) OU uma
+      // ProductionRun já concluída foi excluída depois de já ter sido
+      // montada (deleteProductionRun não desfaz ProductAssembly, comment
+      // acima), esse total pode ficar defasado/zerado mesmo com produção
+      // nova, sem consumo, disponível numa cor específica. confirmAssembly
+      // e ConfirmAssemblyForm já validam contra `colorOptions[].available`
+      // (por combo) pra peça de cor variável, nunca contra esses dois
+      // campos -- então a peça É montável de verdade mesmo quando eles
+      // mostram 0. Corrige a fonte: quando há combo (colorOptions não
+      // vazio), `available` vira a soma dos combos (bate com a quebra por
+      // cor já exibida embaixo) e `maxUnitsFromThisPart` vira o melhor
+      // combo isolado (você monta escolhendo UMA cor por leva).
+      const hasColorBreakdown = colorOptions.length > 0
+      const colorAwareAvailable = hasColorBreakdown
+        ? colorOptions.reduce((sum, c) => sum + c.available, 0)
+        : available
+      const colorAwareMaxUnits = hasColorBreakdown
+        ? Math.max(...colorOptions.map((c) => Math.floor(c.available / part.quantityPerUnit)))
+        : Math.floor(available / part.quantityPerUnit)
+
       return {
         partId: part.id,
         name: part.name,
         quantityPerUnit: part.quantityPerUnit,
         produced,
         consumed,
-        available,
-        maxUnitsFromThisPart: Math.floor(available / part.quantityPerUnit),
+        available: colorAwareAvailable,
+        maxUnitsFromThisPart: colorAwareMaxUnits,
         colorOptions,
       }
     })
@@ -248,6 +272,18 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
       }
     })
 
+    // Mesmo ajuste do caso composto acima ("aviso falso de estoque
+    // insuficiente"): `available` cego a cor pode ficar zerado/defasado
+    // mesmo com produção nova disponível numa cor específica --
+    // confirmAssembly/ConfirmAssemblyForm já validam por combo pra essa
+    // peça sintética (chaveada pelo próprio productId), nunca contra este
+    // campo. Quando há combo, `available` vira a soma por cor (bate com a
+    // quebra exibida embaixo) e `maxUnitsFromThisPart` o melhor combo
+    // isolado.
+    const hasColorBreakdown = colorOptions.length > 0
+    const colorAwareAvailable = hasColorBreakdown ? colorOptions.reduce((sum, c) => sum + c.available, 0) : available
+    const colorAwareMaxUnits = hasColorBreakdown ? Math.max(...colorOptions.map((c) => c.available)) : available
+
     parts = [
       {
         partId: product.id,
@@ -255,8 +291,8 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
         quantityPerUnit: 1,
         produced,
         consumed,
-        available,
-        maxUnitsFromThisPart: available,
+        available: colorAwareAvailable,
+        maxUnitsFromThisPart: colorAwareMaxUnits,
         colorOptions,
       },
     ]
@@ -428,22 +464,34 @@ export async function confirmAssembly(formData: FormData): Promise<ActionResult>
     return { success: false, error: `Estoque insuficiente: ${insufficient.join('; ')}` }
   }
 
-  await prisma.$transaction([
-    prisma.productAssembly.create({
+  // Melhoria "Histórico de consumo": cada decremento ganha uma linha em
+  // StockConsumption (source ASSEMBLY, sourceId = esta montagem) -- até
+  // aqui o decremento acontecia sem deixar NENHUM rastro de quanto foi
+  // consumido, quando, ou por qual montagem. Usa $transaction em forma de
+  // função (não array) porque as linhas de StockConsumption precisam do
+  // id da ProductAssembly recém-criada.
+  await prisma.$transaction(async (tx) => {
+    const assembly = await tx.productAssembly.create({
       data: {
         productId,
         quantity,
         notes,
         colorChoices: Object.keys(colorChoicesToStore).length > 0 ? colorChoicesToStore : undefined,
       },
-    }),
-    ...accessoryConsumption.map((c) =>
-      prisma.accessory.update({ where: { id: c.accessoryId }, data: { currentStock: { decrement: c.quantity } } }),
-    ),
-    ...supplyConsumption.map((c) =>
-      prisma.supply.update({ where: { id: c.supplyId }, data: { currentStock: { decrement: c.quantity } } }),
-    ),
-  ])
+    })
+    for (const c of accessoryConsumption) {
+      await tx.accessory.update({ where: { id: c.accessoryId }, data: { currentStock: { decrement: c.quantity } } })
+      await tx.stockConsumption.create({
+        data: { resourceType: 'ACCESSORY', resourceId: c.accessoryId, quantity: c.quantity, productId, source: 'ASSEMBLY', sourceId: assembly.id },
+      })
+    }
+    for (const c of supplyConsumption) {
+      await tx.supply.update({ where: { id: c.supplyId }, data: { currentStock: { decrement: c.quantity } } })
+      await tx.stockConsumption.create({
+        data: { resourceType: 'SUPPLY', resourceId: c.supplyId, quantity: c.quantity, productId, source: 'ASSEMBLY', sourceId: assembly.id },
+      })
+    }
+  })
 
   revalidatePath('/assembly')
   revalidatePath('/stock')

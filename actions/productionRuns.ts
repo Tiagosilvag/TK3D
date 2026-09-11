@@ -79,19 +79,15 @@ interface ResourceCheck {
 // same atomicity guarantee the pre-existing filament-only version had,
 // extended to accessories/supplies.
 //
-// Packaging is deliberately NOT stock-checked/decremented here even though
-// spec §5.2/§5.3's prose mentions "PackagingItem" alongside Accessory/Supply:
-// PackagingItem (schema) has no `currentStock` field and no purchase/restock
-// model anywhere in this plan (spec §2 explicitly says embalagem is "sem
-// mudança", and non-objectives §7 never proposes adding one). Adding a
-// stock counter now, with no way to ever replenish it, would make it
-// monotonically decrease to zero and then permanently block production for
-// every product using that packaging -- a regression, not a feature. So its
-// unitCost still flows into costSnapshot (via buildProductionCostSnapshot's
-// existing consumedResources.packaging, unchanged from Task 5) for cost
-// accounting/reversal bookkeeping, but no stock balance is checked or
-// touched for it. Flagged explicitly in the task report as a deviation from
-// the brief's literal wording, with rationale.
+// Packaging is deliberately NOT stock-checked/decremented here -- melhoria
+// "Embalagens" deu a PackagingItem um currentStock/avgUnitCost de verdade
+// (com compra/reposição), e melhoria "Histórico de consumo" decidiu
+// explicitamente QUANDO ela é consumida: na VENDA (actions/sales.ts#
+// consumePackagingForSale), nunca na produção nem na montagem -- produto
+// que nunca é vendido não consome a embalagem que já entra no custo dele.
+// Aqui (produção) o avgUnitCost ainda entra no costSnapshot (via
+// buildProductionCostSnapshot's consumedResources.packaging) pra
+// accounting de custo, mas nenhum estoque é checado ou tocado.
 export async function createProductionRun(formData: FormData): Promise<ActionResult> {
   const parsed = parse(formData)
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }

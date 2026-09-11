@@ -13,6 +13,21 @@ import { PackagingForm, type EditingPackagingItem } from './PackagingForm'
 import { RestockForm } from './RestockForm'
 import { formatCurrency } from '@/lib/format'
 
+export interface PackagingPurchaseEntry {
+  id: string
+  purchaseDate: string
+  quantity: number
+  totalCost: number
+}
+
+export interface PackagingConsumptionEntry {
+  id: string
+  consumedAt: string
+  quantity: number
+  productName: string
+  source: 'ASSEMBLY' | 'SALE'
+}
+
 export interface PackagingRow {
   id: string
   name: string
@@ -20,6 +35,14 @@ export interface PackagingRow {
   avgUnitCost: number
   minStock: number
   percentRemaining: number
+  purchases: PackagingPurchaseEntry[]
+  consumptionHistory: PackagingConsumptionEntry[]
+}
+
+const CONSUMPTION_SOURCE_LABELS = { ASSEMBLY: 'Montagem', SALE: 'Venda' } as const
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('pt-BR')
 }
 
 function barColorClass(percent: number): string {
@@ -135,14 +158,65 @@ export function PackagingExplorer({ rows, editingItem }: { rows: PackagingRow[];
                 <td className="text-slate-500 dark:text-slate-400">{formatCurrency(r.avgUnitCost)}</td>
                 <td><StatusBadge badge={getStockStatusBadge(status)} /></td>
                 <td>
-                  <ActionsMenu>
-                    <Link href={`/packaging?editId=${r.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
-                      Editar
-                    </Link>
-                    <RestockForm packagingItemId={r.id} packagingItemName={r.name} />
-                    <AdjustStockButton resourceType="PACKAGING" resourceId={r.id} resourceName={r.name} currentQuantity={r.currentStock} unitLabel=" un" />
-                    <ConfirmDeleteForm action={async () => { return await deletePackagingItem(r.id) }} />
-                  </ActionsMenu>
+                  <div className="flex flex-col items-start gap-1">
+                    {(r.purchases.length > 0 || r.consumptionHistory.length > 0) && (
+                      <details>
+                        <summary className="tk-summary">Histórico ({r.purchases.length + r.consumptionHistory.length})</summary>
+                        {r.purchases.length > 0 && (
+                          <table className="mt-2 text-xs">
+                            <thead>
+                              <tr className="tk-table-head-row">
+                                <th className="pr-2">Data</th>
+                                <th className="pr-2">Qtd</th>
+                                <th className="pr-2">Valor total</th>
+                                <th>R$/un</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {r.purchases.map((p) => (
+                                <tr key={p.id} className="tk-row">
+                                  <td className="pr-2">{formatDate(p.purchaseDate)}</td>
+                                  <td className="pr-2">+{p.quantity}</td>
+                                  <td className="pr-2">{formatCurrency(p.totalCost)}</td>
+                                  <td>{formatCurrency(p.totalCost / p.quantity)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                        {r.consumptionHistory.length > 0 && (
+                          <table className="mt-2 text-xs">
+                            <thead>
+                              <tr className="tk-table-head-row">
+                                <th className="pr-2">Data</th>
+                                <th className="pr-2">Consumido</th>
+                                <th className="pr-2">Produto</th>
+                                <th>Origem</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {r.consumptionHistory.map((c) => (
+                                <tr key={c.id} className="tk-row">
+                                  <td className="pr-2">{formatDate(c.consumedAt)}</td>
+                                  <td className="pr-2">-{c.quantity}</td>
+                                  <td className="pr-2">{c.productName}</td>
+                                  <td>{CONSUMPTION_SOURCE_LABELS[c.source]}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </details>
+                    )}
+                    <ActionsMenu>
+                      <Link href={`/packaging?editId=${r.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                        Editar
+                      </Link>
+                      <RestockForm packagingItemId={r.id} packagingItemName={r.name} />
+                      <AdjustStockButton resourceType="PACKAGING" resourceId={r.id} resourceName={r.name} currentQuantity={r.currentStock} unitLabel=" un" />
+                      <ConfirmDeleteForm action={async () => { return await deletePackagingItem(r.id) }} />
+                    </ActionsMenu>
+                  </div>
                 </td>
               </tr>
             )

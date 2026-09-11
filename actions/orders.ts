@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { orderSchema, orderStatusEnum } from '@/lib/validation/order'
 import { getProductCostBreakdown } from '@/actions/products'
+import { consumePackagingForSale } from '@/actions/sales'
 import { buildSaleCostSnapshot } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 import type { Prisma, OrderChannel, SaleChannel } from '@prisma/client'
@@ -79,11 +80,16 @@ export async function updateOrderStatus(id: string, formData: FormData): Promise
       },
     })
     await tx.order.update({ where: { id }, data: { status: 'CONCLUIDO', saleId: sale.id } })
+    // Melhoria "Histórico de consumo": mesmo consumo de embalagem que
+    // createSale aplica (actions/sales.ts) -- pedido concluído vira Sale
+    // aqui direto (nunca chama createSale), então precisa do mesmo passo.
+    await consumePackagingForSale(tx, sale.id, order.productId, order.quantity)
   })
 
   revalidatePath('/orders')
   revalidatePath('/sales')
   revalidatePath('/stock')
+  revalidatePath('/packaging')
   return { success: true }
 }
 

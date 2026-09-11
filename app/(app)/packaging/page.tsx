@@ -27,6 +27,23 @@ export default async function PackagingPage({
     ? { id: editingItemRecord.id, name: editingItemRecord.name, minStock: editingItemRecord.minStock.toNumber() }
     : undefined
 
+  // Melhoria "Histórico de consumo": embalagem nunca tinha consumo
+  // registrado em lugar nenhum (bug -- currentStock só subia); agora é
+  // consumida na venda (actions/sales.ts#consumePackagingForSale), com uma
+  // linha em StockConsumption por venda. Mesmo agrupamento em memória de
+  // Acessórios/Insumos (page.tsx daquelas telas).
+  const consumptions = await prisma.stockConsumption.findMany({
+    where: { resourceType: 'PACKAGING', resourceId: { in: items.map((i) => i.id) } },
+    include: { product: { select: { name: true } } },
+    orderBy: { consumedAt: 'desc' },
+  })
+  const consumptionsByItem = new Map<string, typeof consumptions>()
+  for (const c of consumptions) {
+    const list = consumptionsByItem.get(c.resourceId) ?? []
+    list.push(c)
+    consumptionsByItem.set(c.resourceId, list)
+  }
+
   // Mesmo raciocínio de Acessórios/Insumos (lib/costing.ts#calculateStockReferenceQuantity):
   // % restante é sobre a média das últimas compras, não o total histórico.
   const rows: PackagingRow[] = items.map((item) => {
@@ -39,6 +56,19 @@ export default async function PackagingPage({
       avgUnitCost: item.avgUnitCost.toNumber(),
       minStock: item.minStock.toNumber(),
       percentRemaining: calculateStockPercentRemaining(currentStock, referenceQuantity),
+      purchases: item.purchases.map((p) => ({
+        id: p.id,
+        purchaseDate: p.purchaseDate.toISOString(),
+        quantity: p.quantity.toNumber(),
+        totalCost: p.totalCost.toNumber(),
+      })),
+      consumptionHistory: (consumptionsByItem.get(item.id) ?? []).map((c) => ({
+        id: c.id,
+        consumedAt: c.consumedAt.toISOString(),
+        quantity: c.quantity.toNumber(),
+        productName: c.product.name,
+        source: c.source,
+      })),
     }
   })
 

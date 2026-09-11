@@ -44,6 +44,7 @@ export async function createAccessory(formData: FormData): Promise<ActionResult>
     })
   } catch (err) {
     if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um acessório com esse nome, tipo e cor' }
+    if (isForeignKeyConstraintError(err)) return { success: false, error: 'Tipo de acessório inválido' }
     throw err
   }
   revalidatePath('/accessories')
@@ -113,6 +114,7 @@ export async function createAccessoryMultiColor(formData: FormData): Promise<Act
     })
   } catch (err) {
     if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um acessório com esse nome, tipo e cor' }
+    if (isForeignKeyConstraintError(err)) return { success: false, error: 'Tipo de acessório inválido' }
     throw err
   }
   revalidatePath('/accessories')
@@ -129,6 +131,7 @@ export async function updateAccessory(id: string, formData: FormData): Promise<A
     await prisma.accessory.update({ where: { id }, data: parsed.data })
   } catch (err) {
     if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um acessório com esse nome, tipo e cor' }
+    if (isForeignKeyConstraintError(err)) return { success: false, error: 'Tipo de acessório inválido' }
     throw err
   }
   revalidatePath('/accessories')

@@ -19,6 +19,64 @@ export default async function FilamentsPage({
     editId ? prisma.filament.findUnique({ where: { id: editId } }) : null,
   ])
 
+  // Melhoria "Histórico de consumo": filamento já tem consumo totalmente
+  // rastreado via ProductionRun (ver lib/reports.ts#getFilamentConsumptionHistory
+  // pro raciocínio completo) -- busca todos os lotes relevantes pra
+  // qualquer filamento ativo NUMA query só (em vez de 1 por filamento,
+  // evitando N+1), depois agrupa em memória. `filamentUsages: true` (sem
+  // filtro) porque um lote multi-filamento pode ter componentes de VÁRIOS
+  // filamentos ativos diferentes ao mesmo tempo -- filtra por filamento no
+  // loop abaixo, não na query.
+  const activeFilamentIds = allInStock.map((f) => f.id)
+  const relevantRuns = activeFilamentIds.length > 0
+    ? await prisma.productionRun.findMany({
+        where: {
+          status: { not: 'CANCELADA' },
+          OR: [
+            { filamentId: { in: activeFilamentIds } },
+            { filamentUsages: { some: { filamentId: { in: activeFilamentIds } } } },
+          ],
+        },
+        include: {
+          product: { select: { name: true } },
+          productPart: { select: { name: true } },
+          filamentUsages: true,
+        },
+        orderBy: { date: 'desc' },
+      })
+    : []
+
+  const historyByFilament = new Map<string, NonNullable<FilamentRow['consumptionHistory']>>()
+  function pushHistoryEntry(filamentId: string, entry: NonNullable<FilamentRow['consumptionHistory']>[number]) {
+    const list = historyByFilament.get(filamentId) ?? []
+    list.push(entry)
+    historyByFilament.set(filamentId, list)
+  }
+  for (const run of relevantRuns) {
+    if (run.filamentUsages.length > 0) {
+      for (const usage of run.filamentUsages) {
+        if (!activeFilamentIds.includes(usage.filamentId)) continue
+        pushHistoryEntry(usage.filamentId, {
+          id: `${run.id}-${usage.id}`,
+          date: run.date.toISOString(),
+          productName: run.product.name,
+          partName: run.productPart?.name ?? null,
+          gramsUsed: usage.gramsUsed.toNumber(),
+          gramsWasted: usage.gramsWasted.toNumber(),
+        })
+      }
+    } else if (activeFilamentIds.includes(run.filamentId)) {
+      pushHistoryEntry(run.filamentId, {
+        id: run.id,
+        date: run.date.toISOString(),
+        productName: run.product.name,
+        partName: run.productPart?.name ?? null,
+        gramsUsed: run.gramsUsed.toNumber(),
+        gramsWasted: run.gramsWasted.toNumber(),
+      })
+    }
+  }
+
   const editingFilament = editingFilamentRecord
     ? {
         id: editingFilamentRecord.id,
@@ -52,6 +110,7 @@ export default async function FilamentsPage({
       spoolWeightKg,
       percentRemaining,
       pricePerGram: calculateFilamentPricePerGram({ spoolPrice, spoolWeightKg }),
+      consumptionHistory: historyByFilament.get(f.id) ?? [],
     }
   })
 

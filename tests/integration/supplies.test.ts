@@ -191,7 +191,11 @@ describe('deleteSupply', () => {
     expect(gone).toBeNull()
   })
 
-  it('propaga o erro de FK quando o insumo está referenciado por um Product (via ProductSupplyUsage)', async () => {
+  // Bug fix (sessão "corrija exclusão de item em uso"): deleteSupply deixava
+  // essa violação de FK propagar sem tratamento, derrubando a página com
+  // "Application error" -- agora captura P2003 e devolve um ActionResult
+  // amigável em vez de lançar.
+  it('recusa com mensagem amigável quando o insumo está referenciado por um Product (via ProductSupplyUsage)', async () => {
     await createSupply(fd({ name: 'Insumo Referenciado', unit: 'UN', quantity: '10', totalCost: '5', purchaseDate: '2026-01-01' }))
     const item = await prisma.supply.findFirstOrThrow({ where: { name: 'Insumo Referenciado' } })
 
@@ -200,7 +204,9 @@ describe('deleteSupply', () => {
     const product = await prisma.product.create({ data: { name: 'Produto Teste Insumo', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0.1 } })
     await prisma.productSupplyUsage.create({ data: { productId: product.id, supplyId: item.id, quantity: 1 } })
 
-    await expect(deleteSupply(item.id)).rejects.toThrow()
+    const result = await deleteSupply(item.id)
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/ficha técnica/)
 
     const stillThere = await prisma.supply.findUnique({ where: { id: item.id } })
     expect(stillThere).not.toBeNull()

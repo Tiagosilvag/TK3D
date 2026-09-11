@@ -215,7 +215,11 @@ describe('deleteAccessory', () => {
     expect(gone).toBeNull()
   })
 
-  it('propaga o erro de FK quando o acessório está referenciado por um Product (via ProductAccessoryUsage)', async () => {
+  // Bug fix (sessão "corrija exclusão de item em uso"): deleteAccessory
+  // deixava essa violação de FK propagar sem tratamento, derrubando a
+  // página com "Application error" -- agora captura P2003 e devolve um
+  // ActionResult amigável em vez de lançar.
+  it('recusa com mensagem amigável quando o acessório está referenciado por um Product (via ProductAccessoryUsage)', async () => {
     await createAccessory(fd({ name: 'Clicker Referenciado', type: 'CLICKER', quantity: '10', totalCost: '5', purchaseDate: '2026-01-01' }))
     const item = await prisma.accessory.findFirstOrThrow({ where: { name: 'Clicker Referenciado' } })
 
@@ -227,7 +231,9 @@ describe('deleteAccessory', () => {
     // lives on this join table instead of directly on Product.
     await prisma.productAccessoryUsage.create({ data: { productId: product.id, accessoryId: item.id, quantity: 1 } })
 
-    await expect(deleteAccessory(item.id)).rejects.toThrow()
+    const result = await deleteAccessory(item.id)
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/ficha técnica/)
 
     const stillThere = await prisma.accessory.findUnique({ where: { id: item.id } })
     expect(stillThere).not.toBeNull()

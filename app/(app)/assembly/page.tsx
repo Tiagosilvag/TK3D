@@ -51,7 +51,6 @@ export default async function AssemblyPage({
               <tr className="tk-table-head-row">
                 <th className="py-2">{status.isComposite ? 'Peça' : 'Impressão'}</th>
                 <th>Qtd. por unidade</th>
-                <th>Produzido</th>
                 <th>Já montado</th>
                 <th>Disponível</th>
                 <th>Dá pra montar</th>
@@ -62,7 +61,6 @@ export default async function AssemblyPage({
                 <tr key={part.partId} className={`tk-row align-top ${part.maxUnitsFromThisPart <= 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
                   <td className="py-2">{part.name}</td>
                   <td>{part.quantityPerUnit}</td>
-                  <td>{part.produced}</td>
                   <td>{part.consumed}</td>
                   <td>
                     {part.available}

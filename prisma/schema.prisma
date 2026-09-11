@@ -310,6 +310,7 @@ model Product {
   consignmentDeliveries ConsignmentDelivery[]
   photos                ProductPhoto[]
   orders                Order[]
+  stockConsumptions     StockConsumption[]
 }
 
 // 2.1 Produto composto (BOM): uma peça que precisa ser impressa
@@ -696,4 +697,46 @@ model StockAdjustment {
   createdAt    DateTime                    @default(now())
 
   @@index([resourceType, resourceId])
+}
+
+enum StockConsumptionResourceType {
+  ACCESSORY
+  SUPPLY
+  PACKAGING
+}
+
+// Melhoria "Histórico de consumo": até aqui, confirmAssembly decrementava
+// Accessory/Supply.currentStock direto, sem deixar rastro de QUANTO foi
+// consumido, QUANDO, nem POR QUAL produto/montagem -- só dava pra inferir
+// pelo ProductAssembly (que nem detalha insumo/acessório). Embalagem tinha
+// um problema pior: nunca era consumida em lugar nenhum, só comprada (bug
+// -- currentStock só subia). resourceId é polimórfico sem FK física
+// (mesmo padrão de StockAdjustment.resourceId) -- decidido pelo
+// resourceType, sem relação Prisma direta com Accessory/Supply/
+// PackagingItem. source+sourceId aponta pra o evento que causou o consumo
+// -- ProductAssembly (acessório/insumo, na montagem) ou Sale (embalagem,
+// só na venda -- decisão explícita: produto que nunca é vendido não
+// consome a embalagem que já entra no custo dele, spec do módulo
+// Embalagens). Sem FK física em source/sourceId pelo mesmo motivo de
+// resourceId (a tabela de origem varia com `source`); deletar a origem
+// (deleteSale) apaga as linhas correspondentes manualmente na mesma
+// transação, restaurando o estoque.
+enum StockConsumptionSource {
+  ASSEMBLY
+  SALE
+}
+
+model StockConsumption {
+  id           String                        @id @default(cuid())
+  resourceType StockConsumptionResourceType
+  resourceId   String
+  quantity     Decimal                       @db.Decimal(12, 3)
+  productId    String
+  product      Product                       @relation(fields: [productId], references: [id])
+  source       StockConsumptionSource
+  sourceId     String
+  consumedAt   DateTime                      @default(now())
+
+  @@index([resourceType, resourceId])
+  @@index([source, sourceId])
 }

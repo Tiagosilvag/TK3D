@@ -12,6 +12,15 @@ import { deleteFilament } from '@/actions/filaments'
 import { FilamentForm, type EditingFilament } from './FilamentForm'
 import type { FilamentMaterial } from '@prisma/client'
 
+export interface FilamentConsumptionEntry {
+  id: string
+  date: string
+  productName: string
+  partName: string | null
+  gramsUsed: number
+  gramsWasted: number
+}
+
 export interface FilamentRow {
   id: string
   manufacturer: string
@@ -24,6 +33,11 @@ export interface FilamentRow {
   spoolWeightKg: number
   percentRemaining: number
   pricePerGram: number
+  consumptionHistory: FilamentConsumptionEntry[]
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('pt-BR')
 }
 
 const MATERIAL_OPTIONS: { value: FilamentMaterial | ''; label: string }[] = [
@@ -237,19 +251,46 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
                 </td>
                 <td><StatusBadge badge={getStockStatusBadge(status)} /></td>
                 <td>
-                  <ActionsMenu>
-                    <Link href={`/filaments?editId=${r.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
-                      Editar
-                    </Link>
-                    <AdjustStockButton
-                      resourceType="FILAMENT"
-                      resourceId={r.id}
-                      resourceName={`${r.manufacturer} ${r.colorName}`}
-                      currentQuantity={r.currentStockGrams}
-                      unitLabel="g"
-                    />
-                    <ConfirmDeleteForm action={async () => { return await deleteFilament(r.id) }} />
-                  </ActionsMenu>
+                  <div className="flex flex-col items-start gap-1">
+                    {r.consumptionHistory.length > 0 && (
+                      <details>
+                        <summary className="tk-summary">Histórico de consumo ({r.consumptionHistory.length})</summary>
+                        <table className="mt-2 text-xs">
+                          <thead>
+                            <tr className="tk-table-head-row">
+                              <th className="pr-2">Data</th>
+                              <th className="pr-2">Produto</th>
+                              <th className="pr-2">Usado</th>
+                              <th>Desperdiçado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {r.consumptionHistory.map((h) => (
+                              <tr key={h.id} className="tk-row">
+                                <td className="pr-2">{formatDate(h.date)}</td>
+                                <td className="pr-2">{h.productName}{h.partName ? ` — ${h.partName}` : ''}</td>
+                                <td className="pr-2">-{h.gramsUsed}g</td>
+                                <td>{h.gramsWasted}g</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </details>
+                    )}
+                    <ActionsMenu>
+                      <Link href={`/filaments?editId=${r.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                        Editar
+                      </Link>
+                      <AdjustStockButton
+                        resourceType="FILAMENT"
+                        resourceId={r.id}
+                        resourceName={`${r.manufacturer} ${r.colorName}`}
+                        currentQuantity={r.currentStockGrams}
+                        unitLabel="g"
+                      />
+                      <ConfirmDeleteForm action={async () => { return await deleteFilament(r.id) }} />
+                    </ActionsMenu>
+                  </div>
                 </td>
               </tr>
             )

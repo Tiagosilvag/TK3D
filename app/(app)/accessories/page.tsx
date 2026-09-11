@@ -10,6 +10,8 @@ import { AdjustStockButton } from '@/components/AdjustStockButton'
 import { StatusBadge } from '@/components/StatusBadge'
 import { ActionsMenu } from '@/components/ActionsMenu'
 
+const CONSUMPTION_SOURCE_LABELS = { ASSEMBLY: 'Montagem', SALE: 'Venda' } as const
+
 export const dynamic = 'force-dynamic'
 
 function buildHref(params: { type?: string; stock?: string }): string {
@@ -61,6 +63,21 @@ export default async function AccessoriesPage({
     const list = adjustmentsByAccessory.get(adj.resourceId) ?? []
     list.push(adj)
     adjustmentsByAccessory.set(adj.resourceId, list)
+  }
+
+  // Melhoria "Histórico de consumo": mesma lógica de agrupamento dos
+  // ajustes acima, agora pra StockConsumption (actions/stockConsumptions.ts) --
+  // toda baixa de acessório feita por confirmAssembly desde essa melhoria.
+  const consumptions = await prisma.stockConsumption.findMany({
+    where: { resourceType: 'ACCESSORY', resourceId: { in: accessories.map((a) => a.id) } },
+    include: { product: { select: { name: true } } },
+    orderBy: { consumedAt: 'desc' },
+  })
+  const consumptionsByAccessory = new Map<string, typeof consumptions>()
+  for (const c of consumptions) {
+    const list = consumptionsByAccessory.get(c.resourceId) ?? []
+    list.push(c)
+    consumptionsByAccessory.set(c.resourceId, list)
   }
 
   const activeType = accessoryTypes.some((t) => t.id === type) ? type : undefined
@@ -233,6 +250,28 @@ export default async function AccessoriesPage({
                               <td className="pr-2">{adj.difference.toNumber() > 0 ? '+' : ''}{adj.difference.toNumber()}</td>
                               <td className="pr-2">{STOCK_ADJUSTMENT_REASON_LABELS[adj.reason]}</td>
                               <td>{adj.reasonNote ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {(consumptionsByAccessory.get(a.id) ?? []).length > 0 && (
+                      <table className="mt-2 text-xs">
+                        <thead>
+                          <tr className="tk-table-head-row">
+                            <th className="pr-2">Data</th>
+                            <th className="pr-2">Consumido</th>
+                            <th className="pr-2">Produto</th>
+                            <th>Origem</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(consumptionsByAccessory.get(a.id) ?? []).map((c) => (
+                            <tr key={c.id} className="tk-row">
+                              <td className="pr-2">{formatDate(c.consumedAt)}</td>
+                              <td className="pr-2">-{c.quantity.toNumber()}</td>
+                              <td className="pr-2">{c.product.name}</td>
+                              <td>{CONSUMPTION_SOURCE_LABELS[c.source]}</td>
                             </tr>
                           ))}
                         </tbody>

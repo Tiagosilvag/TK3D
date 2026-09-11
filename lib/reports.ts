@@ -21,6 +21,51 @@ export async function getFilamentsLowStockCount(): Promise<number> {
   }).length
 }
 
+// Melhoria "Histórico de consumo": ao contrário de Acessório/Insumo/
+// Embalagem (que não tinham NENHUM rastro de consumo até essa melhoria,
+// ver actions/stockConsumptions.ts), Filamento já tem consumo totalmente
+// rastreado via ProductionRun -- não cria uma tabela nova redundante, só
+// expõe essa leitura. `filamentId` escalar cobre peça de 1 filamento
+// (sempre) e o 1º componente de peça multi-filamento (ProductionRunFilamentUsage
+// opcional não criado); quando `filamentUsages` para ESTE filamento existe,
+// usa o valor real daquele componente em vez do escalar (que pra peça
+// multi-filamento é a SOMA de todos os componentes, não só deste).
+export interface FilamentConsumptionRow {
+  id: string
+  date: Date
+  productName: string
+  partName: string | null
+  gramsUsed: number
+  gramsWasted: number
+}
+
+export async function getFilamentConsumptionHistory(filamentId: string): Promise<FilamentConsumptionRow[]> {
+  const runs = await prisma.productionRun.findMany({
+    where: {
+      status: { not: 'CANCELADA' },
+      OR: [{ filamentId }, { filamentUsages: { some: { filamentId } } }],
+    },
+    include: {
+      product: { select: { name: true } },
+      productPart: { select: { name: true } },
+      filamentUsages: { where: { filamentId } },
+    },
+    orderBy: { date: 'desc' },
+  })
+
+  return runs.map((run) => {
+    const usage = run.filamentUsages[0]
+    return {
+      id: run.id,
+      date: run.date,
+      productName: run.product.name,
+      partName: run.productPart?.name ?? null,
+      gramsUsed: usage ? usage.gramsUsed.toNumber() : run.gramsUsed.toNumber(),
+      gramsWasted: usage ? usage.gramsWasted.toNumber() : run.gramsWasted.toNumber(),
+    }
+  })
+}
+
 // 3.6 estendeu SaleChannel com SHOPEE/MERCADO_LIVRE (além do MARKETPLACE
 // legado) -- pro Dashboard, que só distingue Direta vs Marketplace no
 // gráfico de participação, os três contam pro mesmo balde "MARKETPLACE".
@@ -341,20 +386,26 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
   const filaments = filamentIds.size > 0 ? await prisma.filament.findMany({ where: { id: { in: [...filamentIds] } } }) : []
   const filamentById = new Map(filaments.map((f) => [f.id, f]))
 
+  // Montagem sem colorChoices gravado (anterior ao ajuste de cor variável,
+  // ou produto cujas peças nunca tiveram cor variável nenhuma) não entra
+  // nessa quebra por variante -- não dá pra saber qual cor foi consumida
+  // e "nunca inventa dado retroativamente" (ver comentário do topo desta
+  // função). Essa quantidade continua contando normalmente em "Produzido"
+  // (getOwnStockSummary, tabela principal de /stock), só não aparece
+  // detalhada aqui.
   const totals = new Map<string, number>()
   for (const a of assemblies) {
     const choices = a.colorChoices as Record<string, string> | null
-    const label = !choices || Object.keys(choices).length === 0
-      ? 'Sem variante registrada'
-      : Object.entries(choices)
-          .map(([partId, rawKey]) => {
-            const colorNames = rawKey.split(',').map((id) => filamentById.get(id)?.colorName ?? id)
-            const colorLabel = colorNames.join(' + ')
-            const partName = partNameById.get(partId)
-            return partName ? `${partName}: ${colorLabel}` : colorLabel
-          })
-          .sort()
-          .join(', ')
+    if (!choices || Object.keys(choices).length === 0) continue
+    const label = Object.entries(choices)
+      .map(([partId, rawKey]) => {
+        const colorNames = rawKey.split(',').map((id) => filamentById.get(id)?.colorName ?? id)
+        const colorLabel = colorNames.join(' + ')
+        const partName = partNameById.get(partId)
+        return partName ? `${partName}: ${colorLabel}` : colorLabel
+      })
+      .sort()
+      .join(', ')
     totals.set(label, (totals.get(label) ?? 0) + a.quantity)
   }
 
