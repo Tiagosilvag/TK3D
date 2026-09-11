@@ -18,7 +18,7 @@ export interface ProductCardData {
 }
 
 type PrinterOption = { id: string; name: string; costPerHour: number }
-type FilamentOption = { id: string; name: string; pricePerGram: number }
+type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
 
 // Melhoria "Produtos" §1/§2: listagem vira grade de cards horizontais (foto
 // à esquerda, informação à direita) em vez de tabela -- cadastro vira modal
@@ -136,7 +136,7 @@ export function ProductsExplorer({
       <dialog
         ref={dialogRef}
         onClose={() => setModalOpen(false)}
-        className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+        className="w-full max-w-xl rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
       >
         <div className="grid gap-3 p-5">
           <div className="flex items-center justify-between">

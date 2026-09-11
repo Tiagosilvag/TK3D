@@ -7,6 +7,25 @@ import { decimalHoursToHHMM, hhmmToDecimalHours } from '@/lib/hours'
 // HH:MM local), um <input type="hidden"> com o `name` real submete o
 // decimal já convertido, então nada no resto do formulário/validação/ação
 // precisa saber que a entrada mudou de formato.
+//
+// Máscara "digite da direita pra esquerda" (bug "deixa escrever muitos
+// números"): sem isso o campo aceitava qualquer sequência de dígitos (ex.
+// "00:00222"), que silenciosamente virava 0 no blur porque não batia com
+// hhmmToDecimalHours -- sem nenhum aviso. Agora cada dígito digitado entra
+// pela direita nos minutos, empurrando o excedente pros minutos->horas
+// (mesmo padrão de campo de duração tipo Toggl/apps de ponto): "1","3","0"
+// vira "1", "13", "1:30". Minutos sempre grudam em 2 dígitos e nunca
+// passam de 59; horas ficam limitadas a 4 dígitos (mesmo teto de
+// lib/hours.ts#hhmmToDecimalHours), então o texto exibido SEMPRE é um
+// HH:MM válido -- nunca precisa descartar silenciosamente no blur.
+function maskHoursText(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 6)
+  if (digits.length <= 2) return digits
+  const hoursPart = digits.slice(0, -2)
+  const minutesPart = Math.min(59, parseInt(digits.slice(-2), 10)).toString().padStart(2, '0')
+  return `${hoursPart}:${minutesPart}`
+}
+
 export function HoursInput({
   name,
   value,
@@ -37,8 +56,11 @@ export function HoursInput({
         inputMode="numeric"
         placeholder="00:00"
         value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={(e) => onChange(hhmmToDecimalHours(e.target.value))}
+        onChange={(e) => {
+          const masked = maskHoursText(e.target.value)
+          setText(masked)
+          onChange(hhmmToDecimalHours(masked))
+        }}
         required={required}
         className={className}
       />

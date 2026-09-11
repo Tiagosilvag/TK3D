@@ -5,9 +5,10 @@ import { createProduct, updateProduct } from '@/actions/products'
 import { formatCurrency } from '@/lib/format'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
+import { FilamentSelect } from '@/components/FilamentSelect'
 
 type PrinterOption = { id: string; name: string; costPerHour: number }
-type FilamentOption = { id: string; name: string; pricePerGram: number }
+type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
 
 const FINISHING_TYPES = [
   { value: 'NENHUM', label: 'Nenhum' },
@@ -278,12 +279,7 @@ export function ProductForm({
             </label>
             <label className="text-sm">
               Filamento *
-              <select name="filamentId" value={filamentId} onChange={(e) => setFilamentId(e.target.value)} className="tk-input-full" required>
-                <option value="" disabled>Selecione</option>
-                {filaments.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
-                ))}
-              </select>
+              <FilamentSelect name="filamentId" options={filaments} value={filamentId} onChange={setFilamentId} />
               {selectedFilament && selectedFilament.pricePerGram <= 0 && (
                 <span className="mt-1 block text-xs text-amber-600 dark:text-amber-400">
                   ⚠️ Este filamento não tem preço cadastrado — o custo ficará incorreto.
@@ -357,17 +353,11 @@ export function ProductForm({
                       <div key={fi} className="grid grid-cols-2 gap-2 md:grid-cols-5">
                         <label className="text-xs md:col-span-2">
                           Filamento *
-                          <select
+                          <FilamentSelect
+                            options={filaments}
                             value={frow.filamentId}
-                            onChange={(e) => updatePartFilamentRow(i, fi, { filamentId: e.target.value })}
-                            className="tk-input-full"
-                            required
-                          >
-                            <option value="" disabled>Selecione</option>
-                            {filaments.map((f) => (
-                              <option key={f.id} value={f.id}>{f.name}</option>
-                            ))}
-                          </select>
+                            onChange={(id) => updatePartFilamentRow(i, fi, { filamentId: id })}
+                          />
                           {rowFilament && rowFilament.pricePerGram <= 0 && (
                             <span className="mt-1 block text-amber-600 dark:text-amber-400">⚠️ sem preço</span>
                           )}
@@ -404,32 +394,40 @@ export function ProductForm({
           </div>
         )}
 
-        {/* Campos opcionais, colapsáveis */}
-        <details className="col-span-full">
-          <summary className="tk-summary">Campos opcionais</summary>
-          <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
-            <label className="text-sm">
-              Tempo de mão de obra (HH:MM) (opcional)
-              <HoursInput name="laborTimeHours" value={parseFloat(laborTimeHours) || 0} onChange={(hours) => setLaborTimeHours(String(hours))} />
-            </label>
-            <label className="text-sm">
-              Acabamento (opcional)
-              <select name="finishingType" defaultValue={product?.finishingType ?? 'NENHUM'} className="tk-input-full">
-                {FINISHING_TYPES.map((f) => (
-                  <option key={f.value} value={f.value}>{f.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input name="usesGlue" type="checkbox" value="true" defaultChecked={product?.usesGlue} className="rounded border" />
-              Usa cola (opcional)
-            </label>
-            <label className="col-span-full text-sm md:col-span-3">
-              Observações (opcional)
-              <textarea name="notes" defaultValue={product?.notes ?? ''} className="tk-input-full" rows={2} />
-            </label>
-          </div>
-        </details>
+        {/* Campos opcionais, colapsáveis -- só no formulário de EDIÇÃO
+            (product presente). Na modal "Novo produto" (product ausente)
+            ficam de fora de propósito, pra cadastro rápido; dá pra
+            preencher depois na página do produto -- os 3 campos
+            (laborTimeHours/finishingType/usesGlue/notes) continuam com seus
+            defaults de schema (0h, NENHUM, false, null) quando omitidos na
+            criação, nunca ficam obrigatórios. */}
+        {product && (
+          <details className="col-span-full">
+            <summary className="tk-summary">Campos opcionais</summary>
+            <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
+              <label className="text-sm">
+                Tempo de mão de obra (HH:MM) (opcional)
+                <HoursInput name="laborTimeHours" value={parseFloat(laborTimeHours) || 0} onChange={(hours) => setLaborTimeHours(String(hours))} />
+              </label>
+              <label className="text-sm">
+                Acabamento (opcional)
+                <select name="finishingType" defaultValue={product?.finishingType ?? 'NENHUM'} className="tk-input-full">
+                  {FINISHING_TYPES.map((f) => (
+                    <option key={f.value} value={f.value}>{f.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input name="usesGlue" type="checkbox" value="true" defaultChecked={product?.usesGlue} className="rounded border" />
+                Usa cola (opcional)
+              </label>
+              <label className="col-span-full text-sm md:col-span-3">
+                Observações (opcional)
+                <textarea name="notes" defaultValue={product?.notes ?? ''} className="tk-input-full" rows={2} />
+              </label>
+            </div>
+          </details>
+        )}
 
         <div className="col-span-full mt-2">
           <SubmitButton pendingLabel="Salvando…">{product ? 'Salvar alterações' : 'Adicionar'}</SubmitButton>

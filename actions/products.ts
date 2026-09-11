@@ -425,7 +425,7 @@ function filamentOptionLabel(f: {
 // up separately and returned as a clearly-labeled "(esgotado)" option, so
 // defaultValue always matches a real <option> and the user must actively
 // choose to keep it or pick a replacement roll.
-export async function getEditableFilamentOptions(productId: string): Promise<{ id: string; name: string; pricePerGram: number }[]> {
+export async function getEditableFilamentOptions(productId: string): Promise<{ id: string; name: string; pricePerGram: number; colorHex: string | null }[]> {
   const product = await prisma.product.findUniqueOrThrow({ where: { id: productId } })
   const inStock = await prisma.filament.findMany({
     where: { currentStockGrams: { gt: 0 } },
@@ -441,8 +441,8 @@ export async function getEditableFilamentOptions(productId: string): Promise<{ i
     calculateFilamentPricePerKg({ spoolPrice: f.spoolPrice.toNumber(), spoolWeightKg: f.spoolWeightKg.toNumber() }) / 1000
 
   return [
-    ...(depletedCurrent ? [{ id: depletedCurrent.id, name: `${filamentOptionLabel(depletedCurrent)} (esgotado)`, pricePerGram: priceOf(depletedCurrent) }] : []),
-    ...inStock.map((f) => ({ id: f.id, name: filamentOptionLabel(f), pricePerGram: priceOf(f) })),
+    ...(depletedCurrent ? [{ id: depletedCurrent.id, name: `${filamentOptionLabel(depletedCurrent)} (esgotado)`, pricePerGram: priceOf(depletedCurrent), colorHex: depletedCurrent.colorHex }] : []),
+    ...inStock.map((f) => ({ id: f.id, name: filamentOptionLabel(f), pricePerGram: priceOf(f), colorHex: f.colorHex })),
   ]
 }
 

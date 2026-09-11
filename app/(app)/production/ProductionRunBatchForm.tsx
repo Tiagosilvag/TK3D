@@ -489,7 +489,7 @@ export function ProductionRunBatchForm({
     <dialog
       ref={dialogRef}
       onClose={() => { onOpenChange(false); resetAll() }}
-      className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      className="w-full max-w-xl rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
       <form action={mode === 'individual' ? individualAction : plateAction} className="grid gap-3 p-5">
         <div className="flex items-center justify-between">
