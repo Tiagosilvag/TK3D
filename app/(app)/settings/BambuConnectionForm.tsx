@@ -8,25 +8,29 @@ import { SubmitButton } from '@/components/SubmitButton'
 export function BambuConnectionForm({ connectedEmail }: { connectedEmail: string | null }) {
   const router = useRouter()
   const [step, setStep] = useState<'idle' | 'code'>('idle')
-  const [ticket, setTicket] = useState('')
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   async function handleStep1(formData: FormData) {
     setError(null)
     const result = await connectBambuAccountStep1(formData)
-    if (!result.success || !result.ticket) {
+    if (!result.success) {
       setError(result.error ?? 'Falha ao conectar')
       return
     }
-    setTicket(result.ticket)
     setEmail(String(formData.get('email')))
-    setStep('code')
+    if (result.needsCode) {
+      setStep('code')
+    } else {
+      // Conta sem verificação extra habilitada -- já autenticou de primeira,
+      // sem precisar do passo do código por e-mail.
+      setStep('idle')
+      router.refresh()
+    }
   }
 
   async function handleStep2(formData: FormData) {
     setError(null)
-    formData.set('ticket', ticket)
     formData.set('email', email)
     const result = await connectBambuAccountStep2(formData)
     if (!result.success) {

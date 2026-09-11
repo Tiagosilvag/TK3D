@@ -3,6 +3,11 @@ import { prisma } from '@/lib/prisma'
 import { connectBambuAccountStep1, connectBambuAccountStep2, disconnectBambuAccount } from '@/actions/bambuAuth'
 import * as auth from '@/lib/bambu/auth'
 
+// restartBambuListener tentaria abrir uma conexão MQTT real com a nuvem
+// Bambu -- mockado aqui porque isso não é o que este teste verifica (é
+// coberto por tests/unit/bambuListener.test.ts).
+vi.mock('@/lib/bambu/listener', () => ({ restartBambuListener: vi.fn() }))
+
 function fd(entries: Record<string, string>): FormData {
   const f = new FormData()
   for (const [k, v] of Object.entries(entries)) f.set(k, v)
@@ -15,18 +20,28 @@ describe('bambuAuth actions', () => {
     await prisma.settings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } as never })
   })
 
-  it('step1 devolve o ticket e não grava nada no banco (senha nunca persiste)', async () => {
-    vi.spyOn(auth, 'requestLoginCode').mockResolvedValue({ ticket: 'ticket-xyz' })
+  it('step1 sinaliza needsCode e não grava nada no banco quando a Bambu pede verificação (senha nunca persiste)', async () => {
+    vi.spyOn(auth, 'requestLoginCode').mockResolvedValue({ status: 'code_required' })
     const result = await connectBambuAccountStep1(fd({ email: 'a@b.com', password: 'secreta' }))
     expect(result.success).toBe(true)
-    expect(result.ticket).toBe('ticket-xyz')
+    expect(result.needsCode).toBe(true)
     const settings = await prisma.settings.findUnique({ where: { id: 1 } })
     expect(settings?.bambuCloudCredentialEncrypted).toBeNull()
   })
 
+  it('step1 já grava a credencial quando a conta não exige verificação extra', async () => {
+    vi.spyOn(auth, 'requestLoginCode').mockResolvedValue({ status: 'authenticated', accessToken: 'token-direct' })
+    const result = await connectBambuAccountStep1(fd({ email: 'a@b.com', password: 'secreta' }))
+    expect(result.success).toBe(true)
+    expect(result.needsCode).toBe(false)
+    const settings = await prisma.settings.findUnique({ where: { id: 1 } })
+    expect(settings?.bambuCloudEmail).toBe('a@b.com')
+    expect(settings?.bambuCloudCredentialEncrypted).not.toBeNull()
+  })
+
   it('step2 grava a credencial cifrada em Settings', async () => {
     vi.spyOn(auth, 'confirmLoginCode').mockResolvedValue({ accessToken: 'token-abc' })
-    const result = await connectBambuAccountStep2(fd({ ticket: 'ticket-xyz', code: '000000', email: 'a@b.com' }))
+    const result = await connectBambuAccountStep2(fd({ code: '000000', email: 'a@b.com' }))
     expect(result.success).toBe(true)
     const settings = await prisma.settings.findUnique({ where: { id: 1 } })
     expect(settings?.bambuCloudEmail).toBe('a@b.com')
