@@ -9,24 +9,17 @@ async function main() {
     create: { id: 1 },
   })
 
-  // energyCostPerKwh/maintenanceCostPerHour (melhoria "Impressoras"): antes
-  // vinham de Settings.energyCostPerKwh/annualMaintenancePercent/
-  // annualUsageHours (globais) -- viraram input por impressora, então o
-  // seed passa a fixar os mesmos valores que essas máquinas já tinham sob
-  // a fórmula antiga (Settings default: tarifa 1.00 R$/kWh, 10% ao ano /
-  // 2000h de uso), pra não regredir o custo total de nenhuma delas.
-  // nickname fica de fora -- é o apelido que o usuário dá pra própria
-  // impressora física, não um dado de referência pra inventar aqui.
-  const printers = [
-    { name: 'Bambu Lab A1 Mini', purchasePrice: 3000, depreciationHours: 10000, avgPowerConsumptionKwh: 0.15, energyCostPerKwh: 1.0, maintenanceCostPerHour: 0.15 },
-    { name: 'Anycubic Kobra X', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27, energyCostPerKwh: 1.0, maintenanceCostPerHour: 0.18 },
-    { name: 'Bambulab A1', purchasePrice: 4800, depreciationHours: 10000, avgPowerConsumptionKwh: 0.15, energyCostPerKwh: 1.0, maintenanceCostPerHour: 0.24, active: false },
-    { name: 'Snapmaker U1', purchasePrice: 15000, depreciationHours: 25000, avgPowerConsumptionKwh: 0.3, energyCostPerKwh: 1.0, maintenanceCostPerHour: 0.75, active: false },
-    { name: 'Anycubic Kobra S1', purchasePrice: 6000, depreciationHours: 10000, avgPowerConsumptionKwh: 0.35, energyCostPerKwh: 1.0, maintenanceCostPerHour: 0.30, active: false },
-  ]
-  for (const p of printers) {
-    await prisma.printer.upsert({ where: { name: p.name }, update: {}, create: p as any })
-  }
+  // Bug "seed recria impressora excluída": até aqui o seed fixava uma
+  // lista de impressoras de EXEMPLO (Bambu Lab A1 Mini, Anycubic Kobra X,
+  // etc.) via upsert-por-nome em todo deploy. Isso funciona pra impressora
+  // que só foi DESATIVADA (active=false, linha continua existindo, upsert
+  // não faz nada) -- mas quem exclui PERMANENTEMENTE uma dessas
+  // (deletePrinterPermanently, hard delete de verdade) via tela de
+  // Impressoras via a linha ressuscitar no próximo deploy, porque o
+  // upsert não encontra mais nada com aquele nome e cria de novo. Mesmo
+  // bug já corrigido pra Insumo/Embalagem (ver comentários abaixo) --
+  // aplica aqui a mesma solução: impressora real só nasce de um cadastro
+  // real (createPrinter, tela /printers), nunca de seed.
 
   const materialDefaults = [
     { material: MaterialType.PLA, diameterMm: 1.75, densityGCm3: 1.24, nozzleTempC: 210, bedTempC: 60 },
