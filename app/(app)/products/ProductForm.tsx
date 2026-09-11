@@ -10,13 +10,6 @@ import { FilamentSelect } from '@/components/FilamentSelect'
 type PrinterOption = { id: string; name: string; costPerHour: number }
 type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
 
-const FINISHING_TYPES = [
-  { value: 'NENHUM', label: 'Nenhum' },
-  { value: 'CANETA_VERNIZ', label: 'Caneta de verniz' },
-  { value: 'RESINA_UV', label: 'Resina UV' },
-  { value: 'OUTRO', label: 'Outro' },
-]
-
 type ProductValues = {
   id: string
   name: string
@@ -397,31 +390,21 @@ export function ProductForm({
         {/* Campos opcionais, colapsáveis -- só no formulário de EDIÇÃO
             (product presente). Na modal "Novo produto" (product ausente)
             ficam de fora de propósito, pra cadastro rápido; dá pra
-            preencher depois na página do produto -- os 3 campos
-            (laborTimeHours/finishingType/usesGlue/notes) continuam com seus
-            defaults de schema (0h, NENHUM, false, null) quando omitidos na
-            criação, nunca ficam obrigatórios. */}
+            preencher depois na página do produto -- os 2 campos
+            (laborTimeHours/notes) continuam com seus defaults de schema
+            (0h, null) quando omitidos na criação, nunca ficam obrigatórios.
+            Acabamento/Usa cola foram removidos do formulário -- finishingType
+            sempre grava 'NENHUM' (default do schema, ver parse() em
+            actions/products.ts), usesGlue sempre false. */}
         {product && (
           <details className="col-span-full">
             <summary className="tk-summary">Campos opcionais</summary>
-            <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
               <label className="text-sm">
                 Tempo de mão de obra (HH:MM) (opcional)
                 <HoursInput name="laborTimeHours" value={parseFloat(laborTimeHours) || 0} onChange={(hours) => setLaborTimeHours(String(hours))} />
               </label>
-              <label className="text-sm">
-                Acabamento (opcional)
-                <select name="finishingType" defaultValue={product?.finishingType ?? 'NENHUM'} className="tk-input-full">
-                  {FINISHING_TYPES.map((f) => (
-                    <option key={f.value} value={f.value}>{f.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input name="usesGlue" type="checkbox" value="true" defaultChecked={product?.usesGlue} className="rounded border" />
-                Usa cola (opcional)
-              </label>
-              <label className="col-span-full text-sm md:col-span-3">
+              <label className="col-span-full text-sm md:col-span-2">
                 Observações (opcional)
                 <textarea name="notes" defaultValue={product?.notes ?? ''} className="tk-input-full" rows={2} />
               </label>

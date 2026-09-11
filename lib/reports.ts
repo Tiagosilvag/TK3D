@@ -353,6 +353,10 @@ export interface ProductVariantBreakdownRow {
   colorHex: string | null
 }
 
+function accessoryLabel(a: { name: string; colorName: string }): string {
+  return a.colorName ? `${a.name} — ${a.colorName}` : a.name
+}
+
 function serializeColorChoices(choices: Record<string, string>): string {
   return Object.entries(choices)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -407,18 +411,52 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
   if (assemblies.length === 0) return []
 
   const partNameById = new Map(parts.map((p) => [p.id, p.name]))
-  // Ajuste "cor multi-filamento na montagem": cada valor de colorChoices
-  // agora é um comboKey (1+ filamentIds unidos por vírgula, ver
-  // actions/assembly.ts#AssemblyPartColorOption) -- dado antigo (peça de
-  // 1 filamento só) já era literalmente o filamentId sozinho, então
-  // split(',') lê os dois formatos sem distinção.
-  const filamentIds = new Set<string>()
+
+  // Bug "cor com nome faltando": colorChoices pode ter 3 tipos de chave --
+  // ProductPart.id (peça, já resolvido acima), Product.id (produto usado
+  // como componente, ex. Mosquetão) ou Accessory.id (slot de acessório com
+  // cor variável, ex. Corrente Bolinha) -- os 2 últimos não tinham nome
+  // resolvido (mostrava a cor sem prefixo, ou pior, o cuid cru pro caso de
+  // acessório). Resolve em lote: chaves que não são ProductPart viram
+  // candidatas a Product OU Accessory (uma bate, a outra não). Valor
+  // (rawKey) continua sendo um comboKey de filamentIds pra peça/
+  // componente-produto (split(',') lê os dois formatos, ajuste "cor
+  // multi-filamento na montagem"), mas pra acessório o rawKey É o
+  // Accessory.id REALMENTE escolhido nesta leva -- resolvido à parte, sem
+  // passar por filamento nenhum.
+  const allKeys = new Set<string>()
+  const allRawKeys = new Set<string>()
   for (const a of assemblies) {
     const choices = a.colorChoices as Record<string, string> | null
-    if (choices) for (const rawKey of Object.values(choices)) for (const id of rawKey.split(',')) filamentIds.add(id)
+    if (!choices) continue
+    for (const [key, rawKey] of Object.entries(choices)) {
+      allKeys.add(key)
+      allRawKeys.add(rawKey)
+    }
   }
-  const filaments = filamentIds.size > 0 ? await prisma.filament.findMany({ where: { id: { in: [...filamentIds] } } }) : []
+  // Exclui o próprio productId de "candidato a componente": produto
+  // simples com insumo/acessório (peça sintética) usa o próprio id como
+  // chave (actions/assembly.ts#getAssemblyStatus), que bateria com
+  // prisma.product.findMany e mostraria "NomeDoProduto: Cor" em vez de só
+  // "Cor" (comentário "Bug 'cor no produto simples'" abaixo) -- nunca faz
+  // sentido prefixar a cor do próprio produto com o nome dele mesmo.
+  const unresolvedKeys = [...allKeys].filter((k) => k !== productId && !partNameById.has(k))
+  const filamentIdCandidates = new Set<string>()
+  for (const rawKey of allRawKeys) for (const id of rawKey.split(',')) filamentIdCandidates.add(id)
+  const accessoryIdCandidates = new Set([...unresolvedKeys, ...allRawKeys])
+
+  const [filaments, componentProducts, accessories] = await Promise.all([
+    filamentIdCandidates.size > 0 ? prisma.filament.findMany({ where: { id: { in: [...filamentIdCandidates] } } }) : Promise.resolve([]),
+    unresolvedKeys.length > 0 ? prisma.product.findMany({ where: { id: { in: unresolvedKeys } } }) : Promise.resolve([]),
+    accessoryIdCandidates.size > 0 ? prisma.accessory.findMany({ where: { id: { in: [...accessoryIdCandidates] } } }) : Promise.resolve([]),
+  ])
   const filamentById = new Map(filaments.map((f) => [f.id, f]))
+  const componentProductNameById = new Map(componentProducts.map((p) => [p.id, p.name]))
+  const accessoryById = new Map(accessories.map((a) => [a.id, a]))
+
+  function filamentComboLabel(rawKey: string): string {
+    return rawKey.split(',').map((id) => filamentById.get(id)?.colorName ?? id).join(' + ')
+  }
 
   // Montagem sem colorChoices gravado (anterior ao ajuste de cor variável,
   // ou produto cujas peças nunca tiveram cor variável nenhuma) não entra
@@ -433,20 +471,24 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
     if (!choices || Object.keys(choices).length === 0) continue
     const key = serializeColorChoices(choices)
     const label = Object.entries(choices)
-      .map(([partId, rawKey]) => {
-        const colorNames = rawKey.split(',').map((id) => filamentById.get(id)?.colorName ?? id)
-        const colorLabel = colorNames.join(' + ')
-        const partName = partNameById.get(partId)
-        return partName ? `${partName}: ${colorLabel}` : colorLabel
+      .map(([choiceKey, rawKey]) => {
+        const partName = partNameById.get(choiceKey)
+        if (partName) return `${partName}: ${filamentComboLabel(rawKey)}`
+        const componentName = componentProductNameById.get(choiceKey)
+        if (componentName) return `${componentName}: ${filamentComboLabel(rawKey)}`
+        const chosenAccessory = accessoryById.get(rawKey)
+        if (chosenAccessory) return accessoryLabel(chosenAccessory)
+        return filamentComboLabel(rawKey)
       })
       .sort()
       .join(', ')
     // Bolinha de cor: só quando a variante inteira se resolve num único
-    // filamento (1 peça, sem multi-filamento) -- qualquer combinação com
-    // mais de uma cor não tem uma bolinha que a represente direito.
+    // valor (1 peça/componente/acessório, sem multi-filamento) -- qualquer
+    // combinação com mais de um valor não tem uma bolinha que a represente
+    // direito.
     const choiceValues = Object.values(choices)
     const colorHex = choiceValues.length === 1 && !choiceValues[0].includes(',')
-      ? (filamentById.get(choiceValues[0])?.colorHex ?? null)
+      ? (filamentById.get(choiceValues[0])?.colorHex ?? accessoryById.get(choiceValues[0])?.colorHex ?? null)
       : null
     const entry = totals.get(key) ?? { label, quantity: 0, colorHex }
     entry.quantity += a.quantity

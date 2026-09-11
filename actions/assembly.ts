@@ -12,6 +12,10 @@ function filamentLabel(f: { manufacturer: string; colorName: string; rollNumber:
   return `${f.manufacturer} ${f.colorName} — Rolo #${String(f.rollNumber).padStart(3, '0')}`
 }
 
+function accessoryLabel(a: { name: string; colorName: string }): string {
+  return a.colorName ? `${a.name} — ${a.colorName}` : a.name
+}
+
 // Ajuste "cor multi-filamento na montagem": disponível por COMBO de
 // filamentos, calculado a partir do que cada lote de produção realmente
 // usou (ProductionRunFilamentUsage quando a peça é multi-filamento,
@@ -70,12 +74,23 @@ export interface AssemblyComponentStatus {
 // Ajuste "produção → montagem → estoque": insumo/acessório cadastrado na
 // ficha técnica do produto (composto OU simples) -- disponível em estoque
 // AGORA, pra travar quantas unidades dá pra montar junto com as peças.
+//
+// Melhoria "Acessório com cor variável": `colorOptions` (mesmo shape já
+// usado por peça/componente-produto) só é preenchido pra Acessório com
+// "irmãos" de cor no catálogo (mesmo name+type, colorName diferente --
+// ex. "Corrente Bolinha — Prata"/"— Dourada" são 2 linhas de Accessory
+// distintas) -- Insumo/Embalagem sempre mandam null (fora de escopo desta
+// melhoria). Diferente de peça/componente, `available` de cada opção usa
+// Accessory.currentStock DIRETO (já é o número certo, sem precisar
+// reconstruir "produzido menos consumido" de histórico -- acessório não
+// tem "produção", só compra/consumo em tempo real).
 export interface AssemblyResourceRequirement {
   id: string
   name: string
   quantityPerUnit: number
   available: number
   unit?: string
+  colorOptions: AssemblyPartColorOption[] | null
 }
 
 export interface AssemblyStatus {
@@ -403,24 +418,60 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
     ]
   }
 
-  const accessoryRequirements: AssemblyResourceRequirement[] = product.accessoryUsages.map((u) => ({
-    id: u.accessoryId,
-    name: u.accessory.colorName ? `${u.accessory.name} — ${u.accessory.colorName}` : u.accessory.name,
-    quantityPerUnit: u.quantity.toNumber(),
-    available: Math.max(0, u.accessory.currentStock.toNumber()),
-  }))
+  // Melhoria "Acessório com cor variável": "irmãos" de cor de cada
+  // Acessório da ficha técnica -- mesmo name+type, colorName diferente
+  // (ex. "Corrente Bolinha — Prata"/"— Dourada"). Busca em lote (não
+  // N+1), catálogo pequeno como o resto do app assume.
+  const accessoryFamilies = product.accessoryUsages.length > 0
+    ? await prisma.accessory.findMany({
+        where: {
+          active: true,
+          OR: product.accessoryUsages.map((u) => ({ name: u.accessory.name, type: u.accessory.type })),
+        },
+      })
+    : []
+  const accessoryFamilyKey = (a: { name: string; type: string }) => `${a.name}::${a.type}`
+  const accessoryFamilyMap = new Map<string, typeof accessoryFamilies>()
+  for (const a of accessoryFamilies) {
+    const key = accessoryFamilyKey(a)
+    const list = accessoryFamilyMap.get(key) ?? []
+    list.push(a)
+    accessoryFamilyMap.set(key, list)
+  }
+
+  const accessoryRequirements: AssemblyResourceRequirement[] = product.accessoryUsages.map((u) => {
+    const siblings = accessoryFamilyMap.get(accessoryFamilyKey(u.accessory)) ?? []
+    const colorOptions = siblings.length > 1
+      ? siblings.map((s) => ({
+          key: s.id,
+          filamentIds: [],
+          label: accessoryLabel(s),
+          available: Math.max(0, s.currentStock.toNumber()),
+          colorHex: s.colorHex,
+        }))
+      : null
+    return {
+      id: u.accessoryId,
+      name: accessoryLabel(u.accessory),
+      quantityPerUnit: u.quantity.toNumber(),
+      available: Math.max(0, u.accessory.currentStock.toNumber()),
+      colorOptions,
+    }
+  })
   const supplyRequirements: AssemblyResourceRequirement[] = product.supplyUsages.map((u) => ({
     id: u.supplyId,
     name: u.supply.name,
     quantityPerUnit: u.quantity.toNumber(),
     available: Math.max(0, u.supply.currentStock.toNumber()),
     unit: u.supply.unit,
+    colorOptions: null,
   }))
   const packagingRequirements: AssemblyResourceRequirement[] = product.packagingUsages.map((u) => ({
     id: u.packagingItemId,
     name: u.packagingItem.name,
     quantityPerUnit: u.quantity.toNumber(),
     available: Math.max(0, u.packagingItem.currentStock.toNumber()),
+    colorOptions: null,
   }))
 
   // Melhoria "Produto-como-componente": outros PRODUTOS usados como
@@ -627,6 +678,21 @@ export async function confirmAssembly(formData: FormData): Promise<ActionResult>
     }
     colorChoicesToStore[component.componentProductId] = chosenKey
     componentProductsConsumed.push({ componentProductId: component.componentProductId, quantityConsumed: component.quantityPerUnit * quantity })
+  }
+
+  // Melhoria "Acessório com cor variável": mesmo registro de escolha de
+  // cor de peça/componente acima, mas NÃO bloqueia (mesma filosofia já
+  // documentada -- falta de acessório nunca trava a montagem, só avisa).
+  // O consumo em si (accessoryConsumption, abaixo) continua vindo de
+  // accessoryUsagesJson exatamente como antes -- isso só REGISTRA qual
+  // cor foi escolhida, pra Estoque/Vendas conseguirem diferenciar depois.
+  // Sem escolha válida submetida, simplesmente não grava esse par (nunca
+  // inventa qual cor foi usada).
+  for (const accessory of status.accessoryRequirements) {
+    if (!accessory.colorOptions) continue
+    const chosenKey = submittedColorChoices[accessory.id]
+    const chosenOption = accessory.colorOptions.find((o) => o.key === chosenKey)
+    if (chosenOption) colorChoicesToStore[accessory.id] = chosenKey
   }
 
   // Revalida insumo/acessório contra o estoque ATUAL (não o já carregado

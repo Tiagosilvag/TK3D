@@ -25,6 +25,19 @@ function toSelectables(parts: AssemblyPartStatus[], components: AssemblyComponen
   ]
 }
 
+// Melhoria "Acessório com cor variável": mesmo shape/UX de escolha de cor
+// de peça/componente, agora pra Acessório com "irmãos" de cor no
+// catálogo -- mas NUNCA entra em `effectiveMax` (falta de acessório não
+// bloqueia a montagem, só peça/componente bloqueiam) -- por isso é uma
+// lista SEPARADA de `toSelectables`, só usada pra render + preencher
+// colorChoicesJson, nunca pro cálculo de quantidade máxima. `maxUnits`
+// fica 0 (não lido em lugar nenhum pra este caso).
+function toAccessoryColorSelectables(accessoryRequirements: AssemblyResourceRequirement[]): ColorSelectable[] {
+  return accessoryRequirements
+    .filter((a) => a.colorOptions)
+    .map((a): ColorSelectable => ({ key: a.id, name: a.name, quantityPerUnit: a.quantityPerUnit, colorOptions: a.colorOptions, maxUnits: 0 }))
+}
+
 // Ajuste "cor na montagem": pra cada peça/componente de cor variável
 // (colorOptions não nulo), a montagem precisa escolher QUAL cor está
 // sendo consumida nesta leva -- a quantidade máxima que dá pra montar
@@ -63,11 +76,18 @@ export function ConfirmAssemblyForm({
 }) {
   const router = useRouter()
   const selectables = useMemo(() => toSelectables(parts, components), [parts, components])
-  const colorSelectables = useMemo(() => selectables.filter((s) => s.colorOptions), [selectables])
+  const accessoryColorSelectables = useMemo(() => toAccessoryColorSelectables(accessoryRequirements), [accessoryRequirements])
+  const colorSelectables = useMemo(
+    () => [...selectables.filter((s) => s.colorOptions), ...accessoryColorSelectables],
+    [selectables, accessoryColorSelectables],
+  )
   const [colorChoices, setColorChoices] = useState<Record<string, string>>(() =>
     Object.fromEntries(colorSelectables.map((s) => [s.key, defaultColorChoice(s)])),
   )
-  const [accessoryRows, setAccessoryRows] = useState<ComponentRow[]>(() => toRows(accessoryRequirements))
+  // Acessório com cor variável (colorOptions não nulo) sai da lista livre
+  // de baixo -- passa a ser escolhido só pelo seletor de cor acima, não
+  // mais editável/trocável linha a linha aqui.
+  const [accessoryRows, setAccessoryRows] = useState<ComponentRow[]>(() => toRows(accessoryRequirements.filter((r) => !r.colorOptions)))
   const [supplyRows, setSupplyRows] = useState<ComponentRow[]>(() => toRows(supplyRequirements))
   // Embalagem §5: mostrada por completude/visibilidade, NUNCA submetida ao
   // confirmAssembly (continua consumida só na Venda) -- estado só existe
@@ -103,7 +123,14 @@ export function ConfirmAssemblyForm({
       return
     }
     formData.set('colorChoicesJson', JSON.stringify(colorChoices))
-    formData.set('accessoryUsagesJson', JSON.stringify(accessoryRows.map((r) => ({ id: r.id, quantityPerUnit: parseFloat(r.quantityPerUnit) || 0 }))))
+    // Acessório com cor variável não está mais em accessoryRows (saiu da
+    // lista livre) -- entra aqui resolvido pela cor escolhida acima, id
+    // efetivamente consumido é o da cor escolhida, não o da ficha técnica.
+    const colorVariableAccessoryUsages = accessoryColorSelectables.map((s) => ({ id: colorChoices[s.key], quantityPerUnit: s.quantityPerUnit }))
+    formData.set('accessoryUsagesJson', JSON.stringify([
+      ...accessoryRows.map((r) => ({ id: r.id, quantityPerUnit: parseFloat(r.quantityPerUnit) || 0 })),
+      ...colorVariableAccessoryUsages,
+    ]))
     formData.set('supplyUsagesJson', JSON.stringify(supplyRows.map((r) => ({ id: r.id, quantityPerUnit: parseFloat(r.quantityPerUnit) || 0 }))))
     const result = await confirmAssembly(formData)
     if (result.success) {
@@ -117,7 +144,7 @@ export function ConfirmAssemblyForm({
     <>
       {colorSelectables.length > 0 && (
         <div className="tk-panel p-4">
-          <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Cor de cada peça/componente nesta leva</h2>
+          <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Cor de cada peça/componente/acessório nesta leva</h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {colorSelectables.map((item) => (
               <label key={item.key} className="text-sm">

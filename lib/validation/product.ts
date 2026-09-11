@@ -46,7 +46,13 @@ export const productSchema = z
     weightGrams: z.coerce.number().optional(),
     printTimeHours: z.coerce.number().optional(),
     laborTimeHours: z.coerce.number().nonnegative('Tempo de mão de obra não pode ser negativo'),
-    finishingType: finishingTypeEnum,
+    // Acabamento/Usa cola saíram do formulário (nunca mais submetidos) --
+    // opcionais aqui só pra não quebrar a validação; actions/products.ts
+    // não usa mais nenhum dos dois na escrita (omite dos dois `data:` de
+    // create/update, deixando o default do schema valer na criação e o
+    // valor já gravado intocado na edição, nunca resetado pra NENHUM/false
+    // silenciosamente).
+    finishingType: finishingTypeEnum.optional(),
     usesGlue: checkboxBoolean,
     notes: z.string().optional().nullable(),
     parts: z.array(productPartSchema).optional(),

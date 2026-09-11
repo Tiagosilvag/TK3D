@@ -174,7 +174,7 @@ export function ComponentsSection({
 
   return (
     <div className="mt-6 tk-panel p-4">
-      <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Componentes (acessórios, insumos, embalagem, produtos)</h2>
+      <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Componentes</h2>
       {components.length === 0 ? (
         <p className="text-sm text-slate-500 dark:text-slate-400">Nenhum componente cadastrado.</p>
       ) : (

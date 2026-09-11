@@ -59,13 +59,15 @@ export async function createProduct(formData: FormData): Promise<ActionResult> {
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
   const data = parsed.data
 
+  // Acabamento/Usa cola saíram do formulário -- omitidos aqui de propósito,
+  // pro Prisma aplicar o default do schema (NENHUM/false) na criação, em
+  // vez de gravar um valor "adivinhado" a partir de um dado que não existe
+  // mais no form.
   const baseData = {
     name: data.name,
     category: data.category,
     isComposite: data.isComposite,
     laborTimeHours: data.laborTimeHours,
-    finishingType: data.finishingType,
-    usesGlue: data.usesGlue,
     notes: data.notes,
   }
 
@@ -105,13 +107,15 @@ export async function updateProduct(id: string, formData: FormData): Promise<Act
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
   const data = parsed.data
 
+  // Acabamento/Usa cola saíram do formulário -- omitidos aqui de propósito,
+  // pro update do Prisma deixar as colunas intocadas (mantém o valor já
+  // gravado antes dessa mudança) em vez de resetar pra NENHUM/false a cada
+  // salvamento.
   const baseData = {
     name: data.name,
     category: data.category,
     isComposite: data.isComposite,
     laborTimeHours: data.laborTimeHours,
-    finishingType: data.finishingType,
-    usesGlue: data.usesGlue,
     notes: data.notes,
   }
 
