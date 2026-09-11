@@ -64,11 +64,11 @@ export function SettingsForm({ settings }: { settings: SettingsValues }) {
         <legend className="mb-1 text-sm font-semibold">Custos</legend>
         <label className="text-sm">
           Custo de energia (R$/kWh) *
-          <input name="energyCostPerKwh" type="number" step="0.0001" defaultValue={settings.energyCostPerKwh} className="tk-input-full" required />
+          <input name="energyCostPerKwh" type="number" step="0.0001" min="0.0001" defaultValue={settings.energyCostPerKwh} className="tk-input-full" required />
         </label>
         <label className="text-sm">
           Custo de mão de obra (R$/hora) *
-          <input name="laborCostPerHour" type="number" step="0.01" defaultValue={settings.laborCostPerHour} className="tk-input-full" required />
+          <input name="laborCostPerHour" type="number" step="0.01" min="0.01" defaultValue={settings.laborCostPerHour} className="tk-input-full" required />
         </label>
         <label className="text-sm">
           Taxa de falha (0 a 1) *
@@ -80,7 +80,7 @@ export function SettingsForm({ settings }: { settings: SettingsValues }) {
         </label>
         <label className="text-sm">
           Horas de uso estimadas por ano (por impressora) *
-          <input name="annualUsageHours" type="number" step="1" defaultValue={settings.annualUsageHours} className="tk-input-full" required />
+          <input name="annualUsageHours" type="number" step="1" min="1" defaultValue={settings.annualUsageHours} className="tk-input-full" required />
         </label>
       </fieldset>
 
@@ -96,11 +96,11 @@ export function SettingsForm({ settings }: { settings: SettingsValues }) {
         </label>
         <label className="text-sm">
           Taxa fixa do marketplace (R$) *
-          <input name="marketplaceFixedFee" type="number" step="0.01" defaultValue={settings.marketplaceFixedFee} className="tk-input-full" required />
+          <input name="marketplaceFixedFee" type="number" step="0.01" min="0" defaultValue={settings.marketplaceFixedFee} className="tk-input-full" required />
         </label>
         <label className="text-sm">
           Markup padrão *
-          <input name="defaultMarkup" type="number" step="0.01" defaultValue={settings.defaultMarkup} className="tk-input-full" required />
+          <input name="defaultMarkup" type="number" step="0.01" min="0.01" defaultValue={settings.defaultMarkup} className="tk-input-full" required />
         </label>
         <label className="text-sm">
           Margem desejada (0 a 1) *

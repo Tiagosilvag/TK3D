@@ -291,7 +291,7 @@ export function ProductForm({
             </label>
             <label className="text-sm">
               Peso (g) *
-              <input name="weightGrams" type="number" step="0.01" value={weightGrams} onChange={(e) => setWeightGrams(e.target.value)} className="tk-input-full" required />
+              <input name="weightGrams" type="number" step="0.01" min="0.01" value={weightGrams} onChange={(e) => setWeightGrams(e.target.value)} className="tk-input-full" required />
             </label>
             <label className="text-sm">
               Tempo de impressão (HH:MM) *
@@ -376,6 +376,7 @@ export function ProductForm({
                           <input
                             type="number"
                             step="0.01"
+                            min="0.01"
                             value={frow.weightGrams}
                             onChange={(e) => updatePartFilamentRow(i, fi, { weightGrams: e.target.value })}
                             className="tk-input-full"

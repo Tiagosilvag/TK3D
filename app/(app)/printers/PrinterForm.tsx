@@ -131,6 +131,7 @@ export function PrinterForm({
             name="purchasePrice"
             type="number"
             step="0.01"
+            min="0.01"
             placeholder="0,00"
             className="tk-input-full"
             value={purchasePrice}
@@ -144,6 +145,7 @@ export function PrinterForm({
             name="depreciationHours"
             type="number"
             step="1"
+            min="1"
             placeholder="8000"
             className="tk-input-full"
             value={depreciationHours}
@@ -158,6 +160,7 @@ export function PrinterForm({
             name="avgPowerConsumptionKwh"
             type="number"
             step="0.001"
+            min="0.001"
             placeholder="0,12"
             className="tk-input-full"
             value={avgPowerConsumptionKwh}
@@ -171,6 +174,7 @@ export function PrinterForm({
             name="energyCostPerKwh"
             type="number"
             step="0.01"
+            min="0"
             placeholder="0,85"
             className="tk-input-full"
             value={energyCostPerKwh}
@@ -185,6 +189,7 @@ export function PrinterForm({
             name="maintenanceCostPerHour"
             type="number"
             step="0.01"
+            min="0"
             placeholder="0,18"
             className="tk-input-full"
             value={maintenanceCostPerHour}

@@ -136,6 +136,7 @@ export function FilamentForm({
             name="spoolWeightKg"
             type="number"
             step="0.001"
+            min="0.001"
             placeholder="1"
             className="tk-input-full"
             value={spoolWeightKg}
@@ -150,6 +151,7 @@ export function FilamentForm({
             name="spoolPrice"
             type="number"
             step="0.01"
+            min="0.01"
             placeholder="0,00"
             className="tk-input-full"
             value={spoolPrice}

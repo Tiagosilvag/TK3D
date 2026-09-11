@@ -57,6 +57,7 @@ export function RestockForm({ supplyId, supplyName }: { supplyId: string; supply
               name="quantity"
               type="number"
               step="0.001"
+              min="0.001"
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
               required
@@ -69,6 +70,7 @@ export function RestockForm({ supplyId, supplyName }: { supplyId: string; supply
               name="totalCost"
               type="number"
               step="0.01"
+              min="0.01"
               value={totalCost}
               onChange={(e) => setTotalCost(e.target.value)}
               required

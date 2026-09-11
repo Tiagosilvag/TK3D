@@ -89,6 +89,7 @@ export function PriceSimulation({
           <input
             type="number"
             step="0.01"
+            min="0.01"
             value={markup}
             onChange={(e) => setMarkup(Number(e.target.value))}
             className="tk-input-full"

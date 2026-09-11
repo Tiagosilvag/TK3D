@@ -220,7 +220,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
-              <input name="quantity" type="number" step="0.001" placeholder="Quantidade" className="tk-input" required />
+              <input name="quantity" type="number" step="0.001" min="0.001" placeholder="Quantidade" className="tk-input" required />
               <button className="tk-btn-primary">Adicionar</button>
             </form>
           </details>
@@ -265,7 +265,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
                   <option key={a.id} value={a.id}>{accessoryOptionLabel(a)}</option>
                 ))}
               </select>
-              <input name="quantity" type="number" step="0.01" placeholder="Quantidade" className="tk-input" required />
+              <input name="quantity" type="number" step="0.01" min="0.01" placeholder="Quantidade" className="tk-input" required />
               <button className="tk-btn-primary">Adicionar</button>
             </form>
           </details>

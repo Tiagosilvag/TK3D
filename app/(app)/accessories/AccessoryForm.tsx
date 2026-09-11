@@ -143,11 +143,11 @@ export function AccessoryForm({
         <>
           <label className="text-sm">
             Quantidade (1ª compra) *
-            <input name="quantity" type="number" step="0.01" placeholder="Quantidade (1ª compra)" className="tk-input-full" value={quantity} onChange={(e) => setQuantity(e.target.value)} required />
+            <input name="quantity" type="number" step="0.01" min="0.01" placeholder="Quantidade (1ª compra)" className="tk-input-full" value={quantity} onChange={(e) => setQuantity(e.target.value)} required />
           </label>
           <label className="text-sm">
             Valor total pago *
-            <input name="totalCost" type="number" step="0.01" placeholder="Valor total pago" className="tk-input-full" value={totalCost} onChange={(e) => setTotalCost(e.target.value)} required />
+            <input name="totalCost" type="number" step="0.01" min="0.01" placeholder="Valor total pago" className="tk-input-full" value={totalCost} onChange={(e) => setTotalCost(e.target.value)} required />
           </label>
         </>
       )}
@@ -155,7 +155,7 @@ export function AccessoryForm({
       {hasColor && (
         <label className="text-sm">
           Valor total pago (todas as cores) *
-          <input name="totalCost" type="number" step="0.01" placeholder="Valor total pago" className="tk-input-full" value={totalCost} onChange={(e) => setTotalCost(e.target.value)} required />
+          <input name="totalCost" type="number" step="0.01" min="0.01" placeholder="Valor total pago" className="tk-input-full" value={totalCost} onChange={(e) => setTotalCost(e.target.value)} required />
         </label>
       )}
 
@@ -195,6 +195,7 @@ export function AccessoryForm({
               <input
                 type="number"
                 step="0.01"
+                min="0.01"
                 placeholder="Quantidade"
                 className="tk-input w-28"
                 value={row.quantity}

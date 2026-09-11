@@ -99,6 +99,7 @@ export function PackagingForm({
                 name="totalCost"
                 type="number"
                 step="0.01"
+                min="0.01"
                 placeholder="0,00"
                 className="tk-input-full"
                 value={totalCost}
@@ -112,6 +113,7 @@ export function PackagingForm({
                 name="quantity"
                 type="number"
                 step="1"
+                min="1"
                 placeholder="0"
                 className="tk-input-full"
                 value={quantity}
@@ -124,7 +126,7 @@ export function PackagingForm({
 
         <label className="col-span-2 text-sm">
           Estoque mínimo (un) *
-          <input name="minStock" type="number" step="1" placeholder="0" className="tk-input-full" required defaultValue={editingItem?.minStock ?? 0} />
+          <input name="minStock" type="number" step="1" min="0" placeholder="0" className="tk-input-full" required defaultValue={editingItem?.minStock ?? 0} />
           <span className="mt-1 block text-xs text-slate-400 dark:text-slate-500">Abaixo desse valor, o item aparece como estoque baixo.</span>
         </label>
 

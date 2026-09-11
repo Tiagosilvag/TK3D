@@ -51,6 +51,7 @@ export function RestockForm({ packagingItemId, packagingItemName }: { packagingI
               name="quantity"
               type="number"
               step="1"
+              min="1"
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
               required
@@ -63,6 +64,7 @@ export function RestockForm({ packagingItemId, packagingItemName }: { packagingI
               name="totalCost"
               type="number"
               step="0.01"
+              min="0.01"
               value={totalCost}
               onChange={(e) => setTotalCost(e.target.value)}
               required

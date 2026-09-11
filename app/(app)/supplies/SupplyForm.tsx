@@ -93,11 +93,11 @@ export function SupplyForm({ editingSupply }: { editingSupply?: EditingSupply })
       </label>
       <label className="text-sm">
         Quantidade (1ª compra) *
-        <input name="quantity" type="number" step="0.001" placeholder="Quantidade (1ª compra)" className="tk-input-full" value={quantity} onChange={(e) => setQuantity(e.target.value)} required />
+        <input name="quantity" type="number" step="0.001" min="0.001" placeholder="Quantidade (1ª compra)" className="tk-input-full" value={quantity} onChange={(e) => setQuantity(e.target.value)} required />
       </label>
       <label className="text-sm">
         Valor total pago *
-        <input name="totalCost" type="number" step="0.01" placeholder="Valor total pago" className="tk-input-full" value={totalCost} onChange={(e) => setTotalCost(e.target.value)} required />
+        <input name="totalCost" type="number" step="0.01" min="0.01" placeholder="Valor total pago" className="tk-input-full" value={totalCost} onChange={(e) => setTotalCost(e.target.value)} required />
       </label>
 
       <label className="text-sm">
