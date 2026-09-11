@@ -43,6 +43,9 @@ const PRODUCTION_NAV_LINKS: NavLink[] = [
   { href: '/production', label: 'Produção', icon: NavProductionIcon },
   { href: '/assembly', label: 'Montagem', icon: NavAssemblyIcon },
   { href: '/stock', label: 'Meu Estoque', icon: NavStockIcon },
+  // Integração Bambu Lab (spec 2026-09-11): reaproveita NavProductionIcon
+  // por ora -- ícone dedicado é ajuste cosmético que não bloqueia a task.
+  { href: '/monitor', label: 'Monitoramento', icon: NavProductionIcon },
 ]
 
 const CONSIGNMENT_NAV_LINKS: NavLink[] = [
