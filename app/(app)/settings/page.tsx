@@ -15,13 +15,13 @@ export default async function SettingsPage() {
     <div className="tk-page">
       <h1 className="tk-page-title">Configurações</h1>
       <div className="mb-4 flex flex-wrap gap-4">
-        <Link href="/settings/accessory-types" className="text-sm text-amber-600 hover:underline dark:text-amber-400">
-          Tipos de acessório &rarr;
-        </Link>
         <Link href="/settings/marketplace-platforms" className="text-sm text-amber-600 hover:underline dark:text-amber-400">
           Plataformas de marketplace &rarr;
         </Link>
       </div>
+      <p className="mb-4 text-xs text-slate-400 dark:text-slate-500">
+        Gestão de tipos de acessório agora fica dentro do próprio cadastro, em Acessórios &rarr; Novo acessório &rarr; Tipo &rarr; Gerenciar tipos.
+      </p>
       <SettingsForm
         settings={{
           energyCostPerKwh: settings.energyCostPerKwh.toNumber(),

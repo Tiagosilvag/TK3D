@@ -34,7 +34,6 @@ const SETTINGS_NAV_LINKS: NavLink[] = [
   { href: '/packaging', label: 'Embalagens' },
   { href: '/accessories', label: 'Acessórios' },
   { href: '/supplies', label: 'Insumos' },
-  { href: '/settings/accessory-types', label: 'Tipos de acessório' },
   { href: '/settings', label: 'Configurações' },
 ]
 

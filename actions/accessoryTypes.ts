@@ -37,7 +37,7 @@ export async function createAccessoryType(formData: FormData): Promise<ActionRes
     if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um tipo com esse nome' }
     throw err
   }
-  revalidatePath('/settings/accessory-types')
+  revalidatePath('/accessories')
   return { success: true }
 }
 
@@ -55,7 +55,6 @@ export async function renameAccessoryType(id: string, formData: FormData): Promi
     if (isUniqueConstraintError(err)) return { success: false, error: 'Já existe um tipo com esse nome' }
     throw err
   }
-  revalidatePath('/settings/accessory-types')
   revalidatePath('/accessories')
   return { success: true }
 }
@@ -69,6 +68,6 @@ export async function deleteAccessoryType(id: string): Promise<ActionResult> {
     return { success: false, error: `Este tipo está em uso por ${inUse} acessório(s) e não pode ser removido.` }
   }
   await prisma.accessoryTypeRecord.delete({ where: { id } })
-  revalidatePath('/settings/accessory-types')
+  revalidatePath('/accessories')
   return { success: true }
 }
