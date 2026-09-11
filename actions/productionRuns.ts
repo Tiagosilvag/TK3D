@@ -489,6 +489,12 @@ export async function createPlate(formData: FormData): Promise<ActionResult> {
   const parsed = createPlateSchema.safeParse({ date: raw.date, printerId: raw.printerId, notes: raw.notes || null, items })
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
+  // Integração Bambu Lab (spec 2026-09-11): autofill opcional vindo de uma
+  // PrinterCapture -- nunca obrigatório, Plate registrada normalmente sem
+  // eles quando não há integração.
+  const printerCaptureId = raw.printerCaptureId ? String(raw.printerCaptureId) : null
+  const actualPrintTimeHours = raw.actualPrintTimeHours ? Number(raw.actualPrintTimeHours) : null
+
   // Tempo por unidade de cada item (do catálogo -- productPart quando
   // presente, senão o produto simples) -- precisa ser conhecido ANTES de
   // montar as ops de cada peça, pra rodar allocatePlatePrintTime de uma vez
@@ -552,8 +558,11 @@ export async function createPlate(formData: FormData): Promise<ActionResult> {
   }
 
   await prisma.$transaction([
-    prisma.plate.create({ data: { id: plateId, date: parsed.data.date, printerId: parsed.data.printerId, notes: parsed.data.notes } }),
+    prisma.plate.create({
+      data: { id: plateId, date: parsed.data.date, printerId: parsed.data.printerId, notes: parsed.data.notes, actualPrintTimeHours },
+    }),
     ...allOps,
+    ...(printerCaptureId ? [prisma.printerCapture.update({ where: { id: printerCaptureId }, data: { linkedPlateId: plateId } })] : []),
   ])
 
   revalidatePath('/production')

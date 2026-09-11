@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { SettingsForm } from './SettingsForm'
+import { BambuConnectionForm } from './BambuConnectionForm'
 
 export const dynamic = 'force-dynamic'
 
@@ -54,6 +55,9 @@ export default async function SettingsPage() {
           avgFreight: p.avgFreight.toNumber(),
         }))}
       />
+      <div className="mt-4">
+        <BambuConnectionForm connectedEmail={settings.bambuCloudEmail} />
+      </div>
     </div>
   )
 }

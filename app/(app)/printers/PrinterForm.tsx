@@ -23,6 +23,8 @@ export type EditingPrinter = {
   avgPowerConsumptionKwh: number
   energyCostPerKwh: number
   maintenanceCostPerHour: number
+  bambuEnabled: boolean
+  bambuSerial: string | null
 }
 
 // Melhorias "Impressoras": formulário virou modal (<dialog> nativo, mesmo
@@ -196,6 +198,15 @@ export function PrinterForm({
             onChange={(e) => setMaintenanceCostPerHour(e.target.value)}
             required
           />
+        </label>
+
+        <label className="col-span-2 flex items-center gap-2 text-sm">
+          <input type="checkbox" name="bambuEnabled" defaultChecked={editingPrinter?.bambuEnabled ?? false} />
+          Integração Bambu Lab (monitoramento)
+        </label>
+        <label className="col-span-2 text-sm">
+          Número de série Bambu (opcional)
+          <input name="bambuSerial" placeholder="Ex: 01P00A000000000" className="tk-input-full" defaultValue={editingPrinter?.bambuSerial ?? ''} />
         </label>
 
         <div className="col-span-2 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
