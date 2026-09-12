@@ -230,6 +230,18 @@ export function ProductionRunBatchForm({
 }) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
+  // Bug "às vezes não aparece as peças": handleProductChange/
+  // handleAddProductChange são async sem proteção contra respostas fora
+  // de ordem -- trocar de produto rápido (ou uma resposta de rede
+  // atrasada) podia fazer a resposta de uma seleção ANTERIOR chegar
+  // DEPOIS da atual e sobrescrever/zerar as peças certas com as do
+  // produto errado (ou vazio). Estas refs guardam qual foi a ÚLTIMA
+  // seleção pedida -- se a resposta que chegou não é mais dessa seleção,
+  // é descartada (mesmo padrão de `cancelled` já usado no useEffect de
+  // getAvailablePrinterCapture abaixo, só que pra uma função chamada
+  // direto do onChange em vez de um efeito).
+  const latestProductIdRef = useRef('')
+  const latestAddProductIdRef = useRef('')
 
   // Melhoria "Produção" (reformulação Plate): "Modo de produção" --
   // individual (comportamento de sempre, um produto só, campos de
@@ -294,11 +306,13 @@ export function ProductionRunBatchForm({
   }
 
   async function handleProductChange(newProductId: string) {
+    latestProductIdRef.current = newProductId
     setProductId(newProductId)
     setRows([])
     if (!newProductId) return
     try {
       const defaults = await getProductProductionDefaults(newProductId)
+      if (latestProductIdRef.current !== newProductId) return
       if (defaults.isComposite) {
         setRows(buildRowsFromParts(defaults.parts ?? []))
       } else {
@@ -373,11 +387,13 @@ export function ProductionRunBatchForm({
   // --- Plate: "+ Adicionar peça" -- escolhe um produto, mostra suas peças
   // (ou o próprio produto, se simples) pra adicionar como item da Plate.
   async function handleAddProductChange(newProductId: string) {
+    latestAddProductIdRef.current = newProductId
     setAddProductId(newProductId)
     setAddProductParts(null)
     if (!newProductId) return
     try {
       const defaults = await getProductProductionDefaults(newProductId)
+      if (latestAddProductIdRef.current !== newProductId) return
       if (defaults.isComposite) {
         setAddProductParts(defaults.parts ?? [])
       } else {
