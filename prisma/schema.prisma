@@ -988,6 +988,14 @@ model PrinterCapture {
   gramsUsedTotal Decimal?              @db.Decimal(10, 2)
   amsBreakdown   Json?
   outcome        PrinterCaptureOutcome
+  // Ajuste "extrair mais dados" (2026-09-12): código HMS bruto (hex) quando
+  // outcome=FAILED -- sem tradução própria, a Bambu atualiza esses códigos
+  // com o tempo e manter tabela nossa ficaria desatualizada. thumbnailUrl e
+  // gramsUsedTotal (quando ainda null pelo cálculo via AMS) vêm do
+  // histórico oficial da nuvem (/v1/user-service/my/tasks), mais confiável
+  // que nossa estimativa por MQTT -- ver lib/bambu/auth.ts#fetchLatestTask.
+  hmsCode        String?
+  thumbnailUrl   String?
   linkedPlateId  String?
   linkedPlate    Plate?                @relation(fields: [linkedPlateId], references: [id])
   createdAt      DateTime              @default(now())

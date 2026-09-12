@@ -46,6 +46,7 @@ const PRODUCTION_NAV_LINKS: NavLink[] = [
   // Integração Bambu Lab (spec 2026-09-11): reaproveita NavProductionIcon
   // por ora -- ícone dedicado é ajuste cosmético que não bloqueia a task.
   { href: '/monitor', label: 'Monitoramento', icon: NavProductionIcon },
+  { href: '/bambu-history', label: 'Histórico Bambu', icon: NavProductionIcon },
 ]
 
 const CONSIGNMENT_NAV_LINKS: NavLink[] = [
