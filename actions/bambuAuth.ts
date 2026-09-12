@@ -1,7 +1,7 @@
 'use server'
 import { prisma } from '@/lib/prisma'
 import { requestLoginCode, confirmLoginCode, fetchUserId } from '@/lib/bambu/auth'
-import { encryptCredential } from '@/lib/bambu/crypto'
+import { encryptCredential } from '@/lib/crypto'
 import { restartBambuListener } from '@/lib/bambu/listener'
 import { revalidatePath } from 'next/cache'
 

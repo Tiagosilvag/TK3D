@@ -1,6 +1,6 @@
 import mqtt, { MqttClient } from 'mqtt'
 import { prisma } from '@/lib/prisma'
-import { decryptCredential } from '@/lib/bambu/crypto'
+import { decryptCredential } from '@/lib/crypto'
 import { parseBambuReport, type BambuStatus } from '@/lib/bambu/parser'
 import { createJobTracker, type CaptureDraft } from '@/lib/bambu/jobTracker'
 import { fetchLatestTask } from '@/lib/bambu/auth'

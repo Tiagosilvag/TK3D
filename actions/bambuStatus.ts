@@ -1,7 +1,7 @@
 'use server'
 import { prisma } from '@/lib/prisma'
 import { getLiveStatus, getConnectionStatus, restartBambuListener, getCurrentThumbnail } from '@/lib/bambu/listener'
-import { decryptCredential } from '@/lib/bambu/crypto'
+import { decryptCredential } from '@/lib/crypto'
 import { fetchBoundDevices, fetchTaskHistory, type BambuDevice, type BambuCloudTaskFull } from '@/lib/bambu/auth'
 import { revalidatePath } from 'next/cache'
 

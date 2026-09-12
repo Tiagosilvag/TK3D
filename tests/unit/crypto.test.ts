@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { encryptCredential, decryptCredential } from '@/lib/bambu/crypto'
+import { encryptCredential, decryptCredential } from '@/lib/crypto'
 
 describe('bambu credential crypto', () => {
   beforeEach(() => {
