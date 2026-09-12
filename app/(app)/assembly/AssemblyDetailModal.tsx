@@ -2,37 +2,9 @@
 import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import type { AssemblyStatus, AssemblyPartColorOption } from '@/actions/assembly'
+import type { AssemblyStatus } from '@/actions/assembly'
 import { ConfirmAssemblyForm } from './ConfirmAssemblyForm'
 import type { ComponentOption } from './ComponentCategoryCard'
-
-// Bug "não está aparecendo todos os disponíveis... está mostrando só
-// vermelho": as tabelas de Peça/Componentes mostravam só a cor com MAIS
-// disponível (ex.: Mosquetão Vermelho 8, escondendo Marrom 0) -- quando
-// há mais de uma cor, mostra uma linha por cor (mesma info que o seletor
-// de cor mais abaixo já expõe, só que resumida aqui também).
-function ColorBreakdown({ colorOptions }: { colorOptions: AssemblyPartColorOption[] | null }) {
-  if (!colorOptions || colorOptions.length === 0) return null
-  if (colorOptions.length === 1) {
-    const c = colorOptions[0]
-    return (
-      <span className="mt-0.5 flex items-center gap-1.5 text-xs font-normal text-slate-500 dark:text-slate-400">
-        {c.colorHex && <span style={{ background: c.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-        {c.label}
-      </span>
-    )
-  }
-  return (
-    <span className="mt-0.5 flex flex-col gap-0.5 text-xs font-normal">
-      {colorOptions.map((c) => (
-        <span key={c.key} className={`flex items-center gap-1.5 ${c.available > 0 ? 'text-slate-500 dark:text-slate-400' : 'text-slate-400 dark:text-slate-600'}`}>
-          {c.colorHex && <span style={{ background: c.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-          {c.label} — {c.available}
-        </span>
-      ))}
-    </span>
-  )
-}
 
 // Bug "clicar num produto não faz nada visível": o detalhe de Montagem
 // (status?.productId via ?productId=) renderizava embaixo da lista geral
@@ -70,26 +42,22 @@ export function AssemblyDetailModal({
     router.push('/assembly')
   }
 
-  // Melhoria "Montagem" §6, "Produto-como-componente": alertas separados --
-  // falta de PEÇA ou de COMPONENTE-PRODUTO bloqueia (vermelho, mesma
-  // severidade -- é uma peça física necessária), falta de insumo/acessório
-  // só avisa (neutro).
-  const insufficient = status ? [...status.parts.filter((p) => p.maxUnitsFromThisPart <= 0), ...status.components.filter((c) => c.maxUnitsFromThisComponent <= 0)] : []
-  const lowStockComponents = status
-    ? [...status.accessoryRequirements, ...status.supplyRequirements, ...status.packagingRequirements].filter((r) => r.available < r.quantityPerUnit)
-    : []
-
   return (
     <dialog
       ref={dialogRef}
       onClose={close}
       onClick={(e) => { if (e.target === dialogRef.current) close() }}
-      className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/60 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      className="w-full max-w-4xl rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/60 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
       {status && (
         <div className="flex max-h-[85vh] flex-col">
           <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
-            <h2 className="font-display text-base font-semibold text-slate-900 dark:text-slate-100">{status.productName}</h2>
+            <div>
+              <h2 className="font-display text-base font-semibold text-slate-900 dark:text-slate-100">{status.productName}</h2>
+              <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+                {status.alreadyAssembled} unidade{status.alreadyAssembled === 1 ? '' : 's'} já montada{status.alreadyAssembled === 1 ? '' : 's'}
+              </p>
+            </div>
             <button
               type="button"
               onClick={close}
@@ -101,86 +69,9 @@ export function AssemblyDetailModal({
           </div>
 
           <div className="space-y-4 overflow-y-auto px-5 py-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="tk-panel p-4">
-                <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Já montado</p>
-                <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{status.alreadyAssembled} unidade{status.alreadyAssembled === 1 ? '' : 's'}</p>
-              </div>
-              <div className="tk-panel p-4">
-                <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Disponível para montagem</p>
-                <p className={`mt-1 text-lg font-semibold tabular-nums ${status.maxAssemblableUnits > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                  {status.maxAssemblableUnits} unidade{status.maxAssemblableUnits === 1 ? '' : 's'}
-                </p>
-              </div>
-            </div>
-
-            <div className="tk-panel p-4">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="tk-table-head-row">
-                    <th className="py-2">{status.isComposite ? 'Peça' : 'Impressão'}</th>
-                    <th>Qtd/unidade</th>
-                    <th>Produzido</th>
-                    <th>Disponível</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {status.parts.map((part) => {
-                    return (
-                      <tr key={part.partId} className={`tk-row align-top ${part.maxUnitsFromThisPart <= 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
-                        <td className="py-2">
-                          {part.name}
-                          <ColorBreakdown colorOptions={part.colorOptions} />
-                        </td>
-                        <td>{part.quantityPerUnit}</td>
-                        <td>{part.produced}</td>
-                        <td>{part.available}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {status.components.length > 0 && (
-              <div className="tk-panel p-4">
-                <h3 className="mb-2 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Componentes</h3>
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="tk-table-head-row">
-                      <th className="py-2">Produto</th>
-                      <th>Qtd/unidade</th>
-                      <th>Produzido</th>
-                      <th>Disponível</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {status.components.map((component) => {
-                      return (
-                        <tr key={component.componentProductId} className={`tk-row align-top ${component.maxUnitsFromThisComponent <= 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
-                          <td className="py-2">
-                            {component.name}
-                            <ColorBreakdown colorOptions={component.colorOptions} />
-                          </td>
-                          <td>{component.quantityPerUnit}</td>
-                          <td>{component.produced}</td>
-                          <td>{component.available}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {insufficient.length > 0 && (
-              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">
-                ⚠ Peça/componente insuficiente: {insufficient.map((p) => p.name).join(', ')}
-              </p>
-            )}
-
             <ConfirmAssemblyForm
               productId={status.productId}
+              isComposite={status.isComposite}
               parts={status.parts}
               components={status.components}
               accessoryRequirements={status.accessoryRequirements}
@@ -190,12 +81,6 @@ export function AssemblyDetailModal({
               allSupplies={allSupplies}
               allPackaging={allPackaging}
             />
-
-            {lowStockComponents.length > 0 && (
-              <p className="rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
-                ⓘ Estoque baixo de: {lowStockComponents.map((r) => r.name).join(', ')}
-              </p>
-            )}
 
             <Link href="/stock" className="inline-block text-sm text-violet-600 hover:underline dark:text-violet-400">
               Ver Meu Estoque &rarr;
