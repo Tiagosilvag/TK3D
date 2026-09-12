@@ -225,8 +225,16 @@ export async function deleteProduct(id: string): Promise<ActionResult> {
 // coluna em Product (filosofia "estoque/custo derivado, não contador
 // redundante" do CLAUDE.md) -- recalculado ao vivo sempre que chamado;
 // quem precisa congelar o valor (ProductAssembly.costSnapshot) lê isto UMA
-// VEZ no momento da montagem e nunca mais. Retorna 0 se o produto nunca
-// foi produzido com sucesso (nunca inventa um custo).
+// VEZ no momento da montagem e nunca mais.
+// Bug "componente vai zerado": um produto sem NENHUMA produção real ainda
+// (nunca fabricado, ou toda a produção foi cancelada/excluída) não tem
+// costSnapshot pra tirar média -- mas ele já tem um custo real, calculável
+// ao vivo pela própria ficha técnica (o mesmo "Custo" que aparece no card
+// dele em /products, via getProductCostBreakdown). Cair pra esse custo
+// teórico é melhor do que mostrar R$0,00 (que o usuário lê como "grátis",
+// não como "nunca produzido") -- só quando existe produção de verdade é
+// que a média real (mais precisa, já paga o desperdício de cada lote)
+// prevalece.
 export async function getProductAverageProductionCost(productId: string): Promise<number> {
   const runs = await prisma.productionRun.findMany({
     where: { productId, productPartId: null, status: { not: 'CANCELADA' }, quantitySuccess: { gt: 0 } },
@@ -240,7 +248,13 @@ export async function getProductAverageProductionCost(productId: string): Promis
     totalCost += snapshot.total
     totalUnits += run.quantitySuccess
   }
-  return totalUnits > 0 ? totalCost / totalUnits : 0
+  if (totalUnits > 0) return totalCost / totalUnits
+  // Componente exige produto não-composto (addProductComponentUsage já
+  // valida isso), então getProductCostBreakdown cai sempre no ramo simples
+  // -- nunca chama getProductAverageProductionCost de volta, sem risco de
+  // recursão.
+  const breakdown = await getProductCostBreakdown(productId)
+  return breakdown.finalCost
 }
 
 export async function getProductCostBreakdown(productId: string): Promise<ProductCostBreakdown> {

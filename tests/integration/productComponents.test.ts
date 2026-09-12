@@ -240,10 +240,15 @@ describe('Produto-como-componente: bloqueios e validações', () => {
 })
 
 describe('Produto-como-componente: custo (REGRA 12/14 do pedido)', () => {
-  it('getProductAverageProductionCost calcula a média ponderada do costSnapshot.total das produções, e 0 se nunca produzido', async () => {
+  it('getProductAverageProductionCost calcula a média ponderada do costSnapshot.total das produções, e cai pro custo da ficha técnica se nunca produzido', async () => {
     const { printer, azul, rosa, mosquetao } = await createMosquetao()
 
-    expect(await getProductAverageProductionCost(mosquetao.id)).toBe(0)
+    // Bug "componente vai zerado": nunca produzido não é mais 0 -- cai pro
+    // custo teórico ao vivo da própria ficha técnica (mesmo valor do card
+    // dele em /products), pra não parecer "grátis" antes da 1ª produção.
+    const theoreticalCost = (await getProductCostBreakdown(mosquetao.id)).finalCost
+    expect(theoreticalCost).toBeGreaterThan(0)
+    expect(await getProductAverageProductionCost(mosquetao.id)).toBeCloseTo(theoreticalCost, 6)
 
     await produceMosquetao(mosquetao, printer, azul, 5)
     await produceMosquetao(mosquetao, printer, rosa, 3)
