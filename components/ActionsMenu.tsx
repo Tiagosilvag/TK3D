@@ -75,7 +75,6 @@ export function ActionsMenu({ children }: { children: React.ReactNode }) {
       {mounted && open && position && createPortal(
         <div
           ref={menuRef}
-          onClick={() => setOpen(false)}
           style={{ position: 'fixed', top: position.top, right: position.right }}
           className="z-50 flex min-w-max flex-col items-start gap-2 rounded-lg border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900"
         >
