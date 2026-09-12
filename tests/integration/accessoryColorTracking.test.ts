@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { confirmAssembly, getAssemblyStatus } from '@/actions/assembly'
+import { confirmAssembly, getAssemblyStatus, updateAssemblyColorChoices } from '@/actions/assembly'
 import { getProductVariantBreakdown } from '@/lib/reports'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
@@ -179,5 +179,129 @@ describe('Bug "VERMELHO solto": label de produto-como-componente ganha o prefixo
     expect(breakdown).toHaveLength(1)
     expect(breakdown[0].label).toBe('Mosquetão: Azul')
     expect(breakdown[0].quantity).toBe(3)
+  })
+})
+
+describe('Editar variação (corrigir cor gravada errada numa leva de montagem)', () => {
+  it('troca a cor do acessório de uma variação já montada -- devolve estoque da cor antiga e consome da cor nova', async () => {
+    const { filament, prata, dourada, product } = await buildProductWithColorVariableAccessory()
+
+    const confirm = await confirmAssembly(fd({
+      productId: product.id,
+      quantity: '7',
+      notes: '',
+      colorChoicesJson: JSON.stringify({ [product.id]: filament.id, [prata.id]: prata.id }),
+      accessoryUsagesJson: JSON.stringify([{ id: prata.id, quantityPerUnit: 1 }]),
+      supplyUsagesJson: '[]',
+    }))
+    expect(confirm.success).toBe(true)
+
+    const [prataAfterConfirm, douradaAfterConfirm] = await Promise.all([
+      prisma.accessory.findUniqueOrThrow({ where: { id: prata.id } }),
+      prisma.accessory.findUniqueOrThrow({ where: { id: dourada.id } }),
+    ])
+    expect(prataAfterConfirm.currentStock.toNumber()).toBe(13)
+    expect(douradaAfterConfirm.currentStock.toNumber()).toBe(20)
+
+    const breakdownBefore = await getProductVariantBreakdown(product.id, true)
+    expect(breakdownBefore).toHaveLength(1)
+    const wrongComboKey = breakdownBefore[0].key
+
+    // Usuário gravou Prata sem querer -- na verdade era Dourada. A escolha
+    // de filamento do produto (chave própria, cor variável de 1 opção só)
+    // continua igual -- só o acessório muda, igual EditVariantColorsForm
+    // manda o objeto INTEIRO (todas as chaves, só a editada com valor novo).
+    const edit = await updateAssemblyColorChoices(fd({
+      productId: product.id,
+      oldComboKey: wrongComboKey,
+      colorChoicesJson: JSON.stringify({ [product.id]: filament.id, [prata.id]: dourada.id }),
+    }))
+    expect(edit.success).toBe(true)
+
+    const breakdownAfter = await getProductVariantBreakdown(product.id, true)
+    expect(breakdownAfter).toHaveLength(1)
+    expect(breakdownAfter[0].label).toContain('Dourada')
+    expect(breakdownAfter[0].quantity).toBe(7)
+
+    // Estoque físico se move de verdade: Prata volta a 20 (os 7 usados por
+    // engano voltam), Dourada cai pra 13 (os 7 realmente usados saem dela).
+    const [prataAfterEdit, douradaAfterEdit] = await Promise.all([
+      prisma.accessory.findUniqueOrThrow({ where: { id: prata.id } }),
+      prisma.accessory.findUniqueOrThrow({ where: { id: dourada.id } }),
+    ])
+    expect(prataAfterEdit.currentStock.toNumber()).toBe(20)
+    expect(douradaAfterEdit.currentStock.toNumber()).toBe(13)
+
+    const assembly = await prisma.productAssembly.findFirstOrThrow({ where: { productId: product.id } })
+    expect(assembly.quantity).toBe(7)
+    expect((assembly.colorChoices as Record<string, string>)[prata.id]).toBe(dourada.id)
+
+    // StockConsumption também é corrigido -- passa a apontar pra cor nova,
+    // senão uma reversão futura (reverseExcessAssemblyForRun) devolveria
+    // estoque pra cor errada.
+    const consumption = await prisma.stockConsumption.findFirstOrThrow({
+      where: { resourceType: 'ACCESSORY', productId: product.id, source: 'ASSEMBLY', sourceId: assembly.id },
+    })
+    expect(consumption.resourceId).toBe(dourada.id)
+  })
+
+  it('bloqueia a troca se a cor nova não tem estoque suficiente -- nada é alterado (nem estoque, nem rótulo)', async () => {
+    const { filament, prata, dourada, product } = await buildProductWithColorVariableAccessory()
+    // Esgota Dourada quase inteira, sobrando menos do que os 7 que
+    // precisariam ser transferidos pra ela na edição.
+    await prisma.accessory.update({ where: { id: dourada.id }, data: { currentStock: 3 } })
+
+    const confirm = await confirmAssembly(fd({
+      productId: product.id,
+      quantity: '7',
+      notes: '',
+      colorChoicesJson: JSON.stringify({ [product.id]: filament.id, [prata.id]: prata.id }),
+      accessoryUsagesJson: JSON.stringify([{ id: prata.id, quantityPerUnit: 1 }]),
+      supplyUsagesJson: '[]',
+    }))
+    expect(confirm.success).toBe(true)
+
+    const breakdown = await getProductVariantBreakdown(product.id, true)
+    const wrongComboKey = breakdown[0].key
+
+    const edit = await updateAssemblyColorChoices(fd({
+      productId: product.id,
+      oldComboKey: wrongComboKey,
+      colorChoicesJson: JSON.stringify({ [product.id]: filament.id, [prata.id]: dourada.id }),
+    }))
+    expect(edit.success).toBe(false)
+    expect(edit.error).toContain('Dourada')
+
+    const [prataAfter, douradaAfter] = await Promise.all([
+      prisma.accessory.findUniqueOrThrow({ where: { id: prata.id } }),
+      prisma.accessory.findUniqueOrThrow({ where: { id: dourada.id } }),
+    ])
+    expect(prataAfter.currentStock.toNumber()).toBe(13)
+    expect(douradaAfter.currentStock.toNumber()).toBe(3)
+
+    const assembly = await prisma.productAssembly.findFirstOrThrow({ where: { productId: product.id } })
+    expect((assembly.colorChoices as Record<string, string>)[prata.id]).toBe(prata.id)
+  })
+
+  it('rejeita um comboKey que não bate com nenhuma montagem -- nada é alterado', async () => {
+    const { filament, prata, dourada, product } = await buildProductWithColorVariableAccessory()
+    await confirmAssembly(fd({
+      productId: product.id,
+      quantity: '7',
+      notes: '',
+      colorChoicesJson: JSON.stringify({ [product.id]: filament.id, [prata.id]: prata.id }),
+      accessoryUsagesJson: JSON.stringify([{ id: prata.id, quantityPerUnit: 1 }]),
+      supplyUsagesJson: '[]',
+    }))
+
+    const edit = await updateAssemblyColorChoices(fd({
+      productId: product.id,
+      oldComboKey: `${prata.id}:combo-que-nao-existe`,
+      colorChoicesJson: JSON.stringify({ [prata.id]: dourada.id }),
+    }))
+    expect(edit.success).toBe(false)
+
+    const assembly = await prisma.productAssembly.findFirstOrThrow({ where: { productId: product.id } })
+    expect((assembly.colorChoices as Record<string, string>)[prata.id]).toBe(prata.id)
   })
 })

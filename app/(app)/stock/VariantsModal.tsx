@@ -1,6 +1,7 @@
 'use client'
-import { useEffect, useRef } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import type { StockRow } from './StockExplorer'
+import { EditVariantColorsForm } from './EditVariantColorsForm'
 
 // Redesign "Estoque moderno" §10-12: modal nativa (<dialog>, mesmo padrão
 // zero-lib de components/AdjustStockButton.tsx) pras variações de cor de um
@@ -10,6 +11,12 @@ import type { StockRow } from './StockExplorer'
 // backdrop quando aberto via showModal()) ou ESC (evento nativo `close`).
 export function VariantsModal({ product, onClose }: { product: StockRow | null; onClose: () => void }) {
   const dialogRef = useRef<HTMLDialogElement>(null)
+  // Pedido "não tem como corrigir a cor gravada errada": qual variante
+  // (por `key`, o comboKey de ProductAssembly.colorChoices) está sendo
+  // editada agora, se alguma -- inline na própria linha, nunca um
+  // <dialog> aninhado dentro deste (mesmo cuidado já tomado em
+  // ComponentCategoryCard, ver seu comentário sobre o bug de stacking).
+  const [editingKey, setEditingKey] = useState<string | null>(null)
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -19,6 +26,10 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
     } else if (dialog.open) {
       dialog.close()
     }
+  }, [product])
+
+  useEffect(() => {
+    setEditingKey(null)
   }, [product])
 
   return (
@@ -56,24 +67,55 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
                   <th className="py-2 text-right">Prontas p/ montar</th>
                   <th className="py-2 text-right">Consignado</th>
                   <th className="py-2 text-right">Vendido</th>
+                  <th className="py-2"></th>
                 </tr>
               </thead>
               <tbody>
                 {product.variants.map((v) => (
-                  <tr key={v.key} className="tk-row">
-                    <td className="py-2">
-                      <span className="flex items-center gap-1.5">
-                        {v.colorHex && <span style={{ background: v.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                        {v.label}
-                      </span>
-                    </td>
-                    <td className={`text-right font-medium tabular-nums ${v.available > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'}`}>
-                      {v.available}
-                    </td>
-                    <td className="text-right tabular-nums text-slate-500 dark:text-slate-400">{v.readyToAssemble ?? '—'}</td>
-                    <td className="text-right tabular-nums text-slate-500 dark:text-slate-400">{v.consignado}</td>
-                    <td className="text-right tabular-nums text-slate-500 dark:text-slate-400">{v.sold}</td>
-                  </tr>
+                  <Fragment key={v.key}>
+                    <tr className="tk-row">
+                      <td className="py-2">
+                        <span className="flex items-center gap-1.5">
+                          {v.colorHex && <span style={{ background: v.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                          {v.label}
+                        </span>
+                      </td>
+                      <td className={`text-right font-medium tabular-nums ${v.available > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400 dark:text-slate-500'}`}>
+                        {v.available}
+                      </td>
+                      <td className="text-right tabular-nums text-slate-500 dark:text-slate-400">{v.readyToAssemble ?? '—'}</td>
+                      <td className="text-right tabular-nums text-slate-500 dark:text-slate-400">{v.consignado}</td>
+                      <td className="text-right tabular-nums text-slate-500 dark:text-slate-400">{v.sold}</td>
+                      <td className="text-right">
+                        <button
+                          type="button"
+                          onClick={() => setEditingKey(editingKey === v.key ? null : v.key)}
+                          className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400"
+                        >
+                          Editar
+                        </button>
+                      </td>
+                    </tr>
+                    {editingKey === v.key && (
+                      <tr className="bg-slate-50 dark:bg-slate-800/40">
+                        <td colSpan={6} className="px-2">
+                          <EditVariantColorsForm
+                            productId={product.productId}
+                            comboKey={v.key}
+                            onCancel={() => setEditingKey(null)}
+                            // Fecha a modal inteira (não só o formulário de edição):
+                            // `product` vem do state `viewingProduct` do componente
+                            // pai (capturado no clique de "Ver variações"), que
+                            // router.refresh() sozinho não atualiza -- deixaria a
+                            // modal aberta mostrando o rótulo de cor ANTIGO até o
+                            // usuário fechar e reabrir. Fechar força reabrir com
+                            // dado fresco na próxima vez.
+                            onSaved={onClose}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
