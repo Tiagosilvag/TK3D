@@ -99,6 +99,11 @@ export async function createProduct(formData: FormData): Promise<ActionResult> {
     })
   }
   revalidatePath('/products')
+  // Bug "produto excluído continua montado" -- ver comentário completo em
+  // deleteProduct abaixo. Um produto composto novo já pode aparecer direto
+  // na Montagem, então revalida aqui também.
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
@@ -182,15 +187,30 @@ export async function updateProduct(id: string, formData: FormData): Promise<Act
 
   revalidatePath('/products')
   revalidatePath(`/products/${id}`)
+  // Ver comentário em deleteProduct abaixo (bug "produto excluído continua
+  // montado") -- mudar isComposite/peças aqui também muda o que Montagem/
+  // Estoque mostram pra este produto.
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
 // Soft-delete: ProductionRun, Sale and ConsignmentDelivery reference Product,
 // so a product that has been used in existing runs/sales cannot be physically
 // removed.
+//
+// Bug "produto excluído continua montado": deleteProduct só revalidava
+// '/products' -- getAssemblyOverview/getOwnStockSummary já filtram
+// active:true corretamente (o produto excluído some da query no próximo
+// carregamento real), mas a página de Montagem/Estoque continuava servindo
+// a versão em cache (RSC) até algo MAIS revalidar essas duas rotas por
+// acaso, exatamente o mesmo bug de cache já corrigido em
+// actions/productionRuns.ts (revalidatePath ausente pra '/assembly'/'/stock').
 export async function deleteProduct(id: string): Promise<ActionResult> {
   await prisma.product.update({ where: { id }, data: { active: false } })
   revalidatePath('/products')
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
@@ -465,12 +485,18 @@ export async function addProductSupplyUsage(formData: FormData): Promise<ActionR
     create: parsed.data,
   })
   revalidatePath('/products')
+  // Ver comentário em deleteProduct (bug "produto excluído continua montado").
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
 export async function removeProductSupplyUsage(usageId: string): Promise<ActionResult> {
   await prisma.productSupplyUsage.delete({ where: { id: usageId } })
   revalidatePath('/products')
+  // Ver comentário em deleteProduct (bug "produto excluído continua montado").
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
@@ -494,12 +520,18 @@ export async function addProductPackagingUsage(formData: FormData): Promise<Acti
     create: parsed.data,
   })
   revalidatePath('/products')
+  // Ver comentário em deleteProduct (bug "produto excluído continua montado").
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
 export async function removeProductPackagingUsage(usageId: string): Promise<ActionResult> {
   await prisma.productPackagingUsage.delete({ where: { id: usageId } })
   revalidatePath('/products')
+  // Ver comentário em deleteProduct (bug "produto excluído continua montado").
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
@@ -524,12 +556,18 @@ export async function addProductAccessoryUsage(formData: FormData): Promise<Acti
     create: parsed.data,
   })
   revalidatePath('/products')
+  // Ver comentário em deleteProduct (bug "produto excluído continua montado").
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
 export async function removeProductAccessoryUsage(usageId: string): Promise<ActionResult> {
   await prisma.productAccessoryUsage.delete({ where: { id: usageId } })
   revalidatePath('/products')
+  // Ver comentário em deleteProduct (bug "produto excluído continua montado").
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
@@ -608,12 +646,18 @@ export async function addProductComponentUsage(formData: FormData): Promise<Acti
     create: { productId, componentProductId, quantity },
   })
   revalidatePath('/products')
+  // Ver comentário em deleteProduct (bug "produto excluído continua montado").
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
 export async function removeProductComponentUsage(usageId: string): Promise<ActionResult> {
   await prisma.productComponentUsage.delete({ where: { id: usageId } })
   revalidatePath('/products')
+  // Ver comentário em deleteProduct (bug "produto excluído continua montado").
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 

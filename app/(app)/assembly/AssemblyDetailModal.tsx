@@ -2,9 +2,37 @@
 import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import type { AssemblyStatus } from '@/actions/assembly'
+import type { AssemblyStatus, AssemblyPartColorOption } from '@/actions/assembly'
 import { ConfirmAssemblyForm } from './ConfirmAssemblyForm'
 import type { ComponentOption } from './ComponentCategoryCard'
+
+// Bug "não está aparecendo todos os disponíveis... está mostrando só
+// vermelho": as tabelas de Peça/Componentes mostravam só a cor com MAIS
+// disponível (ex.: Mosquetão Vermelho 8, escondendo Marrom 0) -- quando
+// há mais de uma cor, mostra uma linha por cor (mesma info que o seletor
+// de cor mais abaixo já expõe, só que resumida aqui também).
+function ColorBreakdown({ colorOptions }: { colorOptions: AssemblyPartColorOption[] | null }) {
+  if (!colorOptions || colorOptions.length === 0) return null
+  if (colorOptions.length === 1) {
+    const c = colorOptions[0]
+    return (
+      <span className="mt-0.5 flex items-center gap-1.5 text-xs font-normal text-slate-500 dark:text-slate-400">
+        {c.colorHex && <span style={{ background: c.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+        {c.label}
+      </span>
+    )
+  }
+  return (
+    <span className="mt-0.5 flex flex-col gap-0.5 text-xs font-normal">
+      {colorOptions.map((c) => (
+        <span key={c.key} className={`flex items-center gap-1.5 ${c.available > 0 ? 'text-slate-500 dark:text-slate-400' : 'text-slate-400 dark:text-slate-600'}`}>
+          {c.colorHex && <span style={{ background: c.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+          {c.label} — {c.available}
+        </span>
+      ))}
+    </span>
+  )
+}
 
 // Bug "clicar num produto não faz nada visível": o detalhe de Montagem
 // (status?.productId via ?productId=) renderizava embaixo da lista geral
@@ -98,19 +126,11 @@ export function AssemblyDetailModal({
                 </thead>
                 <tbody>
                   {status.parts.map((part) => {
-                    const repColor = part.colorOptions && part.colorOptions.length > 0
-                      ? part.colorOptions.reduce((a, b) => (b.available > a.available ? b : a))
-                      : null
                     return (
                       <tr key={part.partId} className={`tk-row align-top ${part.maxUnitsFromThisPart <= 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
                         <td className="py-2">
                           {part.name}
-                          {repColor && (
-                            <span className="mt-0.5 flex items-center gap-1.5 text-xs font-normal text-slate-500 dark:text-slate-400">
-                              {repColor.colorHex && <span style={{ background: repColor.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                              {repColor.label}
-                            </span>
-                          )}
+                          <ColorBreakdown colorOptions={part.colorOptions} />
                         </td>
                         <td>{part.quantityPerUnit}</td>
                         <td>{part.produced}</td>
@@ -136,19 +156,11 @@ export function AssemblyDetailModal({
                   </thead>
                   <tbody>
                     {status.components.map((component) => {
-                      const repColor = component.colorOptions && component.colorOptions.length > 0
-                        ? component.colorOptions.reduce((a, b) => (b.available > a.available ? b : a))
-                        : null
                       return (
                         <tr key={component.componentProductId} className={`tk-row align-top ${component.maxUnitsFromThisComponent <= 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
                           <td className="py-2">
                             {component.name}
-                            {repColor && (
-                              <span className="mt-0.5 flex items-center gap-1.5 text-xs font-normal text-slate-500 dark:text-slate-400">
-                                {repColor.colorHex && <span style={{ background: repColor.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                                {repColor.label}
-                              </span>
-                            )}
+                            <ColorBreakdown colorOptions={component.colorOptions} />
                           </td>
                           <td>{component.quantityPerUnit}</td>
                           <td>{component.produced}</td>

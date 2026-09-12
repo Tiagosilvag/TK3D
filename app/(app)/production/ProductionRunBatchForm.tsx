@@ -38,6 +38,13 @@ interface FilamentComponentRow {
 // cada peça tem a sua própria, editável aqui.
 interface RunRow {
   key: string
+  // Melhoria "Produção" -- "mais de uma cor da mesma peça na mesma
+  // produção": `key` (identidade local, pra React/updateRow) e `partId`
+  // (o que realmente vai pro servidor como productPartId) eram a MESMA
+  // string antes -- impedia ter 2 linhas da mesma peça (chave duplicada).
+  // Agora `partId` é fixo por peça (null = produto simples) e `key` vira
+  // único por LINHA (peça original ou uma cópia dela nesta leva).
+  partId: string | null
   label: string
   checked: boolean
   date: string
@@ -49,6 +56,9 @@ interface RunRow {
   timeWastedHours: string
   wasteReason: string
   notes: string
+  // true só pra linha criada via "+ Adicionar outra cor desta peça" --
+  // só essas podem ser removidas (a peça original nunca some da lista).
+  isColorCopy: boolean
 }
 
 // Melhoria "Produção" (reformulação Plate) REGRA 9: um item de uma Plate --
@@ -74,6 +84,7 @@ interface PlateItemRow {
 function buildRowsFromParts(parts: ProductProductionPartDefault[]): RunRow[] {
   return parts.map((p) => ({
     key: p.id,
+    partId: p.id,
     label: p.name,
     checked: true,
     date: today(),
@@ -85,6 +96,7 @@ function buildRowsFromParts(parts: ProductProductionPartDefault[]): RunRow[] {
     timeWastedHours: '0',
     wasteReason: '',
     notes: '',
+    isColorCopy: false,
   }))
 }
 
@@ -294,6 +306,7 @@ export function ProductionRunBatchForm({
         setRows([
           {
             key: 'product',
+            partId: null,
             label: product?.name ?? '',
             checked: true,
             date: today(),
@@ -305,6 +318,7 @@ export function ProductionRunBatchForm({
             timeWastedHours: '0',
             wasteReason: '',
             notes: '',
+            isColorCopy: false,
           },
         ])
       }
@@ -315,6 +329,37 @@ export function ProductionRunBatchForm({
 
   function updateRow(key: string, patch: Partial<RunRow>) {
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)))
+  }
+
+  // Melhoria "Produção": "produzir mais de uma cor da mesma peça na mesma
+  // leva" (ex.: PICOLÉ 4 numa cor + 4 noutra) -- duplica a linha da peça
+  // com um `key` novo (só identidade local, nunca vai pro servidor) mas
+  // mesmo `partId` (o productPartId de verdade), filamento/quantidade
+  // zerados pra forçar escolher a nova cor e a nova quantidade. Insere
+  // logo depois da linha original, pra ficar visualmente junto dela.
+  function duplicateRowColor(key: string) {
+    setRows((prev) => {
+      const index = prev.findIndex((r) => r.key === key)
+      if (index === -1) return prev
+      const original = prev[index]
+      const copy: RunRow = {
+        ...original,
+        key: `${original.partId ?? 'product'}-cor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        label: `${original.label} (outra cor)`,
+        filaments: original.filaments.map((f) => ({ ...f, filamentId: '', gramsWasted: '0' })),
+        quantityPlanned: '',
+        quantitySuccess: '',
+        timeWastedHours: '0',
+        wasteReason: '',
+        notes: '',
+        isColorCopy: true,
+      }
+      return [...prev.slice(0, index + 1), copy, ...prev.slice(index + 1)]
+    })
+  }
+
+  function removeRow(key: string) {
+    setRows((prev) => prev.filter((r) => r.key !== key))
   }
 
   function updateRowFilament(key: string, index: number, patch: Partial<FilamentComponentRow>) {
@@ -436,7 +481,7 @@ export function ProductionRunBatchForm({
       'itemsJson',
       JSON.stringify(
         checkedRows.map((r) => ({
-          productPartId: r.key === 'product' ? null : r.key,
+          productPartId: r.partId,
           printerId: r.printerId,
           date: r.date,
           quantityPlanned: parseInt(r.quantityPlanned, 10),
@@ -571,12 +616,30 @@ export function ProductionRunBatchForm({
                     const planned = parseInt(row.quantityPlanned, 10) || 0
                     return (
                       <div key={row.key} className={`rounded-lg border p-3 ${row.checked ? 'border-slate-200 dark:border-slate-700' : 'border-slate-100 opacity-60 dark:border-slate-800'}`}>
-                        {isComposite && (
-                          <label className="mb-2 flex items-center gap-2 text-sm font-medium">
-                            <input type="checkbox" checked={row.checked} onChange={(e) => updateRow(row.key, { checked: e.target.checked })} className="rounded border" />
-                            {row.label}
-                          </label>
-                        )}
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          {isComposite ? (
+                            <label className="flex items-center gap-2 text-sm font-medium">
+                              <input type="checkbox" checked={row.checked} onChange={(e) => updateRow(row.key, { checked: e.target.checked })} className="rounded border" />
+                              {row.label}
+                            </label>
+                          ) : (
+                            <span className="text-sm font-medium">{row.label}</span>
+                          )}
+                          {/* Melhoria "Produção": produzir a mesma peça em mais de uma
+                              cor na mesma leva (ex.: PICOLÉ 4 numa cor + 4 noutra) --
+                              cada cópia vira um item independente no lote (mesmo
+                              productPartId, printerId/quantidade/filamento próprios). */}
+                          <div className="flex shrink-0 gap-3 text-xs font-medium">
+                            <button type="button" onClick={() => duplicateRowColor(row.key)} className="text-amber-600 hover:underline dark:text-amber-400">
+                              + Adicionar outra cor
+                            </button>
+                            {row.isColorCopy && (
+                              <button type="button" onClick={() => removeRow(row.key)} className="tk-link-danger">
+                                Remover
+                              </button>
+                            )}
+                          </div>
+                        </div>
 
                         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
                           <label className="text-xs">

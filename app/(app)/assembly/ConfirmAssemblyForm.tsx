@@ -158,7 +158,7 @@ export function ConfirmAssemblyForm({
                   <option value="" disabled>Selecione a cor</option>
                   {item.colorOptions!.map((o) => (
                     <option key={o.key} value={o.key} disabled={o.available <= 0}>
-                      {o.label} ({o.available} disponível{o.available === 1 ? '' : 'is'})
+                      {o.label} ({o.available} {o.available === 1 ? 'disponível' : 'disponíveis'})
                     </option>
                   ))}
                 </select>

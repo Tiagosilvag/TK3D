@@ -168,7 +168,7 @@ export function SaleForm({
             <option value="" disabled>Selecione a cor</option>
             {selectedProduct!.variants.map((v) => (
               <option key={v.key} value={v.key} disabled={v.available <= 0}>
-                {v.label} ({v.available} disponível{v.available === 1 ? '' : 'is'})
+                {v.label} ({v.available} {v.available === 1 ? 'disponível' : 'disponíveis'})
               </option>
             ))}
           </select>
