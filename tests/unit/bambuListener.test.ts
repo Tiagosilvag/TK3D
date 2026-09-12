@@ -57,4 +57,44 @@ describe('createListenerCore', () => {
     core.start()
     expect(core.getLiveStatus('p1')).toBeNull()
   })
+
+  it('chama onJobStart uma vez quando o nome do arquivo muda (job novo)', () => {
+    const handlers: Record<string, (payload: unknown) => void> = {}
+    const onJobStart = vi.fn()
+    const core = createListenerCore({
+      printers: [{ id: 'p1', bambuEnabled: true, bambuSerial: 'SER1' }],
+      subscribe: (serial, handler) => {
+        handlers[serial] = handler
+      },
+      onCapture: vi.fn(),
+      onJobStart,
+    })
+    core.start()
+    handlers['SER1']({ print: { gcode_state: 'RUNNING', gcode_file: 'a.3mf' } })
+    expect(onJobStart).toHaveBeenCalledTimes(1)
+    expect(onJobStart).toHaveBeenCalledWith('p1', 'a.3mf')
+    // Mesmo arquivo em ticks seguintes -- não dispara de novo
+    handlers['SER1']({ print: { gcode_state: 'RUNNING', gcode_file: 'a.3mf' } })
+    expect(onJobStart).toHaveBeenCalledTimes(1)
+    // Arquivo novo -- dispara de novo
+    handlers['SER1']({ print: { gcode_state: 'RUNNING', gcode_file: 'b.3mf' } })
+    expect(onJobStart).toHaveBeenCalledTimes(2)
+    expect(onJobStart).toHaveBeenLastCalledWith('p1', 'b.3mf')
+  })
+
+  it('não chama onJobStart quando o report não traz gcode_file', () => {
+    const handlers: Record<string, (payload: unknown) => void> = {}
+    const onJobStart = vi.fn()
+    const core = createListenerCore({
+      printers: [{ id: 'p1', bambuEnabled: true, bambuSerial: 'SER1' }],
+      subscribe: (serial, handler) => {
+        handlers[serial] = handler
+      },
+      onCapture: vi.fn(),
+      onJobStart,
+    })
+    core.start()
+    handlers['SER1']({ print: { gcode_state: 'IDLE' } })
+    expect(onJobStart).not.toHaveBeenCalled()
+  })
 })
