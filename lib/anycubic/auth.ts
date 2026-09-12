@@ -14,10 +14,20 @@ async function signedFetch(path: string, opts: { method?: 'GET' | 'POST'; body?:
   })
 }
 
+// Copiar a saída do PowerShell (Task de extração do token) pode trazer
+// quebras de linha/espaços NO MEIO do JWT, quando o console quebra a linha
+// visualmente e isso vira newline literal ao colar -- trim() só limpa as
+// pontas. Removendo todo espaço em branco (o token nunca contém espaço de
+// verdade) resolve; bug real encontrado testando contra a conta do usuário
+// (login retornava "inválido" mesmo com o token certo).
+function sanitizeSlicerToken(raw: string): string {
+  return raw.replace(/\s+/g, '')
+}
+
 export async function exchangeSlicerToken(pastedToken: string): Promise<{ authToken: string }> {
   const res = await signedFetch('/v3/public/loginWithAccessToken', {
     method: 'POST',
-    body: { device_type: 'pcf', access_token: pastedToken.trim() },
+    body: { device_type: 'pcf', access_token: sanitizeSlicerToken(pastedToken) },
   })
   if (!res.ok) throw new Error('Falha ao trocar o token do Slicer Next — tente novamente')
   const data = (await res.json()) as { data?: { token?: string } }
