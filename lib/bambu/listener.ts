@@ -124,6 +124,13 @@ export async function startBambuListener(): Promise<void> {
   client.on('error', (err) => {
     connectionStatus = 'expired'
     console.error('[bambu] erro na conexão MQTT:', err.message)
+    // CONNACK negativo (credencial errada/expirada) nunca se resolve
+    // tentando de novo -- reconexão insistente nesse tipo de erro foi o
+    // que causou uma race condition real na lib mqtt na integração
+    // Anycubic (timer de "connack timeout" virando exceção não tratada e
+    // derrubando o processo INTEIRO). Mesma defesa aplicada aqui por
+    // simetria/segurança, mesmo sem ter reproduzido o crash neste listener.
+    if (err.message.startsWith('Connection refused:')) client?.end(true)
   })
 
   core = createListenerCore({

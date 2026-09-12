@@ -118,6 +118,15 @@ export async function startAnycubicListener(): Promise<void> {
   client.on('error', (err) => {
     connectionStatus = 'expired'
     console.error('[anycubic] erro na conexão MQTT:', err.message)
+    // CONNACK negativo (credencial errada/expirada, não autorizado etc.)
+    // nunca se resolve tentando de novo -- deixar o reconnectPeriod bater
+    // insistentemente nesse tipo de erro foi o que disparou uma race
+    // condition real na lib mqtt (um timer de "connack timeout" de uma
+    // tentativa anterior virando exceção não tratada e derrubando o
+    // processo INTEIRO, inclusive o listener da Bambu, visto em produção).
+    // Parar de vez aqui e exigir reconectar manual (botão em Configurações)
+    // depois de corrigir a credencial.
+    if (err.message.startsWith('Connection refused:')) client?.end(true)
   })
 
   core = createAnycubicListenerCore({
