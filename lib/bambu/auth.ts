@@ -11,6 +11,7 @@ const BAMBU_LOGIN_URL = 'https://api.bambulab.com/v1/user-service/user/login'
 const BAMBU_SEND_CODE_URL = 'https://api.bambulab.com/v1/user-service/user/sendemail/code'
 const BAMBU_PREFERENCE_URL = 'https://api.bambulab.com/v1/design-user-service/my/preference'
 const BAMBU_BIND_URL = 'https://api.bambulab.com/v1/iot-service/api/user/bind'
+const BAMBU_TASKS_URL = 'https://api.bambulab.com/v1/user-service/my/tasks'
 
 export type LoginStep1Result = { status: 'code_required' } | { status: 'authenticated'; accessToken: string }
 
@@ -82,4 +83,47 @@ export async function fetchBoundDevices(accessToken: string): Promise<BambuDevic
       productName: d.dev_product_name ?? '',
       online: Boolean(d.online),
     }))
+}
+
+export type BambuCloudTask = {
+  weightGrams: number | null
+  thumbnailUrl: string | null
+  status: string
+}
+
+type RawTask = { weight?: string | number; cover?: string; thumbnail?: string; status?: string }
+
+// Histórico oficial de impressões da conta (achado nesta sessão) -- separado
+// do MQTT ao vivo, com peso REAL calculado pela própria Bambu (mais
+// confiável que nossa estimativa via delta do AMS) e foto da peça impressa.
+// Usado só pra enriquecer uma captura já detectada pelo jobTracker via
+// MQTT -- nunca substitui a detecção de início/fim do job em si.
+//
+// AVISO: o formato exato da resposta não foi validado contra a API real
+// (só reconstruído a partir de descrição de terceiro, imprecisa sobre
+// aninhamento) -- por isso tenta algumas formas plausíveis (`hits` como
+// array direto, estilo Elasticsearch `hits.hits`, ou `tasks`) em vez de
+// assumir uma só. Se nenhuma bater, devolve null em vez de quebrar --
+// ajustar aqui depois de testar contra uma conta real, mesma lição do
+// login (Task de fix anterior desta sessão).
+export async function fetchLatestTask(accessToken: string, deviceId: string): Promise<BambuCloudTask | null> {
+  const url = `${BAMBU_TASKS_URL}?deviceId=${encodeURIComponent(deviceId)}&limit=1`
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+  if (!res.ok) throw new Error('Falha ao buscar histórico de impressões da Bambu')
+  const data = (await res.json()) as {
+    hits?: RawTask[] | { hits?: RawTask[] }
+    tasks?: RawTask[]
+  }
+  const task: RawTask | undefined = Array.isArray(data.hits)
+    ? data.hits[0]
+    : Array.isArray(data.hits?.hits)
+      ? data.hits.hits[0]
+      : data.tasks?.[0]
+  if (!task) return null
+  const weightGrams = task.weight !== undefined && task.weight !== '' && !Number.isNaN(Number(task.weight)) ? Number(task.weight) : null
+  return {
+    weightGrams,
+    thumbnailUrl: task.cover ?? task.thumbnail ?? null,
+    status: task.status ?? 'unknown',
+  }
 }
