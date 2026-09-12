@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { getProductionStatusBadge } from '@/lib/format'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -195,7 +195,20 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
           <h1 className="mt-1 font-display text-lg font-semibold text-slate-900 dark:text-slate-100">{product.name}</h1>
         </div>
         <ConfirmDeleteForm
-          action={async () => { 'use server'; return await deleteProduct(product.id) }}
+          action={async () => {
+            'use server'
+            const result = await deleteProduct(product.id)
+            // Bug "excluir na página de produtos não acontece nada": esta é a
+            // página de DETALHE (/products/[id]), não a listagem -- deleteProduct
+            // só revalida '/products' (a listagem), nunca esta rota dinâmica, e
+            // ConfirmDeleteForm nunca navegava sozinho em caso de sucesso. Sem
+            // redirect, o usuário ficava parado na ficha do produto recém-
+            // excluído, sem nenhum sinal visível, até voltar manualmente pra
+            // listagem. redirect() aqui funciona através do useActionState do
+            // ConfirmDeleteForm normalmente (Next.js intercepta o NEXT_REDIRECT).
+            if (result.success) redirect('/products')
+            return result
+          }}
           label="Remover produto"
           confirmMessage="Remover este produto? Ele deixa de aparecer nas listagens, mas o histórico é preservado."
         />
