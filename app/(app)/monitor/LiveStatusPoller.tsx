@@ -40,7 +40,16 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
       {printers.map((printer) => {
         const status = printer.status
         return (
-          <div key={printer.printerId} className="tk-panel p-4">
+          <div key={printer.printerId} className="tk-panel flex gap-3 p-4">
+            {printer.thumbnailUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={printer.thumbnailUrl}
+                alt="Modelo em impressão"
+                className="h-16 w-16 shrink-0 rounded-lg object-cover"
+              />
+            )}
+            <div className="min-w-0 flex-1">
             <h3 className="font-display text-base font-semibold text-slate-900 dark:text-slate-100">{printer.name}</h3>
             {!status ? (
               <p className="mt-2 text-sm text-slate-400">Sem dados ainda</p>
@@ -86,6 +95,7 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                 </details>
               </div>
             )}
+            </div>
           </div>
         )
       })}

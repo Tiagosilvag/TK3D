@@ -17,9 +17,15 @@ export function createListenerCore(opts: {
   printers: PrinterRef[]
   subscribe: (serial: string, onMessage: (payload: unknown) => void) => void
   onCapture: (printerId: string, capture: CaptureDraft) => void
+  // Ajuste "thumbnail ao vivo" (2026-09-12): dispara UMA vez quando o nome
+  // do arquivo em impressão muda (job novo) -- nunca a cada tick, e nunca
+  // pra I/O de rede aqui dentro (núcleo continua puro/testável; quem busca
+  // a foto de verdade é a casca real, via este callback).
+  onJobStart?: (printerId: string, gcodeFile: string) => void
 }) {
   const liveStatus = new Map<string, BambuStatus>()
   const trackers = new Map<string, ReturnType<typeof createJobTracker>>()
+  const lastGcodeFile = new Map<string, string | null>()
 
   function start() {
     for (const printer of opts.printers) {
@@ -30,6 +36,12 @@ export function createListenerCore(opts: {
         const status = parseBambuReport(payload)
         if (!status) return
         liveStatus.set(printer.id, status)
+
+        if (status.gcodeFile && status.gcodeFile !== lastGcodeFile.get(printer.id)) {
+          lastGcodeFile.set(printer.id, status.gcodeFile)
+          opts.onJobStart?.(printer.id, status.gcodeFile)
+        }
+
         const capture = tracker.handleStatus(status, new Date())
         if (capture) opts.onCapture(printer.id, capture)
       })
@@ -57,6 +69,11 @@ export type BambuConnectionStatus = 'connected' | 'expired' | 'not_configured' |
 let connectionStatus: BambuConnectionStatus = 'not_configured'
 let core: ReturnType<typeof createListenerCore> | null = null
 let client: MqttClient | null = null
+// Thumbnail do job atual por impressora (ajuste "thumbnail ao vivo") --
+// preenchida quando um job novo começa, via histórico da nuvem. Confirmado
+// pelo usuário: a Bambu cria o registro de task no INÍCIO do job (não só
+// no fim), então a task "mais recente" já é a que está imprimindo agora.
+const currentThumbnails = new Map<string, string | null>()
 
 const BROKER_BY_REGION: Record<string, string> = {
   US: 'mqtts://us.mqtt.bambulab.com:8883',
@@ -157,6 +174,17 @@ export async function startBambuListener(): Promise<void> {
           thumbnailUrl,
         },
       })
+      currentThumbnails.delete(printerId)
+    },
+    onJobStart: async (printerId, _gcodeFile) => {
+      const serial = printers.find((p) => p.id === printerId)?.bambuSerial
+      if (!serial) return
+      try {
+        const task = await fetchLatestTask(token, serial)
+        currentThumbnails.set(printerId, task?.thumbnailUrl ?? null)
+      } catch (err) {
+        console.error('[bambu] falha ao buscar thumbnail do job atual:', err)
+      }
     },
   })
   core.start()
@@ -164,6 +192,11 @@ export async function startBambuListener(): Promise<void> {
 
 export function getLiveStatus(printerId: string): BambuStatus | null {
   return core?.getLiveStatus(printerId) ?? null
+}
+
+// Thumbnail (render do modelo, não foto de câmera) do job em andamento.
+export function getCurrentThumbnail(printerId: string): string | null {
+  return currentThumbnails.get(printerId) ?? null
 }
 
 // Reinicia o listener sem precisar reiniciar o container -- chamado depois
@@ -178,6 +211,7 @@ export async function restartBambuListener(): Promise<void> {
     client = null
   }
   core = null
+  currentThumbnails.clear()
   connectionStatus = 'not_configured'
   await startBambuListener()
 }

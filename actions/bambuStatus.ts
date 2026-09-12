@@ -1,6 +1,6 @@
 'use server'
 import { prisma } from '@/lib/prisma'
-import { getLiveStatus, getConnectionStatus, restartBambuListener } from '@/lib/bambu/listener'
+import { getLiveStatus, getConnectionStatus, restartBambuListener, getCurrentThumbnail } from '@/lib/bambu/listener'
 import { decryptCredential } from '@/lib/bambu/crypto'
 import { fetchBoundDevices, fetchTaskHistory, type BambuDevice, type BambuCloudTaskFull } from '@/lib/bambu/auth'
 import { revalidatePath } from 'next/cache'
@@ -43,6 +43,7 @@ export async function getAllLiveBambuStatuses() {
     printerId: printer.id,
     name: printer.nickname ?? printer.name,
     status: getLiveStatus(printer.id),
+    thumbnailUrl: getCurrentThumbnail(printer.id),
   }))
 }
 
