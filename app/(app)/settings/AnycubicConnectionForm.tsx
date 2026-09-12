@@ -1,8 +1,9 @@
 'use client'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { connectAnycubicAccount, disconnectAnycubicAccount } from '@/actions/anycubicAuth'
 import { reconnectAnycubicListener, type getAnycubicStatus } from '@/actions/anycubicStatus'
+import { extractSlicerTokenFromText } from '@/lib/anycubic/tokenExtraction'
 import { SubmitButton } from '@/components/SubmitButton'
 
 type ConnectionStatus = Awaited<ReturnType<typeof getAnycubicStatus>>
@@ -26,6 +27,22 @@ export function AnycubicConnectionForm({
 }) {
   const router = useRouter()
   const [error, setError] = useState<string | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = '' // permite escolher o mesmo arquivo de novo depois
+    if (!file) return
+    setFileError(null)
+    const text = await file.text()
+    const token = extractSlicerTokenFromText(text)
+    if (!token) {
+      setFileError('Não achei um token nesse arquivo — confira se escolheu o log/conf certo do Slicer Next')
+      return
+    }
+    if (textareaRef.current) textareaRef.current.value = token
+  }
 
   async function handleConnect(formData: FormData) {
     setError(null)
@@ -87,8 +104,18 @@ Select-String -Path $log.FullName -Pattern 'accessToken = ([^,\\s]+)' | Select-O
         ) : (
           <form action={handleConnect} className="flex flex-col gap-3">
             <label className="text-sm">
+              Selecionar arquivo de log do Slicer Next (opcional — preenche o token sozinho)
+              <input
+                type="file"
+                accept=".log,.conf,.txt"
+                onChange={handleFileSelect}
+                className="tk-input flex-1 file:mr-3 file:rounded-md file:border-0 file:bg-violet-600 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white dark:file:bg-violet-500 dark:file:text-slate-950"
+              />
+            </label>
+            {fileError && <p className="text-xs text-red-600 dark:text-red-400">{fileError}</p>}
+            <label className="text-sm">
               Token do Slicer Next
-              <textarea name="slicerToken" className="tk-input-full" rows={3} required placeholder="eyJhbGciOi..." />
+              <textarea ref={textareaRef} name="slicerToken" className="tk-input-full" rows={3} required placeholder="eyJhbGciOi..." />
             </label>
             {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
             <SubmitButton pendingLabel="Conectando…">Conectar</SubmitButton>
