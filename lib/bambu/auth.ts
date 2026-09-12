@@ -91,39 +91,97 @@ export type BambuCloudTask = {
   status: string
 }
 
-type RawTask = { weight?: string | number; cover?: string; thumbnail?: string; status?: string }
+export type BambuCloudTaskFull = BambuCloudTask & {
+  id: string
+  title: string | null
+  deviceName: string | null
+  lengthM: number | null
+  costTimeSeconds: number | null
+  startTime: string | null
+  endTime: string | null
+}
+
+type RawTask = Record<string, unknown>
+
+function numField(task: RawTask, ...keys: string[]): number | null {
+  for (const key of keys) {
+    const v = task[key]
+    if (v !== undefined && v !== null && v !== '' && !Number.isNaN(Number(v))) return Number(v)
+  }
+  return null
+}
+
+function strField(task: RawTask, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const v = task[key]
+    if (typeof v === 'string' && v.length > 0) return v
+  }
+  return null
+}
+
+// Extrai a lista de tasks de qualquer um dos formatos plausíveis de
+// resposta -- ver aviso em fetchTaskHistory sobre o formato não ter sido
+// validado contra a API real.
+function extractTasks(data: unknown): RawTask[] {
+  if (typeof data !== 'object' || data === null) return []
+  const d = data as Record<string, unknown>
+  if (Array.isArray(d.hits)) return d.hits as RawTask[]
+  const hitsObj = d.hits as { hits?: unknown } | undefined
+  if (hitsObj && Array.isArray(hitsObj.hits)) return hitsObj.hits as RawTask[]
+  if (Array.isArray(d.tasks)) return d.tasks as RawTask[]
+  return []
+}
+
+function mapTask(task: RawTask): BambuCloudTaskFull {
+  return {
+    id: strField(task, 'id', 'taskId') ?? '',
+    title: strField(task, 'title', 'designTitle'),
+    deviceName: strField(task, 'deviceName', 'device_name'),
+    status: strField(task, 'status') ?? 'unknown',
+    weightGrams: numField(task, 'weight'),
+    lengthM: numField(task, 'length'),
+    costTimeSeconds: numField(task, 'costTime', 'cost_time'),
+    startTime: strField(task, 'startTime', 'start_time'),
+    endTime: strField(task, 'endTime', 'end_time'),
+    thumbnailUrl: strField(task, 'cover', 'thumbnail'),
+  }
+}
+
+export type TaskHistoryPage = { tasks: BambuCloudTaskFull[]; nextCursor: string | null }
 
 // Histórico oficial de impressões da conta (achado nesta sessão) -- separado
 // do MQTT ao vivo, com peso REAL calculado pela própria Bambu (mais
-// confiável que nossa estimativa via delta do AMS) e foto da peça impressa.
-// Usado só pra enriquecer uma captura já detectada pelo jobTracker via
-// MQTT -- nunca substitui a detecção de início/fim do job em si.
+// confiável que nossa estimativa via delta do AMS), foto da peça e duração
+// exata. Paginado por cursor (`after`) -- como a resposta real não expõe um
+// campo de "próximo cursor" confirmado, usa o id da última task da página
+// como cursor da próxima (convenção comum, mas não confirmada -- ver aviso).
 //
 // AVISO: o formato exato da resposta não foi validado contra a API real
 // (só reconstruído a partir de descrição de terceiro, imprecisa sobre
-// aninhamento) -- por isso tenta algumas formas plausíveis (`hits` como
-// array direto, estilo Elasticsearch `hits.hits`, ou `tasks`) em vez de
-// assumir uma só. Se nenhuma bater, devolve null em vez de quebrar --
-// ajustar aqui depois de testar contra uma conta real, mesma lição do
-// login (Task de fix anterior desta sessão).
-export async function fetchLatestTask(accessToken: string, deviceId: string): Promise<BambuCloudTask | null> {
-  const url = `${BAMBU_TASKS_URL}?deviceId=${encodeURIComponent(deviceId)}&limit=1`
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+// aninhamento e nomes de campo) -- por isso tenta várias formas plausíveis
+// em vez de assumir uma só. Ajustar aqui depois de testar contra uma conta
+// real, mesma lição do login (fix anterior desta sessão).
+export async function fetchTaskHistory(
+  accessToken: string,
+  opts: { deviceId?: string; cursor?: string; limit?: number } = {},
+): Promise<TaskHistoryPage> {
+  const params = new URLSearchParams()
+  if (opts.deviceId) params.set('deviceId', opts.deviceId)
+  if (opts.cursor) params.set('after', opts.cursor)
+  params.set('limit', String(opts.limit ?? 20))
+
+  const res = await fetch(`${BAMBU_TASKS_URL}?${params.toString()}`, { headers: { Authorization: `Bearer ${accessToken}` } })
   if (!res.ok) throw new Error('Falha ao buscar histórico de impressões da Bambu')
-  const data = (await res.json()) as {
-    hits?: RawTask[] | { hits?: RawTask[] }
-    tasks?: RawTask[]
-  }
-  const task: RawTask | undefined = Array.isArray(data.hits)
-    ? data.hits[0]
-    : Array.isArray(data.hits?.hits)
-      ? data.hits.hits[0]
-      : data.tasks?.[0]
+  const rawTasks = extractTasks(await res.json())
+  const tasks = rawTasks.map(mapTask)
+  const limit = opts.limit ?? 20
+  const nextCursor = tasks.length >= limit ? (tasks[tasks.length - 1]?.id || null) : null
+  return { tasks, nextCursor }
+}
+
+export async function fetchLatestTask(accessToken: string, deviceId: string): Promise<BambuCloudTask | null> {
+  const { tasks } = await fetchTaskHistory(accessToken, { deviceId, limit: 1 })
+  const task = tasks[0]
   if (!task) return null
-  const weightGrams = task.weight !== undefined && task.weight !== '' && !Number.isNaN(Number(task.weight)) ? Number(task.weight) : null
-  return {
-    weightGrams,
-    thumbnailUrl: task.cover ?? task.thumbnail ?? null,
-    status: task.status ?? 'unknown',
-  }
+  return { weightGrams: task.weightGrams, thumbnailUrl: task.thumbnailUrl, status: task.status }
 }

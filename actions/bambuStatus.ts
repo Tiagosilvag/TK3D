@@ -2,7 +2,7 @@
 import { prisma } from '@/lib/prisma'
 import { getLiveStatus, getConnectionStatus, restartBambuListener } from '@/lib/bambu/listener'
 import { decryptCredential } from '@/lib/bambu/crypto'
-import { fetchBoundDevices, type BambuDevice } from '@/lib/bambu/auth'
+import { fetchBoundDevices, fetchTaskHistory, type BambuDevice, type BambuCloudTaskFull } from '@/lib/bambu/auth'
 import { revalidatePath } from 'next/cache'
 
 export async function getBambuConnectionStatus() {
@@ -44,6 +44,25 @@ export async function getAllLiveBambuStatuses() {
     name: printer.nickname ?? printer.name,
     status: getLiveStatus(printer.id),
   }))
+}
+
+// Histórico oficial completo da conta Bambu -- busca ao vivo direto da
+// nuvem a cada chamada, nunca salvo no banco (é literalmente o registro
+// deles, não precisa duplicar). Paginado por cursor (ver lib/bambu/auth.ts).
+export async function getBambuTaskHistory(
+  cursor?: string,
+): Promise<{ success: boolean; tasks?: BambuCloudTaskFull[]; nextCursor?: string | null; error?: string }> {
+  const settings = await prisma.settings.findUnique({ where: { id: 1 } })
+  if (!settings?.bambuCloudCredentialEncrypted) {
+    return { success: false, error: 'Conecte a conta Bambu em Configurações primeiro' }
+  }
+  try {
+    const token = decryptCredential(settings.bambuCloudCredentialEncrypted)
+    const { tasks, nextCursor } = await fetchTaskHistory(token, { cursor })
+    return { success: true, tasks, nextCursor }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Falha ao buscar histórico' }
+  }
 }
 
 const CAPTURE_WINDOW_HOURS = 48

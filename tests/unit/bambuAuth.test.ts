@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { requestLoginCode, confirmLoginCode, fetchUserId, fetchBoundDevices } from '@/lib/bambu/auth'
+import { requestLoginCode, confirmLoginCode, fetchUserId, fetchBoundDevices, fetchTaskHistory, fetchLatestTask } from '@/lib/bambu/auth'
 
 describe('bambu auth client', () => {
   const originalFetch = global.fetch
@@ -85,5 +85,81 @@ describe('bambu auth client', () => {
   it('fetchBoundDevices lança erro com resposta não-ok', async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }) as unknown as typeof fetch
     await expect(fetchBoundDevices('token-abc')).rejects.toThrow('Falha ao buscar impressoras da conta Bambu')
+  })
+
+  it('fetchTaskHistory mapeia os campos de cada task (formato hits array direto)', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        hits: [
+          {
+            id: 't1',
+            designTitle: 'Vaso',
+            deviceName: 'A1 mini',
+            status: 'completed',
+            weight: '12.5',
+            length: '1850.2',
+            costTime: '3600',
+            startTime: '2026-09-01T10:00:00Z',
+            endTime: '2026-09-01T11:00:00Z',
+            cover: 'https://example.com/cover.jpg',
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch
+    const result = await fetchTaskHistory('token-abc', { limit: 20 })
+    expect(result.tasks).toEqual([
+      {
+        id: 't1',
+        title: 'Vaso',
+        deviceName: 'A1 mini',
+        status: 'completed',
+        weightGrams: 12.5,
+        lengthM: 1850.2,
+        costTimeSeconds: 3600,
+        startTime: '2026-09-01T10:00:00Z',
+        endTime: '2026-09-01T11:00:00Z',
+        thumbnailUrl: 'https://example.com/cover.jpg',
+      },
+    ])
+    expect(result.nextCursor).toBeNull() // menos itens que o limite -- não tem próxima página
+  })
+
+  it('fetchTaskHistory também entende o formato aninhado estilo Elasticsearch (hits.hits)', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ hits: { hits: [{ id: 't1', status: 'completed' }] } }),
+    }) as unknown as typeof fetch
+    const result = await fetchTaskHistory('token-abc')
+    expect(result.tasks).toHaveLength(1)
+    expect(result.tasks[0].id).toBe('t1')
+  })
+
+  it('fetchTaskHistory usa o id da última task como cursor quando a página vem cheia', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ hits: [{ id: 't1', status: 'completed' }, { id: 't2', status: 'completed' }] }),
+    }) as unknown as typeof fetch
+    const result = await fetchTaskHistory('token-abc', { limit: 2 })
+    expect(result.nextCursor).toBe('t2')
+  })
+
+  it('fetchTaskHistory lança erro com resposta não-ok', async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }) as unknown as typeof fetch
+    await expect(fetchTaskHistory('token-abc')).rejects.toThrow('Falha ao buscar histórico de impressões da Bambu')
+  })
+
+  it('fetchLatestTask devolve null quando não há nenhuma task', async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ hits: [] }) }) as unknown as typeof fetch
+    expect(await fetchLatestTask('token-abc', 'dev-1')).toBeNull()
+  })
+
+  it('fetchLatestTask devolve a primeira task encontrada', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ hits: [{ id: 't1', status: 'completed', weight: '20' }] }),
+    }) as unknown as typeof fetch
+    const task = await fetchLatestTask('token-abc', 'dev-1')
+    expect(task).toEqual({ weightGrams: 20, thumbnailUrl: null, status: 'completed' })
   })
 })
