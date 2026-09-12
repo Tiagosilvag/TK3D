@@ -41,7 +41,7 @@ export function ThemeToggle() {
       type="button"
       onClick={toggle}
       aria-label={isDark ? 'Mudar para tema claro' : 'Mudar para tema escuro'}
-      className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+      className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
     >
       <span className="flex items-center gap-2.5">
         {isDark === null ? <span className="h-4 w-4 shrink-0" /> : isDark ? <NavThemeMoonIcon className="h-4 w-4 shrink-0" /> : <NavThemeSunIcon className="h-4 w-4 shrink-0" />}

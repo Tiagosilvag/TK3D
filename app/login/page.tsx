@@ -26,7 +26,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="tk-gradient-bg print-bed-bg flex min-h-screen items-center justify-center">
+    <div className="tk-gradient-bg flex min-h-screen items-center justify-center">
       <form
         onSubmit={handleSubmit}
         className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900"
