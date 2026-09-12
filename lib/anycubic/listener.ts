@@ -9,7 +9,7 @@ import {
   type AnycubicStatus,
 } from '@/lib/anycubic/parser'
 import { createAnycubicJobTracker, type AnycubicCaptureDraft } from '@/lib/anycubic/jobTracker'
-import { encryptMqttToken, buildMqttUsername } from '@/lib/anycubic/mqttCrypto'
+import { encryptMqttToken, buildMqttUsername, buildMqttClientId } from '@/lib/anycubic/mqttCrypto'
 import { ANYCUBIC_MQTT_CA_CERT, ANYCUBIC_MQTT_CLIENT_CERT, ANYCUBIC_MQTT_CLIENT_KEY } from '@/lib/anycubic/certs'
 
 type PrinterRef = { id: string; anycubicEnabled: boolean; anycubicPrinterKey: string | null }
@@ -106,6 +106,13 @@ export async function startAnycubicListener(): Promise<void> {
   const mqttUsername = buildMqttUsername(email, mqttPassword)
 
   client = mqtt.connect(`mqtts://${MQTT_HOST}:${MQTT_PORT}`, {
+    // O client_id de baixo nível do CONNECT precisa ser o MESMO
+    // md5(email+"pcf") usado dentro da assinatura do username (ver
+    // buildMqttUsername) -- sem isso a lib mqtt gera um id aleatório e o
+    // broker recusa com "Connection refused: Not authorized" (bug real
+    // encontrado em produção: a conta conectava certinho via HTTP, só o
+    // MQTT que rejeitava).
+    clientId: buildMqttClientId(email),
     username: mqttUsername,
     password: mqttPassword,
     reconnectPeriod: 5000,
