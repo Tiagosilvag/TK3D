@@ -76,7 +76,7 @@ export function ActionsMenu({ children }: { children: React.ReactNode }) {
         <div
           ref={menuRef}
           style={{ position: 'fixed', top: position.top, right: position.right }}
-          className="z-50 flex min-w-max flex-col items-start gap-2 rounded-lg border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+          className="z-50 flex w-48 flex-col gap-0.5 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-700 dark:bg-slate-900"
         >
           {children}
         </div>,

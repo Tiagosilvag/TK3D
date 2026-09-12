@@ -254,16 +254,16 @@ export function StockExplorer({ rows }: { rows: StockRow[] }) {
                         </Link>
                       )}
                       <ActionsMenu>
-                        <Link href={`/sales?productId=${r.productId}`} className="text-violet-600 hover:underline dark:text-violet-400">
+                        <Link href={`/sales?productId=${r.productId}`} className="tk-menu-item">
                           Registrar venda direta
                         </Link>
-                        <Link href={`/consignment/deliveries?productId=${r.productId}`} className="text-violet-600 hover:underline dark:text-violet-400">
+                        <Link href={`/consignment/deliveries?productId=${r.productId}`} className="tk-menu-item">
                           Entregar a parceiro
                         </Link>
-                        <hr className="w-full border-slate-200 dark:border-slate-700" />
+                        <hr className="my-1 w-full border-slate-200 dark:border-slate-700" />
                         <AdjustStockButton resourceType="PRODUCT" resourceId={r.productId} resourceName={r.productName} currentQuantity={r.available} />
                         <StockAdjustmentHistoryButton productName={r.productName} adjustments={r.adjustments} />
-                        <hr className="w-full border-slate-200 dark:border-slate-700" />
+                        <hr className="my-1 w-full border-slate-200 dark:border-slate-700" />
                         <DeleteProductionButton productId={r.productId} productName={r.productName} />
                       </ActionsMenu>
                     </div>

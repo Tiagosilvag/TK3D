@@ -14,7 +14,7 @@ function today(): string {
 // linha da tabela -- a tabela ficava larga demais com 3 campos + botão por
 // item. Continua registrando uma nova AccessoryPurchase, recalculando
 // avgUnitCost como média ponderada server-side (registerAccessoryPurchase).
-export function RestockForm({ accessoryId, accessoryName }: { accessoryId: string; accessoryName: string }) {
+export function RestockForm({ accessoryId, accessoryName, className = 'text-xs text-violet-600 hover:underline dark:text-violet-400' }: { accessoryId: string; accessoryName: string; className?: string }) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [quantity, setQuantity] = useState('')
@@ -39,7 +39,7 @@ export function RestockForm({ accessoryId, accessoryName }: { accessoryId: strin
 
   return (
     <>
-      <button type="button" onClick={() => dialogRef.current?.showModal()} className="text-xs text-violet-600 hover:underline dark:text-violet-400">
+      <button type="button" onClick={() => dialogRef.current?.showModal()} className={className}>
         Repor estoque
       </button>
       <dialog

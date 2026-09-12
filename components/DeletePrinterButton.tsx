@@ -30,7 +30,7 @@ export function DeletePrinterButton({
 
   return (
     <>
-      <button type="button" onClick={() => dialogRef.current?.showModal()} className="text-red-600 hover:underline dark:text-red-400">
+      <button type="button" onClick={() => dialogRef.current?.showModal()} className="tk-menu-item-danger">
         Excluir permanentemente
       </button>
       <dialog

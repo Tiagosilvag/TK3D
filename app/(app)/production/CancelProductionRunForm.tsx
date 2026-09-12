@@ -17,7 +17,7 @@ export function CancelProductionRunForm({ id }: { id: string }) {
 
   if (!open) {
     return (
-      <button type="button" onClick={() => setOpen(true)} className="text-red-600 hover:underline dark:text-red-400">
+      <button type="button" onClick={() => setOpen(true)} className="tk-menu-item-danger">
         Cancelar
       </button>
     )

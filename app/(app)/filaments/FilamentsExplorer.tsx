@@ -278,7 +278,7 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
                       </details>
                     )}
                     <ActionsMenu>
-                      <Link href={`/filaments?editId=${r.id}`} className="text-violet-600 hover:underline dark:text-violet-400">
+                      <Link href={`/filaments?editId=${r.id}`} className="tk-menu-item">
                         Editar
                       </Link>
                       <AdjustStockButton
@@ -288,7 +288,7 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
                         currentQuantity={r.currentStockGrams}
                         unitLabel="g"
                       />
-                      <ConfirmDeleteForm action={async () => { return await deleteFilament(r.id) }} />
+                      <ConfirmDeleteForm action={async () => { return await deleteFilament(r.id) }} className="tk-menu-item-danger" />
                     </ActionsMenu>
                   </div>
                 </td>

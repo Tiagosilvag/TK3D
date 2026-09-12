@@ -138,7 +138,7 @@ export function ProductionRunsExplorer({
                     <td className="py-2">
                       <ActionsMenu>
                         {run.status !== 'CANCELADA' && (
-                          <Link href={`/production?editId=${run.id}`} className="text-violet-600 hover:underline dark:text-violet-400">
+                          <Link href={`/production?editId=${run.id}`} className="tk-menu-item">
                             Editar
                           </Link>
                         )}
@@ -148,7 +148,7 @@ export function ProductionRunsExplorer({
                             confundir -- Remover (exclusão física, sem motivo)
                             só fica disponível DEPOIS que a produção já foi
                             Cancelada (com motivo obrigatório), nunca antes. */}
-                        {run.status === 'CANCELADA' && <ConfirmDeleteForm action={() => handleRemoveItem(run.id)} />}
+                        {run.status === 'CANCELADA' && <ConfirmDeleteForm action={() => handleRemoveItem(run.id)} className="tk-menu-item-danger" />}
                       </ActionsMenu>
                     </td>
                   </tr>

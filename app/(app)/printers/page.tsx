@@ -124,12 +124,13 @@ export default async function PrintersPage({
                   <p className="font-display text-lg font-semibold text-violet-600 dark:text-violet-400">{formatCurrency(c.totalCost)}/h</p>
                 </div>
                 <ActionsMenu>
-                  <Link href={`/printers?editId=${c.id}`} className="text-violet-600 hover:underline dark:text-violet-400">
+                  <Link href={`/printers?editId=${c.id}`} className="tk-menu-item">
                     Editar
                   </Link>
                   <ConfirmDeleteForm
                     action={async () => { 'use server'; await deletePrinter(c.id) }}
                     label="Desativar"
+                    className="tk-menu-item-danger"
                   />
                   <DeletePrinterButton
                     printerName={c.name}
@@ -183,7 +184,7 @@ export default async function PrintersPage({
                 </div>
                 <ActionsMenu>
                   <form action={async () => { 'use server'; await reactivatePrinter(p.id) }}>
-                    <button className="tk-link-success">Reativar</button>
+                    <button className="tk-menu-item-success">Reativar</button>
                   </form>
                   <DeletePrinterButton
                     printerName={p.name}
