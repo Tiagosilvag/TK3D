@@ -71,6 +71,16 @@ function buildMqttSslOptions() {
     cert: ANYCUBIC_MQTT_CLIENT_CERT,
     key: ANYCUBIC_MQTT_CLIENT_KEY,
     rejectUnauthorized: false,
+    // O certificado CA da Anycubic (2023, "AC Root CA") é assinado com um
+    // algoritmo fraco -- OpenSSL moderno recusa por padrão
+    // ("ca md too weak", visto em produção). O projeto de referência em
+    // Python contorna isso com `set_ciphers('ALL:@SECLEVEL=0')`; o
+    // equivalente no TLS do Node é baixar o nível de segurança via sufixo
+    // @SECLEVEL=0 na lista de cifras, e travar em TLSv1.2 (mesma versão
+    // que o broker deles espera, igual ao PROTOCOL_TLSv1_2 do Python).
+    ciphers: 'DEFAULT@SECLEVEL=0',
+    minVersion: 'TLSv1.2' as const,
+    maxVersion: 'TLSv1.2' as const,
   }
 }
 
