@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createPrinter, updatePrinter } from '@/actions/printers'
+import { getBambuBoundDevices } from '@/actions/bambuStatus'
+import type { BambuDevice } from '@/lib/bambu/auth'
 import { formatCurrency } from '@/lib/format'
 import { SubmitButton } from '@/components/SubmitButton'
 
@@ -54,6 +56,26 @@ export function PrinterForm({
   const [maintenanceCostPerHour, setMaintenanceCostPerHour] = useState(
     editingPrinter ? String(editingPrinter.maintenanceCostPerHour) : '',
   )
+  const [bambuSerial, setBambuSerial] = useState(editingPrinter?.bambuSerial ?? '')
+  const [bambuDevices, setBambuDevices] = useState<BambuDevice[] | null>(null)
+  const [bambuDevicesError, setBambuDevicesError] = useState<string | null>(null)
+  const [loadingBambuDevices, setLoadingBambuDevices] = useState(false)
+
+  async function handleSearchBambuDevices() {
+    setLoadingBambuDevices(true)
+    setBambuDevicesError(null)
+    const result = await getBambuBoundDevices()
+    setLoadingBambuDevices(false)
+    if (!result.success || !result.devices) {
+      setBambuDevicesError(result.error ?? 'Falha ao buscar impressoras')
+      return
+    }
+    if (result.devices.length === 0) {
+      setBambuDevicesError('Nenhuma impressora vinculada à conta Bambu')
+      return
+    }
+    setBambuDevices(result.devices)
+  }
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -81,6 +103,9 @@ export function PrinterForm({
     setAvgPowerConsumptionKwh(editingPrinter ? String(editingPrinter.avgPowerConsumptionKwh) : '')
     setEnergyCostPerKwh(editingPrinter ? String(editingPrinter.energyCostPerKwh) : '')
     setMaintenanceCostPerHour(editingPrinter ? String(editingPrinter.maintenanceCostPerHour) : '')
+    setBambuSerial(editingPrinter?.bambuSerial ?? '')
+    setBambuDevices(null)
+    setBambuDevicesError(null)
   }
 
   const price = parseFloat(purchasePrice)
@@ -206,8 +231,48 @@ export function PrinterForm({
         </label>
         <label className="col-span-2 text-sm">
           Número de série Bambu (opcional)
-          <input name="bambuSerial" placeholder="Ex: 01P00A000000000" className="tk-input-full" defaultValue={editingPrinter?.bambuSerial ?? ''} />
+          <input
+            name="bambuSerial"
+            placeholder="Ex: 01P00A000000000"
+            className="tk-input-full"
+            value={bambuSerial}
+            onChange={(e) => setBambuSerial(e.target.value)}
+          />
         </label>
+        <div className="col-span-2 -mt-2">
+          <button
+            type="button"
+            onClick={handleSearchBambuDevices}
+            disabled={loadingBambuDevices}
+            className="text-xs text-amber-600 hover:underline dark:text-amber-400"
+          >
+            {loadingBambuDevices ? 'Buscando…' : 'Buscar impressoras da conta Bambu'}
+          </button>
+          {bambuDevicesError && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{bambuDevicesError}</p>}
+          {bambuDevices && (
+            <ul className="mt-2 divide-y divide-slate-100 rounded-lg border border-slate-200 dark:divide-slate-800 dark:border-slate-700">
+              {bambuDevices.map((device) => (
+                <li key={device.devId}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBambuSerial(device.devId)
+                      setBambuDevices(null)
+                    }}
+                    className="flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                  >
+                    <span>
+                      {device.name} <span className="text-slate-400">({device.productName})</span>
+                    </span>
+                    <span className={device.online ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}>
+                      {device.online ? 'online' : 'offline'}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         <div className="col-span-2 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Preview de custo</p>

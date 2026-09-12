@@ -10,6 +10,7 @@
 const BAMBU_LOGIN_URL = 'https://api.bambulab.com/v1/user-service/user/login'
 const BAMBU_SEND_CODE_URL = 'https://api.bambulab.com/v1/user-service/user/sendemail/code'
 const BAMBU_PREFERENCE_URL = 'https://api.bambulab.com/v1/design-user-service/my/preference'
+const BAMBU_BIND_URL = 'https://api.bambulab.com/v1/iot-service/api/user/bind'
 
 export type LoginStep1Result = { status: 'code_required' } | { status: 'authenticated'; accessToken: string }
 
@@ -58,4 +59,27 @@ export async function fetchUserId(accessToken: string): Promise<string> {
   const data = (await res.json()) as { uid?: number | string }
   if (data.uid === undefined || data.uid === null) throw new Error('Bambu não retornou o id da conta')
   return String(data.uid)
+}
+
+export type BambuDevice = { devId: string; name: string; productName: string; online: boolean }
+
+// Lista as impressoras vinculadas à conta -- usado pra deixar escolher o
+// número de série numa lista em vez de caçar no app/Studio (o serial em
+// si não fica visível de forma óbvia em nenhum dos dois).
+export async function fetchBoundDevices(accessToken: string): Promise<BambuDevice[]> {
+  const res = await fetch(BAMBU_BIND_URL, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!res.ok) throw new Error('Falha ao buscar impressoras da conta Bambu')
+  const data = (await res.json()) as {
+    devices?: { dev_id?: string; name?: string; dev_product_name?: string; online?: boolean }[]
+  }
+  return (data.devices ?? [])
+    .filter((d): d is typeof d & { dev_id: string } => Boolean(d.dev_id))
+    .map((d) => ({
+      devId: d.dev_id,
+      name: d.name ?? d.dev_id,
+      productName: d.dev_product_name ?? '',
+      online: Boolean(d.online),
+    }))
 }
