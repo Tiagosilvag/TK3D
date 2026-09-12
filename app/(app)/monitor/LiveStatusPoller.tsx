@@ -1,9 +1,9 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { getAllLiveBambuStatuses } from '@/actions/bambuStatus'
+import { getAllLiveStatuses } from '@/actions/bambuStatus'
 import { pausePrintJob, resumePrintJob, stopPrintJob } from '@/actions/bambuControl'
 
-type LiveStatuses = Awaited<ReturnType<typeof getAllLiveBambuStatuses>>
+type LiveStatuses = Awaited<ReturnType<typeof getAllLiveStatuses>>
 
 const PAUSABLE_STATES = new Set(['RUNNING'])
 const RESUMABLE_STATES = new Set(['PAUSE'])
@@ -120,82 +120,122 @@ function formatTemp(current: number | null, target: number | null): string | nul
   return target !== null && target > 0 ? `${current}°C (alvo ${target}°C)` : `${current}°C`
 }
 
+const ANYCUBIC_STATE_LABELS: Record<string, string> = {
+  IDLE: 'Ocioso',
+  DOWNLOADING: 'Baixando arquivo',
+  CHECKING: 'Verificando',
+  PREHEATING: 'Preaquecendo',
+  PRINTING: 'Imprimindo',
+  PAUSED: 'Pausado',
+  FINISHED: 'Concluído',
+  CANCELLED: 'Cancelado',
+}
+
 export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveStatuses }) {
   const [printers, setPrinters] = useState(initialPrinters)
 
   useEffect(() => {
     const interval = setInterval(async () => {
-      setPrinters(await getAllLiveBambuStatuses())
+      setPrinters(await getAllLiveStatuses())
     }, 4000)
     return () => clearInterval(interval)
   }, [])
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {printers.map((printer) => {
-        const status = printer.status
-        return (
-          <div key={printer.printerId} className="tk-panel flex gap-3 p-4">
-            {printer.thumbnailUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={printer.thumbnailUrl}
-                alt="Modelo em impressão"
-                className="h-16 w-16 shrink-0 rounded-lg object-cover"
-              />
-            )}
-            <div className="min-w-0 flex-1">
+      {printers.map((printer) => (
+        <div key={printer.printerId} className="tk-panel flex gap-3 p-4">
+          {printer.brand === 'bambu' && printer.thumbnailUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={printer.thumbnailUrl}
+              alt="Modelo em impressão"
+              className="h-16 w-16 shrink-0 rounded-lg object-cover"
+            />
+          )}
+          <div className="min-w-0 flex-1">
             <h3 className="font-display text-base font-semibold text-slate-900 dark:text-slate-100">{printer.name}</h3>
-            {!status ? (
+            {printer.brand === 'bambu' ? (
+              !printer.status ? (
+                <p className="mt-2 text-sm text-slate-400">Sem dados ainda</p>
+              ) : (
+                <div className="mt-2 space-y-1 text-sm text-slate-700 dark:text-slate-300">
+                  <p>{STATE_LABELS[printer.status.gcodeState] ?? printer.status.gcodeState}</p>
+                  {printer.status.percent !== null && <p>{printer.status.percent}%</p>}
+                  {printer.status.remainingMinutes !== null && <p>{printer.status.remainingMinutes} min restantes</p>}
+                  {printer.status.gcodeFilePreparePercent !== null && printer.status.gcodeFilePreparePercent < 100 && (
+                    <p className="text-slate-500 dark:text-slate-400">Preparando arquivo: {printer.status.gcodeFilePreparePercent}%</p>
+                  )}
+                  {printer.status.gcodeFile && <p className="truncate text-slate-500 dark:text-slate-400">{printer.status.gcodeFile}</p>}
+
+                  <PrintControls printerId={printer.printerId} printerName={printer.name} gcodeState={printer.status.gcodeState} />
+
+                  {printer.status.hmsCodes.length > 0 && (
+                    <p className="text-red-600 dark:text-red-400">Alerta HMS: {printer.status.hmsCodes.join(', ')}</p>
+                  )}
+                  {printer.status.printErrorCode && <p className="text-red-600 dark:text-red-400">Erro: {printer.status.printErrorCode}</p>}
+
+                  {printer.status.amsTrays.length > 0 && (
+                    <div className="pt-1">
+                      {printer.status.amsTrays.map((tray) => (
+                        <p key={tray.id} className="text-xs text-slate-500 dark:text-slate-400">
+                          Slot {tray.id}: {tray.type || '—'} · {tray.remainPercent}%{' '}
+                          {tray.tagUid && tray.tagUid !== '0000000000000000' ? '(rolo Bambu)' : '(rolo genérico)'}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+
+                  <details className="pt-1">
+                    <summary className="tk-summary cursor-pointer text-xs">Detalhes</summary>
+                    <div className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      {formatTemp(printer.status.nozzleTemp, printer.status.nozzleTargetTemp) && (
+                        <p>Bico: {formatTemp(printer.status.nozzleTemp, printer.status.nozzleTargetTemp)}</p>
+                      )}
+                      {formatTemp(printer.status.bedTemp, printer.status.bedTargetTemp) && (
+                        <p>Mesa: {formatTemp(printer.status.bedTemp, printer.status.bedTargetTemp)}</p>
+                      )}
+                      {printer.status.chamberTemp !== null && <p>Câmara: {printer.status.chamberTemp}°C</p>}
+                      {printer.status.speedLevel !== null && <p>Velocidade: {SPEED_LABELS[printer.status.speedLevel] ?? printer.status.speedLevel}</p>}
+                      {printer.status.fanSpeeds.cooling !== null && <p>Ventoinha peça: {printer.status.fanSpeeds.cooling}</p>}
+                      {printer.status.fanSpeeds.heatbreak !== null && <p>Ventoinha hotend: {printer.status.fanSpeeds.heatbreak}</p>}
+                      {printer.status.wifiSignal && <p>Wi-Fi: {printer.status.wifiSignal}</p>}
+                      {printer.status.nozzleDiameter && (
+                        <p>
+                          Bico instalado: {printer.status.nozzleDiameter}mm {printer.status.nozzleType ?? ''}
+                        </p>
+                      )}
+                      {printer.status.firmwareVersion && <p>Firmware: {printer.status.firmwareVersion}</p>}
+                    </div>
+                  </details>
+                </div>
+              )
+            ) : !printer.status ? (
               <p className="mt-2 text-sm text-slate-400">Sem dados ainda</p>
             ) : (
               <div className="mt-2 space-y-1 text-sm text-slate-700 dark:text-slate-300">
-                <p>{STATE_LABELS[status.gcodeState] ?? status.gcodeState}</p>
-                {status.percent !== null && <p>{status.percent}%</p>}
-                {status.remainingMinutes !== null && <p>{status.remainingMinutes} min restantes</p>}
-                {status.gcodeFilePreparePercent !== null && status.gcodeFilePreparePercent < 100 && (
-                  <p className="text-slate-500 dark:text-slate-400">Preparando arquivo: {status.gcodeFilePreparePercent}%</p>
+                <p>{ANYCUBIC_STATE_LABELS[printer.status.printState] ?? printer.status.printState}</p>
+                {printer.status.progressPercent !== null && <p>{printer.status.progressPercent}%</p>}
+                {printer.status.remainingMinutes !== null && <p>{printer.status.remainingMinutes} min restantes</p>}
+                {printer.status.gcodeFile && <p className="truncate text-slate-500 dark:text-slate-400">{printer.status.gcodeFile}</p>}
+                {printer.status.currentLayer !== null && printer.status.totalLayers !== null && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Camada {printer.status.currentLayer}/{printer.status.totalLayers}
+                  </p>
                 )}
-                {status.gcodeFile && <p className="truncate text-slate-500 dark:text-slate-400">{status.gcodeFile}</p>}
-
-                <PrintControls printerId={printer.printerId} printerName={printer.name} gcodeState={status.gcodeState} />
-
-                {status.hmsCodes.length > 0 && (
-                  <p className="text-red-600 dark:text-red-400">Alerta HMS: {status.hmsCodes.join(', ')}</p>
-                )}
-                {status.printErrorCode && <p className="text-red-600 dark:text-red-400">Erro: {status.printErrorCode}</p>}
-
-                {status.amsTrays.length > 0 && (
-                  <div className="pt-1">
-                    {status.amsTrays.map((tray) => (
-                      <p key={tray.id} className="text-xs text-slate-500 dark:text-slate-400">
-                        Slot {tray.id}: {tray.type || '—'} · {tray.remainPercent}%{' '}
-                        {tray.tagUid && tray.tagUid !== '0000000000000000' ? '(rolo Bambu)' : '(rolo genérico)'}
-                      </p>
-                    ))}
-                  </div>
-                )}
-
                 <details className="pt-1">
                   <summary className="tk-summary cursor-pointer text-xs">Detalhes</summary>
                   <div className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
-                    {formatTemp(status.nozzleTemp, status.nozzleTargetTemp) && <p>Bico: {formatTemp(status.nozzleTemp, status.nozzleTargetTemp)}</p>}
-                    {formatTemp(status.bedTemp, status.bedTargetTemp) && <p>Mesa: {formatTemp(status.bedTemp, status.bedTargetTemp)}</p>}
-                    {status.chamberTemp !== null && <p>Câmara: {status.chamberTemp}°C</p>}
-                    {status.speedLevel !== null && <p>Velocidade: {SPEED_LABELS[status.speedLevel] ?? status.speedLevel}</p>}
-                    {status.fanSpeeds.cooling !== null && <p>Ventoinha peça: {status.fanSpeeds.cooling}</p>}
-                    {status.fanSpeeds.heatbreak !== null && <p>Ventoinha hotend: {status.fanSpeeds.heatbreak}</p>}
-                    {status.wifiSignal && <p>Wi-Fi: {status.wifiSignal}</p>}
-                    {status.nozzleDiameter && <p>Bico instalado: {status.nozzleDiameter}mm {status.nozzleType ?? ''}</p>}
-                    {status.firmwareVersion && <p>Firmware: {status.firmwareVersion}</p>}
+                    {printer.status.nozzleTemp !== null && <p>Bico: {printer.status.nozzleTemp}°C</p>}
+                    {printer.status.bedTemp !== null && <p>Mesa: {printer.status.bedTemp}°C</p>}
+                    {printer.status.fanSpeedPercent !== null && <p>Ventoinha: {printer.status.fanSpeedPercent}%</p>}
                   </div>
                 </details>
               </div>
             )}
-            </div>
           </div>
-        )
-      })}
+        </div>
+      ))}
     </div>
   )
 }
