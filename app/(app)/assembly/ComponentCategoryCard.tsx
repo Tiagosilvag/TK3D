@@ -51,25 +51,34 @@ export function ComponentCategoryCard({
   options: ComponentOption[]
   readOnly?: boolean
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [search, setSearch] = useState('')
-  // Bug fix: this card (and the "+ Adicionar" picker it opens) is rendered
-  // inside AssemblyDetailModal's own already-open <dialog>. A nested
-  // <dialog> in the DOM is exactly the "modal fecha ao selecionar" light-
-  // dismiss trap already fixed once in components/FilamentSelect.tsx (see
-  // its comment) -- a click inside this picker could be read as outside the
-  // parent dialog and close both, discarding in-progress assembly input.
-  // Same fix: portal this dialog to <body> so it never nests in the parent
-  // dialog's DOM subtree. `mounted` avoids touching `document` during SSR.
   const [mounted, setMounted] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => setMounted(true), [])
 
+  // Bug "modal de Montagem fecha ao adicionar acessório": este picker
+  // vivia num <dialog> nativo próprio, aberto via showModal() enquanto
+  // AssemblyDetailModal já tinha SEU PRÓPRIO <dialog> aberto -- portar o
+  // DOM pra <body> (ver ComponentsSection/FilamentSelect) resolve o
+  // aninhamento no React tree, mas dois <dialog> nativos empilhados
+  // (cada um seu próprio showModal()) têm um bug real de stacking em
+  // Chrome recente: fechar o de CIMA (este picker, via close()) dispara
+  // um evento 'close' nativo espúrio no de BAIXO (AssemblyDetailModal)
+  // também, derrubando a montagem em andamento -- confirmado ao vivo
+  // (Playwright + build local), não é elemento aninhado no React nem bug
+  // de portal. Fix: este picker deixa de ser <dialog>/showModal() -- vira
+  // um painel comum controlado por estado React (backdrop + painel,
+  // Esc/clique-fora fecham via listener), portado pra <body> só pra
+  // escapar de overflow/clipping de ancestrais, igual ActionsMenu.
   useEffect(() => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    if (pickerOpen && !dialog.open) dialog.showModal()
-    if (!pickerOpen && dialog.open) dialog.close()
+    if (!pickerOpen) return
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setPickerOpen(false)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
   }, [pickerOpen])
 
   function updateRow(index: number, patch: Partial<ComponentRow>) {
@@ -145,44 +154,46 @@ export function ComponentCategoryCard({
         + Adicionar {label.toLowerCase().replace(/s$/, '')}
       </button>
 
-      {mounted && createPortal(
-        <dialog
-          ref={dialogRef}
-          onClose={() => { setPickerOpen(false); setSearch('') }}
-          className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
-        >
-          <div className="grid gap-3 p-5">
-            <div className="flex items-center justify-between">
-              <h3 className="font-display text-base font-semibold">Adicionar {label.toLowerCase()}</h3>
-              <button type="button" onClick={() => dialogRef.current?.close()} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
-            </div>
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar"
-              className="tk-input-full"
-              autoFocus
-            />
-            <div className="max-h-72 space-y-1 overflow-y-auto">
-              {pickerOptions.length === 0 ? (
-                <p className="py-4 text-center text-sm text-slate-400 dark:text-slate-500">Nada encontrado.</p>
-              ) : (
-                pickerOptions.map((o) => (
-                  <button
-                    key={o.id}
-                    type="button"
-                    onClick={() => addOption(o)}
-                    className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-left text-sm hover:border-violet-400 dark:border-slate-700 dark:hover:border-violet-500"
-                  >
-                    {optionLabel(o)}
-                    <span className="text-slate-400">{o.available} disp.</span>
-                  </button>
-                ))
-              )}
+      {mounted && pickerOpen && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={() => setPickerOpen(false)}>
+          <div
+            ref={panelRef}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+          >
+            <div className="grid gap-3 p-5">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display text-base font-semibold">Adicionar {label.toLowerCase()}</h3>
+                <button type="button" onClick={() => setPickerOpen(false)} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
+              </div>
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar"
+                className="tk-input-full"
+                autoFocus
+              />
+              <div className="max-h-72 space-y-1 overflow-y-auto">
+                {pickerOptions.length === 0 ? (
+                  <p className="py-4 text-center text-sm text-slate-400 dark:text-slate-500">Nada encontrado.</p>
+                ) : (
+                  pickerOptions.map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      onClick={() => addOption(o)}
+                      className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-left text-sm hover:border-violet-400 dark:border-slate-700 dark:hover:border-violet-500"
+                    >
+                      {optionLabel(o)}
+                      <span className="text-slate-400">{o.available} disp.</span>
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
           </div>
-        </dialog>,
+        </div>,
         document.body,
       )}
     </div>
