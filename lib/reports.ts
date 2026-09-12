@@ -357,7 +357,11 @@ function accessoryLabel(a: { name: string; colorName: string }): string {
   return a.colorName ? `${a.name} — ${a.colorName}` : a.name
 }
 
-function serializeColorChoices(choices: Record<string, string>): string {
+// Melhoria "Editar variação": exportada pra actions/assembly.ts também usar
+// (encontrar quais ProductAssembly batem com o comboKey de uma variante
+// mostrada em /stock, pra corrigir uma cor gravada errada) -- mesma lógica
+// de serialização, nunca duplicada.
+export function serializeColorChoices(choices: Record<string, string>): string {
   return Object.entries(choices)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([partId, comboKey]) => `${partId}:${comboKey}`)

@@ -4,7 +4,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { revalidatePath } from 'next/cache'
 import { productNeedsAssembly } from '@/lib/products'
-import { getProductVariantBreakdown, getOwnStockSummary } from '@/lib/reports'
+import { getProductVariantBreakdown, getOwnStockSummary, serializeColorChoices } from '@/lib/reports'
 import { getProductAverageProductionCost } from '@/actions/products'
 
 type ActionResult = { success: boolean; error?: string }
@@ -958,5 +958,120 @@ export async function confirmAssembly(formData: FormData): Promise<ActionResult>
   revalidatePath('/stock')
   revalidatePath('/accessories')
   revalidatePath('/supplies')
+  return { success: true }
+}
+
+// Melhoria "Editar variação": pedido do usuário -- gravou a cor errada
+// numa leva de montagem (ex.: MOSQUETÃO marrom em vez de roxo) e não
+// tinha como corrigir depois. Duas naturezas de chave em `colorChoices`,
+// tratadas diferente:
+// - Peça (ProductPart) ou componente-produto (Mosquetão): "disponível
+//   por cor" é 100% DERIVADO (produzido por cor, de ProductionRun, MENOS
+//   consumido por cor, contado em cima do próprio colorChoices de todas
+//   as ProductAssembly -- ver getAssemblyStatus/getProductVariantBreakdown).
+//   Reescrever só o rótulo aqui já desloca sozinho "consumido" da cor
+//   ERRADA pra cor CERTA na próxima leitura -- a cor errada volta a
+//   aparecer disponível, a certa passa a contar como consumida, sem
+//   precisar mexer em nenhuma tabela de estoque à parte (não existe
+//   "estoque de Mosquetão roxo" separado do produzido-menos-consumido).
+// - Acessório com cor variável (ex.: Corrente Bolinha Prata/Dourada):
+//   AQUI SIM existe estoque físico de verdade por cor
+//   (Accessory.currentStock, uma LINHA por cor no catálogo) -- confirmAssembly
+//   decrementou a linha ERRADA de propósito (foi ela que o usuário
+//   escolheu). Só trocar o rótulo deixaria o estoque físico errado pra
+//   sempre (cor errada mostrando menos disponível do que devia, cor
+//   certa mostrando mais). Pra essas chaves, além de reescrever o
+//   rótulo, MOVE o estoque de verdade: devolve a quantidade decrementada
+//   na cor antiga (via StockConsumption, que já registra exatamente
+//   quanto cada leva consumiu -- fonte de verdade, não reconstrói a
+//   partir de quantityPerUnit da ficha técnica atual, que pode ter
+//   mudado) e decrementa a mesma quantidade da cor nova, falhando com
+//   erro claro se não houver estoque suficiente na cor nova (nunca deixa
+//   currentStock negativo).
+// `oldComboKey` é o `key` de uma linha de getProductVariantBreakdown
+// (serializeColorChoices do combo ATUAL) -- aplica a TODAS as
+// ProductAssembly deste produto que batem com esse combo (a tela de
+// edição não distingue "só esta leva" de "todas com essa combinação",
+// já que colorChoices nunca guardou nenhum identificador de leva
+// separado do próprio combo).
+const updateAssemblyColorChoicesSchema = z.object({
+  productId: z.string().min(1),
+  oldComboKey: z.string().min(1),
+  colorChoicesJson: z.string().min(1),
+})
+
+export async function updateAssemblyColorChoices(formData: FormData): Promise<ActionResult> {
+  const parsed = updateAssemblyColorChoicesSchema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  const { productId, oldComboKey, colorChoicesJson } = parsed.data
+
+  let newColorChoices: Record<string, string>
+  try {
+    newColorChoices = JSON.parse(colorChoicesJson)
+  } catch {
+    return { success: false, error: 'Dados de cor inválidos' }
+  }
+  if (Object.keys(newColorChoices).length === 0) {
+    return { success: false, error: 'Selecione ao menos uma cor' }
+  }
+
+  const assemblies = await prisma.productAssembly.findMany({ where: { productId } })
+  const matching = assemblies.filter((a) => {
+    const choices = a.colorChoices as Record<string, string> | null
+    return choices ? serializeColorChoices(choices) === oldComboKey : false
+  })
+  if (matching.length === 0) {
+    return { success: false, error: 'Nenhuma montagem encontrada com essa combinação de cores (pode já ter sido editada/excluída)' }
+  }
+  const oldColorChoices = matching[0].colorChoices as Record<string, string>
+  const matchingIds = matching.map((a) => a.id)
+
+  // Só as chaves de ACESSÓRIO com irmãos de cor têm estoque físico
+  // separado por cor -- peça/componente-produto não aparecem aqui de
+  // propósito (tratadas pela reescrita do rótulo sozinha, ver comentário
+  // acima).
+  const status = await getAssemblyStatus(productId)
+  const accessoryKeyIds = new Set(status.accessoryRequirements.filter((r) => r.colorOptions).map((r) => r.id))
+  const changedAccessoryKeys = Object.keys(newColorChoices).filter(
+    (key) => accessoryKeyIds.has(key) && oldColorChoices[key] !== undefined && oldColorChoices[key] !== newColorChoices[key],
+  )
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      for (const key of changedAccessoryKeys) {
+        const oldAccessoryId = oldColorChoices[key]
+        const newAccessoryId = newColorChoices[key]
+        const consumptions = await tx.stockConsumption.findMany({
+          where: { resourceType: 'ACCESSORY', resourceId: oldAccessoryId, source: 'ASSEMBLY', sourceId: { in: matchingIds } },
+        })
+        const totalQuantity = consumptions.reduce((sum, c) => sum + c.quantity.toNumber(), 0)
+        if (totalQuantity <= 0) continue
+        const newAccessory = await tx.accessory.findUniqueOrThrow({ where: { id: newAccessoryId } })
+        if (newAccessory.currentStock.toNumber() < totalQuantity) {
+          throw new Error(
+            `Estoque insuficiente de "${accessoryLabel(newAccessory)}" pra trocar (necessário ${totalQuantity}, disponível ${newAccessory.currentStock.toNumber()})`,
+          )
+        }
+        await tx.accessory.update({ where: { id: oldAccessoryId }, data: { currentStock: { increment: totalQuantity } } })
+        await tx.accessory.update({ where: { id: newAccessoryId }, data: { currentStock: { decrement: totalQuantity } } })
+        for (const c of consumptions) {
+          await tx.stockConsumption.update({ where: { id: c.id }, data: { resourceId: newAccessoryId } })
+        }
+      }
+
+      for (const a of matching) {
+        await tx.productAssembly.update({
+          where: { id: a.id },
+          data: { colorChoices: newColorChoices as unknown as Prisma.InputJsonValue },
+        })
+      }
+    })
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Erro ao salvar' }
+  }
+
+  revalidatePath('/stock')
+  revalidatePath('/assembly')
+  revalidatePath('/accessories')
   return { success: true }
 }
