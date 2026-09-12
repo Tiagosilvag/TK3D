@@ -23,6 +23,17 @@ describe('anycubic auth client', () => {
     expect(body).toEqual({ device_type: 'pcf', access_token: 'slicer-token-xyz' })
   })
 
+  it('exchangeSlicerToken remove espaços/quebras de linha internas (bug real: copiar do console do PowerShell quebra o JWT em várias linhas)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: { token: 'session-token-abc' } }) })
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    await exchangeSlicerToken('  eyJhbGci.\n  parte-do-meio  \r\n.assinatura  ')
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(init.body)
+    expect(body.access_token).toBe('eyJhbGci.parte-do-meio.assinatura')
+  })
+
   it('exchangeSlicerToken lança erro se a resposta não tiver data.token', async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ msg: 'invalid token' }) }) as unknown as typeof fetch
     await expect(exchangeSlicerToken('token-invalido')).rejects.toThrow('Token do Slicer Next inválido ou expirado')
