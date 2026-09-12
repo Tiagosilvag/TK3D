@@ -12,6 +12,9 @@ async function cleanup() {
   await prisma.stockConsumption.deleteMany()
   await prisma.productAssembly.deleteMany()
   await prisma.productionRun.deleteMany()
+  // componentProductId é onDelete: Restrict -- precisa sumir antes de
+  // apagar o Product que serve de componente (ex.: Mosquetão).
+  await prisma.productComponentUsage.deleteMany()
   await prisma.product.deleteMany()
   await prisma.accessory.deleteMany()
   await prisma.supply.deleteMany()
@@ -85,6 +88,96 @@ async function assemble(product: { id: string }, filament: { id: string }, acces
   }))
   expect(result.success).toBe(true)
 }
+
+// Componente compartilhado (ex. real: Mosquetão) -- produto simples SEM
+// montagem própria (sem accessory/supply), consumido como componente por
+// DOIS produtos pai DIFERENTES (A e B), cada um simples-com-montagem só
+// por causa do componentUsage (mesma regra de productNeedsAssembly).
+async function createSharedComponentScenario() {
+  const printer = await prisma.printer.create({ data: { name: 'P2', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+  const filament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Vermelho', colorHex: '#FF0000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 10000, currentStockGrams: 10000 } })
+
+  const mosquetao = await prisma.product.create({
+    data: { name: 'Mosquetão', category: 'Acessório', printerId: printer.id, filamentId: filament.id, weightGrams: 3, printTimeHours: 0.2, laborTimeHours: 0 },
+  })
+  const productA = await prisma.product.create({
+    data: {
+      name: 'Chaveiro A', category: 'Chaveiro', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 0.5, laborTimeHours: 0,
+      componentUsages: { create: [{ componentProductId: mosquetao.id, quantity: 1 }] },
+    },
+  })
+  const productB = await prisma.product.create({
+    data: {
+      name: 'Chaveiro B', category: 'Chaveiro', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 0.5, laborTimeHours: 0,
+      componentUsages: { create: [{ componentProductId: mosquetao.id, quantity: 1 }] },
+    },
+  })
+  return { printer, filament, mosquetao, productA, productB }
+}
+
+async function assembleWithComponent(product: { id: string }, filament: { id: string }, componentProductId: string, quantity: number) {
+  const result = await confirmAssembly(fd({
+    productId: product.id,
+    quantity: String(quantity),
+    accessoryUsagesJson: '[]',
+    supplyUsagesJson: '[]',
+    colorChoicesJson: JSON.stringify({ [product.id]: filament.id, [componentProductId]: filament.id }),
+  }))
+  expect(result.success).toBe(true)
+}
+
+describe('Cascata: componente compartilhado entre produtos pai diferentes (Mosquetão)', () => {
+  it('excluir a produção do componente desmonta os DOIS produtos pai, respeitando o livre de cada um', async () => {
+    const { printer, filament, mosquetao, productA, productB } = await createSharedComponentScenario()
+    const mosquetaoRun = await produce(mosquetao, printer, filament, 20)
+    await produce(productA, printer, filament, 10)
+    await produce(productB, printer, filament, 10)
+
+    await assembleWithComponent(productA, filament, mosquetao.id, 6)
+    await assembleWithComponent(productB, filament, mosquetao.id, 8)
+    // 14 Mosquetões consumidos (6+8), 20 produzidos -- excluir a produção
+    // inteira cria déficit de 14, coberto integralmente pela folga de A (6)
+    // + B (8), nenhum dos dois vendeu nada ainda.
+
+    const result = await deleteProductionRun(mosquetaoRun.id)
+    expect(result.success).toBe(true)
+    expect(result.reversedFrom).toHaveLength(2)
+    const totalReversed = result.reversedFrom!.reduce((sum, r) => sum + r.unitsReversed, 0)
+    expect(totalReversed).toBe(14)
+    const names = result.reversedFrom!.map((r) => r.productName).sort()
+    expect(names).toEqual(['Chaveiro A', 'Chaveiro B'])
+
+    const statusA = await getAssemblyStatus(productA.id)
+    expect(statusA.alreadyAssembled).toBe(0)
+    const statusB = await getAssemblyStatus(productB.id)
+    expect(statusB.alreadyAssembled).toBe(0)
+  })
+
+  it('bloqueia quando um dos produtos pai já vendeu (sem folga) -- nada muda em nenhum dos dois', async () => {
+    const { printer, filament, mosquetao, productA, productB } = await createSharedComponentScenario()
+    const mosquetaoRun = await produce(mosquetao, printer, filament, 20)
+    await produce(productA, printer, filament, 10)
+    await produce(productB, printer, filament, 10)
+
+    await assembleWithComponent(productA, filament, mosquetao.id, 6)
+    await assembleWithComponent(productB, filament, mosquetao.id, 8)
+
+    const saleResult = await createSale(fd({ channel: 'DIRETA', productId: productA.id, quantity: '6', unitPrice: '10', saleDate: '2026-09-11' }))
+    expect(saleResult.success).toBe(true)
+
+    const assembliesBefore = await prisma.productAssembly.findMany({})
+
+    const result = await deleteProductionRun(mosquetaoRun.id)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('Chaveiro A')
+
+    const runAfter = await prisma.productionRun.findUnique({ where: { id: mosquetaoRun.id } })
+    expect(runAfter).not.toBeNull()
+
+    const assembliesAfter = await prisma.productAssembly.findMany({})
+    expect(assembliesAfter).toEqual(assembliesBefore)
+  })
+})
 
 describe('Cascata: cancelar/excluir produção já consumida em montagem', () => {
   it('produção 100% consumida, sem venda depois -- cancelar desmonta e estorna acessório/insumo', async () => {

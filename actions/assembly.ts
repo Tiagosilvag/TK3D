@@ -551,10 +551,22 @@ function comboKeyFromRun(run: { filamentId: string; filamentUsages: { filamentId
 // Sale/ConsignmentDelivery/uso-como-componente de outro produto: se o
 // excedente a desmontar já foi vendido/consignado/consumido por outro
 // produto, recusa (nada é escrito) e devolve um erro explicando o motivo.
+export interface AssemblyReversalResult {
+  success: boolean
+  error?: string
+  // Produtos cuja ProductAssembly foi reduzida/apagada nesta reversão --
+  // usado pela UI (botão "Excluir" em /stock) pra "sinalizar quais peças
+  // ficaram incompletas". Um produto SIMPLES sem montagem própria (ex.:
+  // Mosquetão) nunca aparece aqui como dono de nada (não tem
+  // ProductAssembly própria) -- quem aparece são os produtos PAI que o
+  // usaram como componente.
+  reversed?: { productId: string; productName: string; unitsReversed: number }[]
+}
+
 export async function reverseExcessAssemblyForRun(
   tx: Prisma.TransactionClient,
   run: { id: string; productId: string; productPartId: string | null; filamentId: string; quantitySuccess: number; filamentUsages: { filamentId: string }[] },
-): Promise<ActionResult> {
+): Promise<AssemblyReversalResult> {
   const partKey = run.productPartId ?? run.productId
   const comboKey = comboKeyFromRun(run)
 
@@ -572,8 +584,18 @@ export async function reverseExcessAssemblyForRun(
   })
   const producedAfter = otherRuns.filter((r) => comboKeyFromRun(r) === comboKey).reduce((sum, r) => sum + r.quantitySuccess, 0)
 
+  // Bug "Mosquetão compartilhado não desmonta": quando esta run produziu um
+  // PRODUTO inteiro direto (productPartId nulo -- produto simples ou "peça
+  // sintética"), `partKey` (= run.productId) pode estar gravado em
+  // ProductAssembly.colorChoices de DUAS origens -- a própria montagem
+  // deste produto (se ele mesmo precisa de montagem) OU a montagem de
+  // QUALQUER OUTRO produto que o usa como componente
+  // (confirmAssembly grava colorChoicesToStore[component.componentProductId],
+  // ou seja, na ProductAssembly do PRODUTO PAI, nunca na do componente).
+  // Só filtra por productId quando a chave é de ProductPart (peça de
+  // composto só pode aparecer na montagem do seu próprio pai).
   const assemblies = await tx.productAssembly.findMany({
-    where: { productId: run.productId },
+    where: run.productPartId ? { productId: run.productId } : {},
     orderBy: { assembledAt: 'desc' },
   })
   const choicesOf = (a: (typeof assemblies)[number]) => a.colorChoices as Record<string, string> | null
@@ -582,19 +604,6 @@ export async function reverseExcessAssemblyForRun(
 
   const deficit = consumed - producedAfter
   if (deficit <= 0) return { success: true }
-
-  // Quanto está livre pra desmontar sem mexer no que já saiu daqui --
-  // mesma fórmula de getOwnStockSummary (Estoque), nunca duplicada: já
-  // desconta vendido/consignado/usado-como-componente/ajustes manuais.
-  const stockSummary = await getOwnStockSummary()
-  const free = stockSummary.find((s) => s.productId === run.productId)?.available ?? 0
-  if (deficit > free) {
-    const productName = stockSummary.find((s) => s.productId === run.productId)?.productName ?? 'este produto'
-    return {
-      success: false,
-      error: `Não é possível cancelar/excluir esta produção: ${deficit} unidade(s) de "${productName}" já foram vendidas, consignadas ou usadas como componente de outro produto. Cancele a venda/consignação/uso correspondente antes.`,
-    }
-  }
 
   // Legado sem cor gravada (colorChoices nulo ou sem entrada pra esta
   // peça/produto) -- só usado como último recurso, se o combo específico
@@ -605,13 +614,53 @@ export async function reverseExcessAssemblyForRun(
     return choices == null || choices[partKey] === undefined
   })
 
+  // Quanto está livre pra desmontar sem mexer no que já saiu -- mesma
+  // fórmula de getOwnStockSummary (Estoque), nunca duplicada: já desconta
+  // vendido/consignado/usado-como-componente/ajustes manuais. Rastreado
+  // POR PRODUTO DONO de cada ProductAssembly candidata (não só
+  // run.productId): uma peça compartilhada (Mosquetão) pode aparecer em
+  // ProductAssembly de produtos pai DIFERENTES, cada um com seu próprio
+  // "livre".
+  const stockSummary = await getOwnStockSummary()
+  const freeRemaining = new Map<string, number>()
+  function freeFor(productId: string): number {
+    if (!freeRemaining.has(productId)) {
+      freeRemaining.set(productId, stockSummary.find((s) => s.productId === productId)?.available ?? 0)
+    }
+    return freeRemaining.get(productId)!
+  }
+
+  // Monta o plano ANTES de escrever qualquer coisa -- só aplica se der pra
+  // cobrir o déficit inteiro dentro do "livre" de cada produto dono.
   let remaining = deficit
+  const plan: { assembly: (typeof assemblies)[number]; units: number }[] = []
+  const blockedProductIds = new Set<string>()
   for (const assembly of [...matchingAssemblies, ...fallbackAssemblies]) {
     if (remaining <= 0) break
-    const unitsToReverse = Math.min(remaining, assembly.quantity)
-    if (unitsToReverse <= 0) continue
-    const fraction = unitsToReverse / assembly.quantity
-    const fullyReversed = unitsToReverse === assembly.quantity
+    const wanted = Math.min(remaining, assembly.quantity)
+    if (wanted <= 0) continue
+    const free = freeFor(assembly.productId)
+    const take = Math.min(wanted, free)
+    if (take < wanted) blockedProductIds.add(assembly.productId)
+    if (take <= 0) continue
+    plan.push({ assembly, units: take })
+    freeRemaining.set(assembly.productId, free - take)
+    remaining -= take
+  }
+
+  if (remaining > 0) {
+    const names = [...blockedProductIds].map((id) => stockSummary.find((s) => s.productId === id)?.productName ?? id)
+    const label = names.length > 0 ? names.join(', ') : 'outro produto que usa este item'
+    return {
+      success: false,
+      error: `Não é possível cancelar/excluir esta produção: ${remaining} unidade(s) já foram vendidas, consignadas ou usadas como componente (${label}). Cancele a venda/consignação correspondente antes.`,
+    }
+  }
+
+  const reversedByProduct = new Map<string, number>()
+  for (const { assembly, units } of plan) {
+    const fraction = units / assembly.quantity
+    const fullyReversed = units === assembly.quantity
 
     const consumptions = await tx.stockConsumption.findMany({ where: { source: 'ASSEMBLY', sourceId: assembly.id } })
     for (const c of consumptions) {
@@ -638,14 +687,20 @@ export async function reverseExcessAssemblyForRun(
         : undefined
       await tx.productAssembly.update({
         where: { id: assembly.id },
-        data: { quantity: assembly.quantity - unitsToReverse, ...(newSnapshot ? { costSnapshot: newSnapshot } : {}) },
+        data: { quantity: assembly.quantity - units, ...(newSnapshot ? { costSnapshot: newSnapshot } : {}) },
       })
     }
 
-    remaining -= unitsToReverse
+    reversedByProduct.set(assembly.productId, (reversedByProduct.get(assembly.productId) ?? 0) + units)
   }
 
-  return { success: true }
+  const reversed = [...reversedByProduct.entries()].map(([productId, unitsReversed]) => ({
+    productId,
+    productName: stockSummary.find((s) => s.productId === productId)?.productName ?? productId,
+    unitsReversed,
+  }))
+
+  return { success: true, reversed }
 }
 
 export interface AssemblyOverviewRow {

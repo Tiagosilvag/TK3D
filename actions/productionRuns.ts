@@ -21,7 +21,11 @@ import { Prisma, type ProductionStatus, type SupplyUnit } from '@prisma/client'
 import { productNeedsAssembly } from '@/lib/products'
 import { getAssemblyStatus, reverseExcessAssemblyForRun } from '@/actions/assembly'
 
-type ActionResult = { success: boolean; error?: string }
+// `reversedFrom` (só cancelProductionRun/deleteProductionRun preenchem):
+// produtos cuja ProductAssembly foi desfeita em cascata por esta ação --
+// ver actions/assembly.ts#reverseExcessAssemblyForRun. Usado pelo botão
+// "Excluir" de /stock pra "sinalizar quais peças ficaram incompletas".
+type ActionResult = { success: boolean; error?: string; reversedFrom?: { productName: string; unitsReversed: number }[] }
 
 // Ajuste "peça multi-filamento": quando a peça produzida tem >1 componente
 // de filamento, ProductionRunForm submete um filamentUsagesJson (1 entrada
@@ -767,12 +771,16 @@ function buildFilamentRestoreOps(
 // dentro da mesma transação antes de excluir a run.
 export async function deleteProductionRun(id: string): Promise<ActionResult> {
   const run = await prisma.productionRun.findUniqueOrThrow({ where: { id }, include: { filamentUsages: true } })
+  let reversedFrom: ActionResult['reversedFrom']
 
   try {
     await prisma.$transaction(async (tx) => {
       if (run.status !== 'CANCELADA') {
         const reversal = await reverseExcessAssemblyForRun(tx, run)
         if (!reversal.success) throw new Error(reversal.error)
+        if (reversal.reversed && reversal.reversed.length > 0) {
+          reversedFrom = reversal.reversed.map((r) => ({ productName: r.productName, unitsReversed: r.unitsReversed }))
+        }
       }
 
       await tx.productionRun.delete({ where: { id } })
@@ -803,7 +811,7 @@ export async function deleteProductionRun(id: string): Promise<ActionResult> {
   // "excluir/cancelar produção não atualiza Montagem/Estoque").
   revalidatePath('/assembly')
   revalidatePath('/stock')
-  return { success: true }
+  return { success: true, reversedFrom }
 }
 
 // Spec §5.5: cancels a production run WITHOUT deleting it (history is kept —
@@ -825,6 +833,7 @@ export async function cancelProductionRun(id: string, reason: string): Promise<A
   if (run.status === 'CANCELADA') {
     return { success: false, error: 'Esta produção já foi cancelada' }
   }
+  let reversedFrom: ActionResult['reversedFrom']
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -838,6 +847,9 @@ export async function cancelProductionRun(id: string, reason: string): Promise<A
       // foi vendido/consignado/usado como componente de outro produto.
       const reversal = await reverseExcessAssemblyForRun(tx, run)
       if (!reversal.success) throw new Error(reversal.error)
+      if (reversal.reversed && reversal.reversed.length > 0) {
+        reversedFrom = reversal.reversed.map((r) => ({ productName: r.productName, unitsReversed: r.unitsReversed }))
+      }
 
       await tx.productionRun.update({
         where: { id },
@@ -870,7 +882,7 @@ export async function cancelProductionRun(id: string, reason: string): Promise<A
   // "excluir/cancelar produção não atualiza Montagem/Estoque").
   revalidatePath('/assembly')
   revalidatePath('/stock')
-  return { success: true }
+  return { success: true, reversedFrom }
 }
 
 // ---------------------------------------------------------------------------
@@ -935,6 +947,39 @@ export async function getProductionByProduct(): Promise<ProductionByProductRow[]
     })
   }
   return rows
+}
+
+export interface ProductionRunListItem {
+  id: string
+  date: string
+  partName: string
+  printerName: string
+  filamentLabel: string
+  quantitySuccess: number
+}
+
+// Melhoria "Estoque": lista as ProductionRun não-canceladas de UM produto
+// (diretas, productPartId nulo, e de qualquer ProductPart dele) pra
+// escolher quais excluir direto do botão "Excluir" de /stock -- puramente
+// listagem (sem lógica de combo/déficit, que fica em
+// reverseExcessAssemblyForRun no momento de excluir de verdade).
+export async function getProductionRunsForProduct(productId: string): Promise<ProductionRunListItem[]> {
+  const runs = await prisma.productionRun.findMany({
+    where: { productId, status: { not: 'CANCELADA' } },
+    include: { productPart: true, printer: true, filament: true },
+    orderBy: { date: 'desc' },
+  })
+  return runs.map((run) => ({
+    id: run.id,
+    date: run.date.toISOString(),
+    partName: run.productPart?.name ?? 'Peça única',
+    printerName: run.printer.name,
+    // Peça multi-filamento: mostra o 1º componente (mesma convenção já
+    // usada em outras listagens desta base pro campo escalar) -- é só um
+    // rótulo de escolha, não precisa do combo completo aqui.
+    filamentLabel: `${run.filament.manufacturer} ${run.filament.colorName}`,
+    quantitySuccess: run.quantitySuccess,
+  }))
 }
 
 export interface PlateListRow {

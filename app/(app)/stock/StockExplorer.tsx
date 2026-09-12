@@ -5,6 +5,7 @@ import { AdjustStockButton } from '@/components/AdjustStockButton'
 import { ActionsMenu } from '@/components/ActionsMenu'
 import { StockAdjustmentHistoryButton, type AdjustmentEntry } from './StockAdjustmentHistoryButton'
 import { VariantsModal } from './VariantsModal'
+import { DeleteProductionButton } from './DeleteProductionButton'
 
 export interface StockVariantRow {
   key: string
@@ -262,6 +263,8 @@ export function StockExplorer({ rows }: { rows: StockRow[] }) {
                         <hr className="w-full border-slate-200 dark:border-slate-700" />
                         <AdjustStockButton resourceType="PRODUCT" resourceId={r.productId} resourceName={r.productName} currentQuantity={r.available} />
                         <StockAdjustmentHistoryButton productName={r.productName} adjustments={r.adjustments} />
+                        <hr className="w-full border-slate-200 dark:border-slate-700" />
+                        <DeleteProductionButton productId={r.productId} productName={r.productName} />
                       </ActionsMenu>
                     </div>
                   </td>

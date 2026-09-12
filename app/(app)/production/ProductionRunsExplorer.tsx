@@ -143,7 +143,12 @@ export function ProductionRunsExplorer({
                           </Link>
                         )}
                         {run.status !== 'CANCELADA' && <CancelProductionRunForm id={run.id} />}
-                        <ConfirmDeleteForm action={() => handleRemoveItem(run.id)} />
+                        {/* Bug "cliquei em Remover sem querer, era pra Cancelar":
+                            os dois ficavam lado a lado no mesmo menu, fácil de
+                            confundir -- Remover (exclusão física, sem motivo)
+                            só fica disponível DEPOIS que a produção já foi
+                            Cancelada (com motivo obrigatório), nunca antes. */}
+                        {run.status === 'CANCELADA' && <ConfirmDeleteForm action={() => handleRemoveItem(run.id)} />}
                       </ActionsMenu>
                     </td>
                   </tr>
