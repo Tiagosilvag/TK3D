@@ -33,12 +33,25 @@ export const metadata: Metadata = {
 // Runs before paint (blocking, no src) so the correct theme class is on
 // <html> from the very first frame — otherwise a page that loaded in dark
 // mode last time would flash light before ThemeToggle's effect ran.
+//
+// Bug "tema muda sozinho ao decorrer do tempo": enquanto o usuário nunca
+// clicava em ThemeToggle, localStorage('theme') ficava vazio pra sempre --
+// esse script caía no fallback de matchMedia TODA VEZ que uma página
+// nova carregava do zero (nova aba, F5, link direto). Se o SO tem "modo
+// escuro automático" agendado por horário (comum em Windows/macOS/
+// celular), o resultado do matchMedia muda sozinho durante o dia -- daí
+// o app "trocava de tema" ao navegar em momentos diferentes, mesmo sem o
+// usuário nunca ter escolhido nada. Agora a 1ª decisão (seja ela do
+// localStorage OU do matchMedia) é GRAVADA de volta no localStorage,
+// fixando o tema a partir daí -- só muda de novo se o usuário clicar em
+// ThemeToggle.
 const THEME_INIT_SCRIPT = `
 (function () {
   try {
     var stored = localStorage.getItem('theme');
     var dark = stored ? stored === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
     document.documentElement.classList.toggle('dark', dark);
+    if (!stored) localStorage.setItem('theme', dark ? 'dark' : 'light');
   } catch (e) {}
 })();
 `

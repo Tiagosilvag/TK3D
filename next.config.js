@@ -6,11 +6,21 @@ const nextConfig = {
   // (actions/productPhotos.ts#addProductPhoto) já valida até 5MB e a UI
   // anuncia "até 5MB", mas sem esse override qualquer foto real de
   // celular/câmera (quase sempre > 1MB) era rejeitada pelo PRÓPRIO Next.js
-  // antes de chegar na action, com um erro genérico de servidor. 6MB dá
-  // margem pro envelope multipart/form-data em volta dos 5MB do arquivo.
+  // antes de chegar na action, com um erro genérico de servidor.
+  // Segunda rodada do mesmo bug ("client-side exception" ao enviar foto):
+  // 6MB dava margem só pro envelope multipart em torno de um arquivo de
+  // EXATAMENTE 5MB -- mas fotos de câmera de celular reais passam disso
+  // com frequência (6, 8, 10MB+, resolução alta). Quando o arquivo cru já
+  // ultrapassa o limite do Next.js, a rejeição acontece ANTES de
+  // addProductPhoto rodar sua própria validação de 5MB, então a mensagem
+  // amigável "Foto muito grande (máximo 5MB)" nunca aparece -- o
+  // framework derruba a requisição com um erro genérico, que o cliente
+  // mostra como tela em branco. 15MB dá bastante margem pra QUALQUER foto
+  // real chegar até a validação da action, que segue sendo quem aplica a
+  // regra de negócio de 5MB de verdade (com mensagem clara).
   experimental: {
     serverActions: {
-      bodySizeLimit: '6mb',
+      bodySizeLimit: '15mb',
     },
   },
   // Deploy demorando ~18min (log 2026-09-12): lint + type-check dentro do

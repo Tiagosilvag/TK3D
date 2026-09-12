@@ -20,9 +20,14 @@ Deploy em produção: `tk3d.coffetech.com.br` via Coolify.
   `@@map` exceto `accessory_types`). `npx prisma validate` e `generate`
   funcionam com um `DATABASE_URL` fake (não precisam de conexão real).
 - **Sem dependências novas** por padrão: modais usam `<dialog>` nativo
-  (`components/AdjustStockButton.tsx`, `DeletePrinterButton.tsx`),
-  dropdowns usam `<details>/<summary>` nativo
-  (`components/ActionsMenu.tsx`). Zero libs de UI.
+  (`components/AdjustStockButton.tsx`, `DeletePrinterButton.tsx`). O menu
+  de ações "⋯" (`components/ActionsMenu.tsx`) era `<details>/<summary>`
+  nativo, mas isso corta o dropdown quando o `<details>` está dentro de
+  um container com overflow (tabelas com rolagem horizontal) e não fecha
+  sozinho ao clicar fora -- agora é `position:fixed` calculado a partir
+  do botão, portado pra `document.body` (`createPortal`, mesma técnica de
+  `FilamentSelect`/`ComponentCategoryCard`) com fechamento em clique-fora/
+  Esc via JS. Continua zero libs de UI/dependências novas.
 - **Custo histórico congelado**: `ProductionRun.costSnapshot` e
   `Sale.costSnapshot` (ambos `Json?`) são calculados uma vez na criação
   e nunca recalculados — mudar Settings/Printer/Filament depois nunca
