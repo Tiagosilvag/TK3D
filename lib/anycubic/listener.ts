@@ -1,6 +1,4 @@
 import mqtt, { MqttClient } from 'mqtt'
-import { readFileSync } from 'fs'
-import { join } from 'path'
 import { prisma } from '@/lib/prisma'
 import { decryptCredential } from '@/lib/crypto'
 import {
@@ -12,6 +10,7 @@ import {
 } from '@/lib/anycubic/parser'
 import { createAnycubicJobTracker, type AnycubicCaptureDraft } from '@/lib/anycubic/jobTracker'
 import { encryptMqttToken, buildMqttUsername } from '@/lib/anycubic/mqttCrypto'
+import { ANYCUBIC_MQTT_CA_CERT, ANYCUBIC_MQTT_CLIENT_CERT, ANYCUBIC_MQTT_CLIENT_KEY } from '@/lib/anycubic/certs'
 
 type PrinterRef = { id: string; anycubicEnabled: boolean; anycubicPrinterKey: string | null }
 
@@ -67,11 +66,10 @@ const MQTT_PORT = 8883
 const MQTT_TOPIC_PREFIX = 'anycubic/anycubicCloud/v1'
 
 function buildMqttSslOptions() {
-  const certDir = join(__dirname, 'certs')
   return {
-    ca: readFileSync(join(certDir, 'anycubic_mqtt_ca.crt')),
-    cert: readFileSync(join(certDir, 'anycubic_mqtt_client.crt')),
-    key: readFileSync(join(certDir, 'anycubic_mqtt_client.key')),
+    ca: ANYCUBIC_MQTT_CA_CERT,
+    cert: ANYCUBIC_MQTT_CLIENT_CERT,
+    key: ANYCUBIC_MQTT_CLIENT_KEY,
     rejectUnauthorized: false,
   }
 }

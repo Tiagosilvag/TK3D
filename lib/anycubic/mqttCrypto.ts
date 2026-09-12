@@ -1,6 +1,5 @@
 import { createHash, createPublicKey, publicEncrypt, constants, type KeyLike } from 'crypto'
-import { readFileSync } from 'fs'
-import { join } from 'path'
+import { ANYCUBIC_MQTT_CA_CERT } from './certs'
 
 function md5Hex(input: string): string {
   return createHash('md5').update(input, 'utf8').digest('hex')
@@ -23,14 +22,13 @@ let cachedCaPublicKey: KeyLike | null = null
 
 function loadCaPublicKey(): KeyLike {
   if (cachedCaPublicKey) return cachedCaPublicKey
-  const caCertPem = readFileSync(join(__dirname, 'certs', 'anycubic_mqtt_ca.crt'), 'utf8')
-  cachedCaPublicKey = createPublicKey(caCertPem)
+  cachedCaPublicKey = createPublicKey(ANYCUBIC_MQTT_CA_CERT)
   return cachedCaPublicKey
 }
 
 // Senha da sessão MQTT (modo Slicer/"pcf"): o auth_token criptografado com
 // RSA-PKCS1v15 usando a chave pública extraída do certificado CA da
-// Anycubic (arquivo público, ver certs/anycubic_mqtt_ca.crt).
+// Anycubic (ver lib/anycubic/certs.ts).
 export function encryptMqttToken(authToken: string): string {
   return encryptMqttTokenWithKey(authToken, loadCaPublicKey())
 }

@@ -1,8 +1,20 @@
 import { describe, it, expect } from 'vitest'
 import { generateKeyPairSync, privateDecrypt, constants } from 'crypto'
-import { encryptMqttTokenWithKey, buildMqttClientId, buildMqttUsername } from '@/lib/anycubic/mqttCrypto'
+import { encryptMqttTokenWithKey, encryptMqttToken, buildMqttClientId, buildMqttUsername } from '@/lib/anycubic/mqttCrypto'
 
 describe('anycubic mqttCrypto', () => {
+  // Regressão: em produção, ler o certificado via fs.readFileSync quebrava
+  // (Next.js empacota o server em chunks e não copia o arquivo pro lugar
+  // certo -- ENOENT). O certificado virou string embutida em certs.ts;
+  // esse teste roda a função real (sem mock de chave) pra garantir que a
+  // string colada não está corrompida e que createPublicKey/publicEncrypt
+  // funcionam com ela de ponta a ponta.
+  it('encryptMqttToken funciona com o certificado CA real embutido, sem lançar erro', () => {
+    const encrypted = encryptMqttToken('token-de-teste')
+    expect(typeof encrypted).toBe('string')
+    expect(encrypted.length).toBeGreaterThan(0)
+  })
+
   it('encryptMqttTokenWithKey criptografa e o resultado decripta de volta pro token original (round-trip com par de chaves de teste)', () => {
     const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 
