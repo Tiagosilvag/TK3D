@@ -2,6 +2,19 @@ import { z } from 'zod'
 
 export const finishingTypeEnum = z.enum(['NENHUM', 'CANETA_VERNIZ', 'RESINA_UV', 'OUTRO'])
 
+// Bug "Expected number, received nan" ao cadastrar produto: o campo Peso
+// (g) é um <input type="number">, mas em alguns navegadores/dispositivos
+// (locale pt-BR) o usuário consegue digitar vírgula como separador decimal
+// (ex.: "59,51") e o valor CRU chega assim no FormData -- z.coerce.number()
+// faz `Number("59,51")`, que é NaN, e o Zod recusa com essa mensagem
+// críptica. Troca vírgula por ponto antes de coagir pra número, só nos
+// campos de peso (onde esse erro foi reportado de verdade) -- não é uma
+// varredura em todo `z.coerce.number()` do app, ficaria fora do escopo
+// deste bug.
+function decimalNumber(schema: z.ZodNumber) {
+  return z.preprocess((v) => (typeof v === 'string' ? Number(v.replace(',', '.')) : v), schema)
+}
+
 // z.coerce.boolean() would turn the string "false" into `true` (any
 // non-empty string is truthy), which breaks both the literal "false" value
 // sent by tests/forms and an unchecked HTML checkbox that is simply absent
@@ -14,7 +27,7 @@ const checkboxBoolean = z.string().optional().transform((v) => v === 'true' || v
 // multi-material pode precisar de várias cores ao mesmo tempo.
 export const productPartFilamentSchema = z.object({
   filamentId: z.string().min(1, 'Selecione um filamento'),
-  weightGrams: z.coerce.number().positive('Peso deve ser maior que zero'),
+  weightGrams: decimalNumber(z.number().positive('Peso deve ser maior que zero')),
 })
 
 export type ProductPartFilamentInput = z.infer<typeof productPartFilamentSchema>
@@ -43,7 +56,7 @@ export const productSchema = z
     isComposite: checkboxBoolean,
     printerId: z.string().optional().nullable(),
     filamentId: z.string().optional().nullable(),
-    weightGrams: z.coerce.number().optional(),
+    weightGrams: decimalNumber(z.number()).optional(),
     printTimeHours: z.coerce.number().optional(),
     laborTimeHours: z.coerce.number().nonnegative('Tempo de mão de obra não pode ser negativo'),
     // Acabamento/Usa cola saíram do formulário (nunca mais submetidos) --

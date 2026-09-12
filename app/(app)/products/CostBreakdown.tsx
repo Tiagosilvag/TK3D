@@ -19,6 +19,14 @@ const ROWS: { key: keyof ProductCostBreakdown; label: string; flagKey: keyof Pro
   { key: 'suppliesCost', label: 'Insumos', flagKey: 'includeSuppliesCost' },
   { key: 'packagingCost', label: 'Embalagem', flagKey: 'includePackagingCost' },
   { key: 'accessoryCost', label: 'Acessórios', flagKey: 'includeAccessoriesCost' },
+  // Bug "custo de Mosquetão não calculado": componentProductsCost (custo dos
+  // outros PRODUTOS usados como ingrediente, ex.: Mosquetão dentro de
+  // Chaveiro Café) já era somado no subtotal (lib/costing.ts#combineProductCost,
+  // sob a mesma flag includeAccessoriesCost -- ver comentário lá) mas nunca
+  // tinha linha própria aqui, então o valor ficava escondido dentro do
+  // subtotal sem nenhuma linha explicando de onde vinha -- parecia "não
+  // calculado" mesmo contando de verdade.
+  { key: 'componentProductsCost', label: 'Componentes', flagKey: 'includeAccessoriesCost' },
   { key: 'failureRateCost', label: 'Taxa de falha', flagKey: 'includeFailureRate' },
 ]
 

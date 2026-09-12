@@ -19,7 +19,7 @@ import {
 import { revalidatePath } from 'next/cache'
 import { Prisma, type ProductionStatus, type SupplyUnit } from '@prisma/client'
 import { productNeedsAssembly } from '@/lib/products'
-import { getAssemblyStatus } from '@/actions/assembly'
+import { getAssemblyStatus, reverseExcessAssemblyForRun } from '@/actions/assembly'
 
 type ActionResult = { success: boolean; error?: string }
 
@@ -378,6 +378,14 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
   revalidatePath('/filaments')
   revalidatePath('/accessories')
   revalidatePath('/supplies')
+  // Bug "excluir/cancelar produção não atualiza Montagem/Estoque": toda
+  // ação aqui que muda quantidade produzida ou consumo de acessório/insumo
+  // também muda "disponível p/ montar" (Montagem) e, pra produto simples
+  // sem montagem, o "disponível" direto (Estoque) -- mas nenhum revalidate
+  // dessas duas rotas existia, então elas continuavam servindo a página
+  // antiga (RSC cacheada) até algo MAIS revalidar por acidente.
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
@@ -460,6 +468,10 @@ export async function createProductionRunBatch(formData: FormData): Promise<Acti
   revalidatePath('/filaments')
   revalidatePath('/accessories')
   revalidatePath('/supplies')
+  // Ver comentário no primeiro revalidatePath('/assembly') acima (bug
+  // "excluir/cancelar produção não atualiza Montagem/Estoque").
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
@@ -569,6 +581,10 @@ export async function createPlate(formData: FormData): Promise<ActionResult> {
   revalidatePath('/filaments')
   revalidatePath('/accessories')
   revalidatePath('/supplies')
+  // Ver comentário no primeiro revalidatePath('/assembly') acima (bug
+  // "excluir/cancelar produção não atualiza Montagem/Estoque").
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
@@ -697,25 +713,26 @@ export async function updateProductionRun(id: string, formData: FormData): Promi
 // (imensa maioria das produções) continua lendo o snapshot/campo escalar
 // exatamente como antes.
 function buildFilamentRestoreOps(
+  tx: Prisma.TransactionClient,
   run: { filamentId: string; gramsUsed: Prisma.Decimal; gramsWasted: Prisma.Decimal; filamentUsages: { filamentId: string; gramsUsed: Prisma.Decimal; gramsWasted: Prisma.Decimal }[] },
   snapshot: ProductionCostSnapshot | null,
 ): Prisma.PrismaPromise<unknown>[] {
   if (run.filamentUsages.length > 0) {
     return run.filamentUsages.map((u) =>
-      prisma.filament.update({ where: { id: u.filamentId }, data: { currentStockGrams: { increment: u.gramsUsed.plus(u.gramsWasted) } } }),
+      tx.filament.update({ where: { id: u.filamentId }, data: { currentStockGrams: { increment: u.gramsUsed.plus(u.gramsWasted) } } }),
     )
   }
   if (snapshot?.consumedResources) {
     const { filament } = snapshot.consumedResources
     return [
-      prisma.filament.update({
+      tx.filament.update({
         where: { id: filament.filamentId },
         data: { currentStockGrams: { increment: filament.gramsUsed + filament.gramsWasted } },
       }),
     ]
   }
   // Legacy row predating costSnapshot: only filament was ever consumed.
-  return [prisma.filament.update({ where: { id: run.filamentId }, data: { currentStockGrams: { increment: run.gramsUsed.plus(run.gramsWasted) } } })]
+  return [tx.filament.update({ where: { id: run.filamentId }, data: { currentStockGrams: { increment: run.gramsUsed.plus(run.gramsWasted) } } })]
 }
 
 // Physical delete: ProductionRun is a historical log, not a catalog entity,
@@ -738,46 +755,54 @@ function buildFilamentRestoreOps(
 // Bug de estoque/montagem -- exclusão de produção concluída: quantitySuccess
 // desta run já pode ter avançado no funil (virado peça em Montagem, sido
 // montada pra Estoque, entregue a parceiro ou vendida) antes de ser
-// excluída aqui. Não existe rastreio por-run de pra onde cada unidade foi
-// (Sale/ConsignmentDelivery/ProductAssembly não guardam productionRunId),
-// então não há como reverter fisicamente "a unidade desta run" de um
-// estágio específico -- e não faria sentido reescrever Sale/
-// ConsignmentDelivery/ProductAssembly (fatos históricos já ocorridos,
-// nunca reescritos nesta base, ver costSnapshot). O tratamento correto é:
-// deletar a ProductionRun (linha abaixo) já reduz "produzido" organicamente,
-// já que todo saldo de Estoque/Montagem é somado ao vivo dessas tabelas
-// (lib/reports.ts#getOwnStockSummary, actions/assembly.ts#getAssemblyStatus)
-// -- e cada tela clampa seu próprio residual em Math.max(0, ...)
-// independentemente uma da outra (Estoque, Montagem, Entregue a Parceiros/
-// Consignado), na ordem em que cada uma já é composta (Estoque via
-// ProductAssembly/ProductionRun, Montagem via ProductionRun cru, entrega/
-// consignado são fatos imutáveis). Isso zera cada residual que ficaria
-// negativo sem nunca "emprestar" o excedente de um estágio pra outro.
+// excluída aqui. Sale/ConsignmentDelivery continuam fatos históricos nunca
+// reescritos (não existe rastreio por-run pra eles -- não guardam
+// productionRunId, então não há como saber quais unidades vendidas/
+// entregues vieram desta run especificamente; se o excedente já chegou
+// lá, `reverseExcessAssemblyForRun` recusa em vez de adivinhar). Mas
+// ProductAssembly (a montagem em si) É desfeita quando esta run era tudo
+// que sustentava aquelas unidades já montadas -- ver
+// actions/assembly.ts#reverseExcessAssemblyForRun (bug "cancelar/excluir
+// produção já montada deixa Montagem/Estoque desatualizados"), chamada
+// dentro da mesma transação antes de excluir a run.
 export async function deleteProductionRun(id: string): Promise<ActionResult> {
   const run = await prisma.productionRun.findUniqueOrThrow({ where: { id }, include: { filamentUsages: true } })
 
-  const ops: Prisma.PrismaPromise<unknown>[] = [prisma.productionRun.delete({ where: { id } })]
+  try {
+    await prisma.$transaction(async (tx) => {
+      if (run.status !== 'CANCELADA') {
+        const reversal = await reverseExcessAssemblyForRun(tx, run)
+        if (!reversal.success) throw new Error(reversal.error)
+      }
 
-  if (run.status !== 'CANCELADA') {
-    const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
-    ops.push(...buildFilamentRestoreOps(run, snapshot))
-    if (snapshot?.consumedResources) {
-      const { accessories, supplies } = snapshot.consumedResources
-      for (const a of accessories) {
-        ops.push(prisma.accessory.update({ where: { id: a.accessoryId }, data: { currentStock: { increment: a.quantityConsumed } } }))
+      await tx.productionRun.delete({ where: { id } })
+
+      if (run.status !== 'CANCELADA') {
+        const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+        await Promise.all(buildFilamentRestoreOps(tx, run, snapshot))
+        if (snapshot?.consumedResources) {
+          const { accessories, supplies } = snapshot.consumedResources
+          for (const a of accessories) {
+            await tx.accessory.update({ where: { id: a.accessoryId }, data: { currentStock: { increment: a.quantityConsumed } } })
+          }
+          for (const s of supplies) {
+            await tx.supply.update({ where: { id: s.supplyId }, data: { currentStock: { increment: s.quantityConsumed } } })
+          }
+        }
       }
-      for (const s of supplies) {
-        ops.push(prisma.supply.update({ where: { id: s.supplyId }, data: { currentStock: { increment: s.quantityConsumed } } }))
-      }
-    }
+    })
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Erro ao excluir produção' }
   }
-
-  await prisma.$transaction(ops)
 
   revalidatePath('/production')
   revalidatePath('/filaments')
   revalidatePath('/accessories')
   revalidatePath('/supplies')
+  // Ver comentário no primeiro revalidatePath('/assembly') acima (bug
+  // "excluir/cancelar produção não atualiza Montagem/Estoque").
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 
@@ -801,33 +826,50 @@ export async function cancelProductionRun(id: string, reason: string): Promise<A
     return { success: false, error: 'Esta produção já foi cancelada' }
   }
 
-  const ops: Prisma.PrismaPromise<unknown>[] = [
-    prisma.productionRun.update({
-      where: { id },
-      data: { status: 'CANCELADA', cancelReason: trimmedReason, cancelDate: new Date() },
-    }),
-  ]
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Bug "cancelar/excluir produção já montada deixa Montagem/Estoque
+      // desatualizados" -- ver actions/assembly.ts#reverseExcessAssemblyForRun.
+      // Roda ANTES de marcar CANCELADA (que já exclui esta run de "produzido"
+      // nas contas de Montagem/Estoque): se esta run já tinha sido 100% ou
+      // parcialmente consumida numa montagem confirmada, desmonta o
+      // excedente e estorna o acessório/insumo que ele consumiu -- ou
+      // recusa (lança, desfazendo a transação inteira) se esse excedente já
+      // foi vendido/consignado/usado como componente de outro produto.
+      const reversal = await reverseExcessAssemblyForRun(tx, run)
+      if (!reversal.success) throw new Error(reversal.error)
 
-  const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
-  ops.push(...buildFilamentRestoreOps(run, snapshot))
-  if (snapshot?.consumedResources) {
-    const { accessories, supplies } = snapshot.consumedResources
-    for (const a of accessories) {
-      ops.push(prisma.accessory.update({ where: { id: a.accessoryId }, data: { currentStock: { increment: a.quantityConsumed } } }))
-    }
-    for (const s of supplies) {
-      ops.push(prisma.supply.update({ where: { id: s.supplyId }, data: { currentStock: { increment: s.quantityConsumed } } }))
-    }
-    // Packaging is not stock-tracked (see createProductionRun's note above),
-    // so there is nothing to restore for consumedResources.packaging.
+      await tx.productionRun.update({
+        where: { id },
+        data: { status: 'CANCELADA', cancelReason: trimmedReason, cancelDate: new Date() },
+      })
+
+      const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+      await Promise.all(buildFilamentRestoreOps(tx, run, snapshot))
+      if (snapshot?.consumedResources) {
+        const { accessories, supplies } = snapshot.consumedResources
+        for (const a of accessories) {
+          await tx.accessory.update({ where: { id: a.accessoryId }, data: { currentStock: { increment: a.quantityConsumed } } })
+        }
+        for (const s of supplies) {
+          await tx.supply.update({ where: { id: s.supplyId }, data: { currentStock: { increment: s.quantityConsumed } } })
+        }
+        // Packaging is not stock-tracked (see createProductionRun's note above),
+        // so there is nothing to restore for consumedResources.packaging.
+      }
+    })
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Erro ao cancelar produção' }
   }
-
-  await prisma.$transaction(ops)
 
   revalidatePath('/production')
   revalidatePath('/filaments')
   revalidatePath('/accessories')
   revalidatePath('/supplies')
+  // Ver comentário no primeiro revalidatePath('/assembly') acima (bug
+  // "excluir/cancelar produção não atualiza Montagem/Estoque").
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
   return { success: true }
 }
 

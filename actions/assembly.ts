@@ -1,9 +1,10 @@
 'use server'
 import { z } from 'zod'
+import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { revalidatePath } from 'next/cache'
 import { productNeedsAssembly } from '@/lib/products'
-import { getProductVariantBreakdown } from '@/lib/reports'
+import { getProductVariantBreakdown, getOwnStockSummary } from '@/lib/reports'
 import { getProductAverageProductionCost } from '@/actions/products'
 
 type ActionResult = { success: boolean; error?: string }
@@ -523,6 +524,128 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
     maxAssemblableUnits,
     alreadyAssembled,
   }
+}
+
+function comboKeyFromRun(run: { filamentId: string; filamentUsages: { filamentId: string }[] }): string {
+  const ids = run.filamentUsages.length > 0 ? run.filamentUsages.map((u) => u.filamentId) : [run.filamentId]
+  return [...new Set(ids)].sort().join(',')
+}
+
+// Bug "cancelar/excluir produção já montada deixa Montagem/Estoque
+// desatualizados": ProductAssembly não tem NENHUM vínculo (FK) com a(s)
+// ProductionRun que a originaram -- "consumido" é só a soma de
+// ProductAssembly.quantity por combo (ProductAssembly.colorChoices),
+// nunca reduzido quando uma ProductionRun que já tinha sido montada é
+// cancelada/excluída depois. Chamada por cancelProductionRun/
+// deleteProductionRun (actions/productionRuns.ts) DENTRO da mesma
+// transação, antes de gravar o cancelamento/exclusão em si -- nunca pela
+// tela de Montagem.
+//
+// Descobre se cancelar/excluir `run` deixaria "consumido > produzido" pro
+// combo de cor dela (produção que já tinha sido 100% ou parcialmente
+// consumida numa montagem confirmada) e, se sim, desmonta o excedente:
+// reduz (ou apaga) a(s) ProductAssembly mais recente(s) daquele combo e
+// estorna, na mesma proporção, o acessório/insumo que elas consumiram
+// (via StockConsumption, que já registra exatamente quanto cada montagem
+// decrementou -- fonte de verdade, não reconstrói nada). Nunca mexe em
+// Sale/ConsignmentDelivery/uso-como-componente de outro produto: se o
+// excedente a desmontar já foi vendido/consignado/consumido por outro
+// produto, recusa (nada é escrito) e devolve um erro explicando o motivo.
+export async function reverseExcessAssemblyForRun(
+  tx: Prisma.TransactionClient,
+  run: { id: string; productId: string; productPartId: string | null; filamentId: string; quantitySuccess: number; filamentUsages: { filamentId: string }[] },
+): Promise<ActionResult> {
+  const partKey = run.productPartId ?? run.productId
+  const comboKey = comboKeyFromRun(run)
+
+  // Produzido depois de cancelar/excluir esta run: soma de quantitySuccess
+  // de OUTRAS produções não-canceladas da mesma peça/produto E do mesmo
+  // combo de cor (exclui a própria `run`, que está sendo cancelada/excluída
+  // agora -- ainda não foi gravada como tal neste ponto).
+  const otherRuns = await tx.productionRun.findMany({
+    where: {
+      status: { not: 'CANCELADA' },
+      id: { not: run.id },
+      ...(run.productPartId ? { productPartId: run.productPartId } : { productId: run.productId, productPartId: null }),
+    },
+    select: { filamentId: true, quantitySuccess: true, filamentUsages: { select: { filamentId: true } } },
+  })
+  const producedAfter = otherRuns.filter((r) => comboKeyFromRun(r) === comboKey).reduce((sum, r) => sum + r.quantitySuccess, 0)
+
+  const assemblies = await tx.productAssembly.findMany({
+    where: { productId: run.productId },
+    orderBy: { assembledAt: 'desc' },
+  })
+  const choicesOf = (a: (typeof assemblies)[number]) => a.colorChoices as Record<string, string> | null
+  const matchingAssemblies = assemblies.filter((a) => choicesOf(a)?.[partKey] === comboKey)
+  const consumed = matchingAssemblies.reduce((sum, a) => sum + a.quantity, 0)
+
+  const deficit = consumed - producedAfter
+  if (deficit <= 0) return { success: true }
+
+  // Quanto está livre pra desmontar sem mexer no que já saiu daqui --
+  // mesma fórmula de getOwnStockSummary (Estoque), nunca duplicada: já
+  // desconta vendido/consignado/usado-como-componente/ajustes manuais.
+  const stockSummary = await getOwnStockSummary()
+  const free = stockSummary.find((s) => s.productId === run.productId)?.available ?? 0
+  if (deficit > free) {
+    const productName = stockSummary.find((s) => s.productId === run.productId)?.productName ?? 'este produto'
+    return {
+      success: false,
+      error: `Não é possível cancelar/excluir esta produção: ${deficit} unidade(s) de "${productName}" já foram vendidas, consignadas ou usadas como componente de outro produto. Cancele a venda/consignação/uso correspondente antes.`,
+    }
+  }
+
+  // Legado sem cor gravada (colorChoices nulo ou sem entrada pra esta
+  // peça/produto) -- só usado como último recurso, se o combo específico
+  // não tiver ProductAssembly suficiente pra cobrir o déficit sozinho.
+  // Nunca toca uma linha que gravou explicitamente OUTRO combo.
+  const fallbackAssemblies = assemblies.filter((a) => {
+    const choices = choicesOf(a)
+    return choices == null || choices[partKey] === undefined
+  })
+
+  let remaining = deficit
+  for (const assembly of [...matchingAssemblies, ...fallbackAssemblies]) {
+    if (remaining <= 0) break
+    const unitsToReverse = Math.min(remaining, assembly.quantity)
+    if (unitsToReverse <= 0) continue
+    const fraction = unitsToReverse / assembly.quantity
+    const fullyReversed = unitsToReverse === assembly.quantity
+
+    const consumptions = await tx.stockConsumption.findMany({ where: { source: 'ASSEMBLY', sourceId: assembly.id } })
+    for (const c of consumptions) {
+      const totalQty = c.quantity.toNumber()
+      const reverseQty = fullyReversed ? totalQty : totalQty * fraction
+      if (c.resourceType === 'ACCESSORY') {
+        await tx.accessory.update({ where: { id: c.resourceId }, data: { currentStock: { increment: reverseQty } } })
+      } else if (c.resourceType === 'SUPPLY') {
+        await tx.supply.update({ where: { id: c.resourceId }, data: { currentStock: { increment: reverseQty } } })
+      }
+      if (fullyReversed) {
+        await tx.stockConsumption.delete({ where: { id: c.id } })
+      } else {
+        await tx.stockConsumption.update({ where: { id: c.id }, data: { quantity: totalQty - reverseQty } })
+      }
+    }
+
+    if (fullyReversed) {
+      await tx.productAssembly.delete({ where: { id: assembly.id } })
+    } else {
+      const snapshot = assembly.costSnapshot as { componentProductsCost: number; total: number } | null
+      const newSnapshot = snapshot
+        ? { componentProductsCost: snapshot.componentProductsCost * (1 - fraction), total: snapshot.total * (1 - fraction) }
+        : undefined
+      await tx.productAssembly.update({
+        where: { id: assembly.id },
+        data: { quantity: assembly.quantity - unitsToReverse, ...(newSnapshot ? { costSnapshot: newSnapshot } : {}) },
+      })
+    }
+
+    remaining -= unitsToReverse
+  }
+
+  return { success: true }
 }
 
 export interface AssemblyOverviewRow {
