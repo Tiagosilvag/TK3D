@@ -6,4 +6,8 @@ export async function register() {
   await startBambuListener().catch((err) => {
     console.error('[bambu] falha ao iniciar o listener MQTT:', err)
   })
+  const { startAnycubicListener } = await import('@/lib/anycubic/listener')
+  await startAnycubicListener().catch((err) => {
+    console.error('[anycubic] falha ao iniciar o listener MQTT:', err)
+  })
 }

@@ -126,7 +126,7 @@ function AffixInput({
   required?: boolean
 }) {
   return (
-    <div className="mt-1 flex items-center rounded-lg border border-slate-300 bg-white px-2.5 transition-colors focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/30 dark:border-slate-700 dark:bg-slate-800">
+    <div className="mt-1 flex items-center rounded-lg border border-slate-300 bg-white px-2.5 transition-colors focus-within:border-violet-500 focus-within:ring-2 focus-within:ring-violet-500/30 dark:border-slate-700 dark:bg-slate-800">
       {prefix && <span className="mr-1 shrink-0 text-sm text-slate-400 dark:text-slate-500">{prefix}</span>}
       <input
         name={name}
@@ -174,7 +174,7 @@ function ToggleField({ name, label, defaultChecked }: { name: string; label: str
     <label className="flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2.5 text-sm dark:border-slate-700">
       <span className="text-slate-700 dark:text-slate-300">{label}</span>
       <input type="checkbox" name={name} value="true" defaultChecked={defaultChecked} className="peer sr-only" />
-      <span className="relative h-5 w-9 shrink-0 rounded-full bg-slate-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-amber-600 peer-checked:after:translate-x-4 dark:bg-slate-700 dark:peer-checked:bg-amber-500" />
+      <span className="relative h-5 w-9 shrink-0 rounded-full bg-slate-300 transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-transform peer-checked:bg-violet-600 peer-checked:after:translate-x-4 dark:bg-slate-700 dark:peer-checked:bg-violet-500" />
     </label>
   )
 }
@@ -325,7 +325,7 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
               onClick={() => setRoundingMode(value)}
               className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
                 roundingMode === value
-                  ? 'bg-amber-600 text-white dark:bg-amber-500 dark:text-slate-950'
+                  ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white dark:from-violet-500 dark:to-fuchsia-500 dark:text-slate-950'
                   : 'border border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
               }`}
             >
@@ -346,7 +346,7 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
                 max="99"
                 defaultValue={settings.roundingCustomCents ?? 50}
                 required
-                className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               />
             </label>
             <span className="text-xs text-slate-400 dark:text-slate-500">Ex: 50 arredonda para R$ 19,50, R$ 24,50 etc.</span>

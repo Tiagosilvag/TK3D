@@ -39,7 +39,7 @@ export function RestockForm({ supplyId, supplyName }: { supplyId: string; supply
 
   return (
     <>
-      <button type="button" onClick={() => dialogRef.current?.showModal()} className="text-xs text-amber-600 hover:underline dark:text-amber-400">
+      <button type="button" onClick={() => dialogRef.current?.showModal()} className="text-xs text-violet-600 hover:underline dark:text-violet-400">
         Repor estoque
       </button>
       <dialog

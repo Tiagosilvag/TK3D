@@ -15,6 +15,16 @@ body {
   @apply bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100;
 }
 
+/* 6.0 (redesign roxo): fundo em degradê usado pelas duas telas de "casca"
+   inteira (login e o shell autenticado em AppLayoutClient) -- classe
+   compartilhada em vez de repetir a mesma string de gradiente nos dois
+   arquivos. Tons bem claros/escuros de propósito: o degradê só aparece nas
+   bordas/vãos ao redor dos painéis (`tk-panel` continua opaco), nunca atrás
+   de texto ou tabela. */
+.tk-gradient-bg {
+  @apply bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 dark:from-slate-950 dark:via-violet-950/40 dark:to-fuchsia-950/30;
+}
+
 /* Subtle FDM print-layer + print-bed grid texture for the main content area.
    Pure CSS, no image assets. Uses currentColor so light/dark opacity is set
    independently below without duplicating the gradient definitions. */
@@ -97,16 +107,16 @@ dialog {
 
   /* Quick-add inline forms: plain grid of inputs, no label wrapper. */
   .tk-input {
-    @apply rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500;
+    @apply rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500;
   }
 
   /* Labeled forms: input sits below a text label, fills the label width. */
   .tk-input-full {
-    @apply mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500;
+    @apply mt-1 w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500/30 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500;
   }
 
   .tk-btn-primary {
-    @apply rounded-lg bg-amber-600 py-1.5 text-sm font-medium text-white transition-colors hover:bg-amber-700 dark:bg-amber-500 dark:text-slate-950 dark:hover:bg-amber-400;
+    @apply rounded-lg bg-violet-600 py-1.5 text-sm font-medium text-white transition-colors hover:bg-violet-700 dark:bg-violet-500 dark:text-slate-950 dark:hover:bg-violet-400;
   }
 
   .tk-table-head-row {

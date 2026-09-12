@@ -1,7 +1,8 @@
 'use server'
 import { prisma } from '@/lib/prisma'
 import { getLiveStatus, getConnectionStatus, restartBambuListener, getCurrentThumbnail } from '@/lib/bambu/listener'
-import { decryptCredential } from '@/lib/bambu/crypto'
+import { getAnycubicLiveStatus } from '@/lib/anycubic/listener'
+import { decryptCredential } from '@/lib/crypto'
 import { fetchBoundDevices, fetchTaskHistory, type BambuDevice, type BambuCloudTaskFull } from '@/lib/bambu/auth'
 import { revalidatePath } from 'next/cache'
 
@@ -34,17 +35,32 @@ export async function reconnectBambuListener(): Promise<{ success: boolean }> {
   return { success: true }
 }
 
-export async function getAllLiveBambuStatuses() {
+// Mescla as duas marcas por impressora (spec 2026-09-12 §7) -- /monitor não
+// é mais bloqueado por um status de conexão único; cada card lê o estado da
+// SUA própria impressora.
+export async function getAllLiveStatuses() {
   const printers = await prisma.printer.findMany({
-    where: { bambuEnabled: true, active: true },
-    select: { id: true, name: true, nickname: true },
+    where: { active: true, OR: [{ bambuEnabled: true }, { anycubicEnabled: true }] },
+    select: { id: true, name: true, nickname: true, bambuEnabled: true, anycubicEnabled: true },
   })
-  return printers.map((printer) => ({
-    printerId: printer.id,
-    name: printer.nickname ?? printer.name,
-    status: getLiveStatus(printer.id),
-    thumbnailUrl: getCurrentThumbnail(printer.id),
-  }))
+  return printers.map((printer) => {
+    if (printer.bambuEnabled) {
+      return {
+        printerId: printer.id,
+        name: printer.nickname ?? printer.name,
+        brand: 'bambu' as const,
+        status: getLiveStatus(printer.id),
+        thumbnailUrl: getCurrentThumbnail(printer.id),
+      }
+    }
+    return {
+      printerId: printer.id,
+      name: printer.nickname ?? printer.name,
+      brand: 'anycubic' as const,
+      status: getAnycubicLiveStatus(printer.id),
+      thumbnailUrl: null,
+    }
+  })
 }
 
 // Histórico oficial completo da conta Bambu -- busca ao vivo direto da

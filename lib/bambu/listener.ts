@@ -1,9 +1,10 @@
 import mqtt, { MqttClient } from 'mqtt'
 import { prisma } from '@/lib/prisma'
-import { decryptCredential } from '@/lib/bambu/crypto'
+import { decryptCredential } from '@/lib/crypto'
 import { parseBambuReport, type BambuStatus } from '@/lib/bambu/parser'
 import { createJobTracker, type CaptureDraft } from '@/lib/bambu/jobTracker'
 import { fetchLatestTask } from '@/lib/bambu/auth'
+import type { BambuCommand } from '@/lib/bambu/commands'
 
 type PrinterRef = { id: string; bambuEnabled: boolean; bambuSerial: string | null }
 
@@ -218,4 +219,19 @@ export async function restartBambuListener(): Promise<void> {
 
 export function getConnectionStatus(): BambuConnectionStatus {
   return connectionStatus
+}
+
+// Publica um comando de controle (pause/resume/stop) pro tópico
+// device/{serial}/request -- mesmo tópico usado pelo pushall, único outro
+// publish que este listener faz. Busca o serial na hora (sem cache) porque
+// é uma ação pontual do usuário, não um hot path.
+export async function publishBambuCommand(printerId: string, command: BambuCommand): Promise<void> {
+  if (!client || connectionStatus !== 'connected') {
+    throw new Error('Impressora não está conectada à nuvem Bambu no momento')
+  }
+  const printer = await prisma.printer.findUnique({ where: { id: printerId }, select: { bambuSerial: true } })
+  if (!printer?.bambuSerial) {
+    throw new Error('Impressora sem número de série Bambu configurado')
+  }
+  client.publish(`device/${printer.bambuSerial}/request`, JSON.stringify(command))
 }

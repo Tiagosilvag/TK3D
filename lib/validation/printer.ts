@@ -19,6 +19,8 @@ export const printerSchema = z.object({
   maintenanceCostPerHour: z.coerce.number().nonnegative('Manutenção estimada não pode ser negativa'),
   bambuEnabled: checkbox(),
   bambuSerial: z.string().optional().nullable(),
+  anycubicEnabled: checkbox(),
+  anycubicPrinterKey: z.string().optional().nullable(),
 })
 
 export type PrinterInput = z.infer<typeof printerSchema>

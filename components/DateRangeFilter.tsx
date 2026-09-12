@@ -23,7 +23,7 @@ export function DateRangeFilter({
         Até
         <input type="date" name="to" defaultValue={to} className="tk-input-full mt-1" />
       </label>
-      <button type="submit" className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white dark:bg-amber-500 dark:text-slate-950">
+      <button type="submit" className="rounded-lg bg-gradient-to-r from-violet-600 to-fuchsia-600 px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 dark:from-violet-500 dark:to-fuchsia-500 dark:text-slate-950">
         Filtrar
       </button>
       <a href={action} className="text-sm font-medium text-slate-500 underline-offset-2 hover:underline dark:text-slate-400">

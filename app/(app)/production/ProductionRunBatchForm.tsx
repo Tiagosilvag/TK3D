@@ -600,10 +600,10 @@ export function ProductionRunBatchForm({
                   <div className="mb-2 flex items-center justify-between">
                     <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Peças deste produto</p>
                     <div className="flex gap-3 text-xs font-medium">
-                      <button type="button" onClick={() => setRows((prev) => prev.map((r) => ({ ...r, checked: true })))} className="text-amber-600 hover:underline dark:text-amber-400">
+                      <button type="button" onClick={() => setRows((prev) => prev.map((r) => ({ ...r, checked: true })))} className="text-violet-600 hover:underline dark:text-violet-400">
                         Marcar todas
                       </button>
-                      <button type="button" onClick={() => setRows((prev) => prev.map((r) => ({ ...r, checked: false })))} className="text-amber-600 hover:underline dark:text-amber-400">
+                      <button type="button" onClick={() => setRows((prev) => prev.map((r) => ({ ...r, checked: false })))} className="text-violet-600 hover:underline dark:text-violet-400">
                         Desmarcar todas
                       </button>
                     </div>
@@ -630,7 +630,7 @@ export function ProductionRunBatchForm({
                               cada cópia vira um item independente no lote (mesmo
                               productPartId, printerId/quantidade/filamento próprios). */}
                           <div className="flex shrink-0 gap-3 text-xs font-medium">
-                            <button type="button" onClick={() => duplicateRowColor(row.key)} className="text-amber-600 hover:underline dark:text-amber-400">
+                            <button type="button" onClick={() => duplicateRowColor(row.key)} className="text-violet-600 hover:underline dark:text-violet-400">
                               + Adicionar outra cor
                             </button>
                             {row.isColorCopy && (

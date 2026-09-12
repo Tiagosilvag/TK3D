@@ -76,19 +76,19 @@ export function CostBreakdown({
           <dt>Custo final (c/ taxa de falha)</dt>
           <dd>{money(breakdown.finalCost)}</dd>
         </div>
-        <div className="flex justify-between border-t border-slate-200 pt-1 font-semibold text-amber-700 dark:border-slate-800 dark:text-amber-400">
+        <div className="flex justify-between border-t border-slate-200 pt-1 font-semibold text-violet-700 dark:border-slate-800 dark:text-violet-400">
           <dt>Preço sugerido</dt>
           <dd>{money(breakdown.suggestedPrice)}</dd>
         </div>
         {marketplacePlatformPrices.length > 0 ? (
           marketplacePlatformPrices.map((p) => (
-            <div key={p.label} className="flex justify-between font-semibold text-amber-700 dark:text-amber-400">
+            <div key={p.label} className="flex justify-between font-semibold text-violet-700 dark:text-violet-400">
               <dt>Preço {p.label}</dt>
               <dd>{money(p.price)}</dd>
             </div>
           ))
         ) : (
-          <div className="flex justify-between font-semibold text-amber-700 dark:text-amber-400">
+          <div className="flex justify-between font-semibold text-violet-700 dark:text-violet-400">
             <dt>Preço marketplace</dt>
             <dd>{money(breakdown.marketplacePrice)}</dd>
           </div>

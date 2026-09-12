@@ -1,5 +1,5 @@
 'use client'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatCurrency } from '@/lib/format'
 import { deleteConsignmentDelivery } from '@/actions/consignmentDeliveries'
@@ -46,6 +46,23 @@ export function DeliveriesExplorer({
     setSelected(batch)
     dialogRef.current?.showModal()
   }
+
+  // Bug fix: `selected` is a one-time snapshot taken in openDetail(). Removing
+  // a line item calls router.refresh(), which updates the `batches` prop from
+  // the server, but `selected` was never re-synced -- the just-deleted item
+  // kept showing in the still-open modal until it was closed and reopened,
+  // looking like the delete silently failed. Re-derive `selected` from the
+  // fresh `batches` prop whenever it changes.
+  useEffect(() => {
+    setSelected((prev) => (prev ? (batches.find((b) => b.batchId === prev.batchId) ?? null) : prev))
+  }, [batches])
+
+  // If that re-sync empties out to null (the batch's last item was removed)
+  // while the dialog is still open, close it too -- there is nothing left to
+  // show, and leaving it open would strand an empty modal frame.
+  useEffect(() => {
+    if (selected === null && dialogRef.current?.open) dialogRef.current.close()
+  }, [selected])
 
   async function handleRemoveItem(id: string) {
     const result = await deleteConsignmentDelivery(id)

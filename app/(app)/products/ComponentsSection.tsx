@@ -247,7 +247,7 @@ export function ComponentsSection({
         <button
           type="button"
           onClick={() => setAdding(true)}
-          className="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-2 text-sm font-medium text-amber-600 hover:bg-slate-50 dark:border-slate-700 dark:text-amber-400 dark:hover:bg-slate-800/60"
+          className="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-2 text-sm font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60"
         >
           + Adicionar componente
         </button>

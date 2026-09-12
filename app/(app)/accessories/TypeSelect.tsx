@@ -44,7 +44,7 @@ export function TypeSelect({
                 key={t.id}
                 type="button"
                 onClick={() => { onChange(t.id); setOpen(false) }}
-                className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 ${t.id === value ? 'font-medium text-amber-600 dark:text-amber-400' : 'text-slate-700 dark:text-slate-200'}`}
+                className={`block w-full px-3 py-1.5 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 ${t.id === value ? 'font-medium text-violet-600 dark:text-violet-400' : 'text-slate-700 dark:text-slate-200'}`}
               >
                 {t.name}
               </button>
@@ -56,7 +56,7 @@ export function TypeSelect({
             <button
               type="button"
               onClick={() => { onManage(); setOpen(false) }}
-              className="block w-full px-3 py-1.5 text-left text-sm text-amber-600 hover:bg-slate-100 dark:text-amber-400 dark:hover:bg-slate-800"
+              className="block w-full px-3 py-1.5 text-left text-sm text-violet-600 hover:bg-slate-100 dark:text-violet-400 dark:hover:bg-slate-800"
             >
               ⚙ Gerenciar tipos...
             </button>

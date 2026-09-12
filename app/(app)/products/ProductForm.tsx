@@ -191,6 +191,17 @@ export function ProductForm({
       } else {
         formRef.current?.reset()
         setParts([emptyPartRow()])
+        // Bug fix: formRef.reset() only clears uncontrolled/native form
+        // fields. These are controlled by useState (needed for the live
+        // cost preview below), so a saved product's printer/filament/
+        // weight/time stayed filled in the next "Novo produto" open --
+        // ProductsExplorer keeps this same ProductForm instance mounted
+        // across repeated opens, no `key` to force a remount.
+        setPrinterId('')
+        setFilamentId('')
+        setWeightGrams('')
+        setPrintTimeHours('')
+        setLaborTimeHours('0')
       }
       onSuccess?.()
     } else {
@@ -375,13 +386,13 @@ export function ProductForm({
                       </div>
                     )
                   })}
-                  <button type="button" onClick={() => addPartFilamentRow(i)} className="text-xs font-medium text-amber-600 hover:underline dark:text-amber-400">
+                  <button type="button" onClick={() => addPartFilamentRow(i)} className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
                     + Adicionar outra cor (impressão multi-material)
                   </button>
                 </div>
               </div>
             ))}
-            <button type="button" onClick={() => setParts((rows) => [...rows, emptyPartRow()])} className="text-xs font-medium text-amber-600 hover:underline dark:text-amber-400">
+            <button type="button" onClick={() => setParts((rows) => [...rows, emptyPartRow()])} className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
               + Adicionar peça
             </button>
           </div>
@@ -458,11 +469,11 @@ export function ProductForm({
             <dt>Custo total</dt>
             <dd>{money(totalCost)}</dd>
           </div>
-          <div className="flex justify-between font-semibold text-amber-700 dark:text-amber-400">
+          <div className="flex justify-between font-semibold text-violet-700 dark:text-violet-400">
             <dt>Preço sugerido (× 2)</dt>
             <dd>{money(suggestedPrice)}</dd>
           </div>
-          <div className="flex justify-between font-semibold text-amber-700 dark:text-amber-400">
+          <div className="flex justify-between font-semibold text-violet-700 dark:text-violet-400">
             <dt>Preço marketplace (× 3,3)</dt>
             <dd>{money(marketplacePrice)}</dd>
           </div>

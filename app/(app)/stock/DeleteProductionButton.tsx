@@ -134,10 +134,10 @@ export function DeleteProductionButton({ productId, productName }: { productId: 
               ) : items && items.length > 0 ? (
                 <>
                   <div className="flex gap-3 text-xs font-medium">
-                    <button type="button" onClick={() => setSelected(new Set(items.map((i) => i.id)))} className="text-amber-600 hover:underline dark:text-amber-400">
+                    <button type="button" onClick={() => setSelected(new Set(items.map((i) => i.id)))} className="text-violet-600 hover:underline dark:text-violet-400">
                       Selecionar todas
                     </button>
-                    <button type="button" onClick={() => setSelected(new Set())} className="text-amber-600 hover:underline dark:text-amber-400">
+                    <button type="button" onClick={() => setSelected(new Set())} className="text-violet-600 hover:underline dark:text-violet-400">
                       Nenhuma
                     </button>
                   </div>

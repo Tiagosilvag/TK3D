@@ -197,7 +197,7 @@ export function AssemblyDetailModal({
               </p>
             )}
 
-            <Link href="/stock" className="inline-block text-sm text-amber-600 hover:underline dark:text-amber-400">
+            <Link href="/stock" className="inline-block text-sm text-violet-600 hover:underline dark:text-violet-400">
               Ver Meu Estoque &rarr;
             </Link>
           </div>

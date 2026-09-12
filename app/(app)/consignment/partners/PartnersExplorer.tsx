@@ -69,7 +69,7 @@ export function PartnersExplorer({ partners, avgCommissionPercent }: { partners:
       ) : (
         <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {visiblePartners.map((p) => (
-            <Link key={p.id} href={`/consignment/partners/${p.id}`} className="tk-panel block p-4 transition-colors hover:border-amber-400 dark:hover:border-amber-500">
+            <Link key={p.id} href={`/consignment/partners/${p.id}`} className="tk-panel block p-4 transition-colors hover:border-violet-400 dark:hover:border-violet-500">
               <div className="flex items-center gap-3">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                   {initials(p.name)}

@@ -192,7 +192,7 @@ export function DeliveryBatchForm({
                 key={p.productId}
                 type="button"
                 onClick={() => openVariantPicker(p)}
-                className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5 text-left text-sm hover:border-amber-400 dark:border-slate-700 dark:hover:border-amber-500"
+                className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5 text-left text-sm hover:border-violet-400 dark:border-slate-700 dark:hover:border-violet-500"
               >
                 {p.productName}
                 <span aria-hidden className="text-slate-400">›</span>
@@ -310,7 +310,7 @@ export function DeliveryBatchForm({
             )}
           </div>
 
-          <button type="button" onClick={() => setView('pickProduct')} className="rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-amber-600 hover:bg-slate-50 dark:border-slate-700 dark:text-amber-400 dark:hover:bg-slate-800/60">
+          <button type="button" onClick={() => setView('pickProduct')} className="rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60">
             + Adicionar produto
           </button>
 

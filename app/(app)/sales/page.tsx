@@ -99,7 +99,7 @@ export default async function SalesPage({
               href={href}
               className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
                 isActive
-                  ? 'bg-amber-600 text-white dark:bg-amber-500 dark:text-slate-950'
+                  ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white dark:from-violet-500 dark:to-fuchsia-500 dark:text-slate-950'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
               }`}
             >
@@ -175,7 +175,7 @@ export default async function SalesPage({
                 </td>
                 <td>
                   <ActionsMenu>
-                    <Link href={`/sales?editId=${s.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                    <Link href={`/sales?editId=${s.id}`} className="text-violet-600 hover:underline dark:text-violet-400">
                       Editar
                     </Link>
                     <ConfirmDeleteForm action={async () => { 'use server'; return await deleteSale(s.id) }} />

@@ -83,7 +83,7 @@ export function BambuConnectionForm({
             </p>
             <p className={`mt-1 text-xs font-medium ${STATUS_BADGE[connectionStatus].className}`}>{STATUS_BADGE[connectionStatus].label}</p>
             <div className="mt-2 flex gap-3">
-              <button type="button" onClick={handleReconnect} className="text-sm text-amber-600 hover:underline dark:text-amber-400">
+              <button type="button" onClick={handleReconnect} className="text-sm text-violet-600 hover:underline dark:text-violet-400">
                 Reconectar
               </button>
               <button type="button" onClick={handleDisconnect} className="text-sm text-red-600 hover:underline dark:text-red-400">

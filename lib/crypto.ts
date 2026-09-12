@@ -10,7 +10,10 @@ function getKey(): Buffer {
   return key
 }
 
-// Formato armazenado: base64(iv):base64(authTag):base64(ciphertext)
+// Formato armazenado: base64(iv):base64(authTag):base64(ciphertext). Chave
+// compartilhada entre Bambu e Anycubic (BAMBU_CREDENTIAL_KEY guarda
+// "credenciais de impressora" de forma genérica, apesar do nome histórico
+// -- sem env var nova, ver spec da integração Anycubic §5).
 export function encryptCredential(plaintext: string): string {
   const key = getKey()
   const iv = randomBytes(12)

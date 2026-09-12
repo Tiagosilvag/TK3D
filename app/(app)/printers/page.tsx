@@ -49,6 +49,8 @@ export default async function PrintersPage({
         maintenanceCostPerHour: editingPrinterRecord.maintenanceCostPerHour.toNumber(),
         bambuEnabled: editingPrinterRecord.bambuEnabled,
         bambuSerial: editingPrinterRecord.bambuSerial,
+        anycubicEnabled: editingPrinterRecord.anycubicEnabled,
+        anycubicPrinterKey: editingPrinterRecord.anycubicPrinterKey,
       }
     : undefined
 
@@ -108,7 +110,7 @@ export default async function PrintersPage({
           <div key={c.id} className="tk-panel p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-lg text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-50 text-lg text-violet-700 dark:bg-violet-500/10 dark:text-violet-400">
                   🖨️
                 </div>
                 <div>
@@ -119,10 +121,10 @@ export default async function PrintersPage({
               <div className="flex items-start gap-2">
                 <div className="text-right">
                   <p className="text-xs text-slate-500 dark:text-slate-400">Custo total</p>
-                  <p className="font-display text-lg font-semibold text-amber-600 dark:text-amber-400">{formatCurrency(c.totalCost)}/h</p>
+                  <p className="font-display text-lg font-semibold text-violet-600 dark:text-violet-400">{formatCurrency(c.totalCost)}/h</p>
                 </div>
                 <ActionsMenu>
-                  <Link href={`/printers?editId=${c.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                  <Link href={`/printers?editId=${c.id}`} className="text-violet-600 hover:underline dark:text-violet-400">
                     Editar
                   </Link>
                   <ConfirmDeleteForm
