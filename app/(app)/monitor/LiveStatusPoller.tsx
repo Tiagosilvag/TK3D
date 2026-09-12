@@ -1,8 +1,93 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getAllLiveBambuStatuses } from '@/actions/bambuStatus'
+import { pausePrintJob, resumePrintJob, stopPrintJob } from '@/actions/bambuControl'
 
 type LiveStatuses = Awaited<ReturnType<typeof getAllLiveBambuStatuses>>
+
+const PAUSABLE_STATES = new Set(['RUNNING'])
+const RESUMABLE_STATES = new Set(['PAUSE'])
+const STOPPABLE_STATES = new Set(['RUNNING', 'PAUSE', 'PREPARE'])
+
+function PrintControls({ printerId, printerName, gcodeState }: { printerId: string; printerName: string; gcodeState: string }) {
+  const [pending, setPending] = useState<'pause' | 'resume' | 'stop' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const dialogRef = useRef<HTMLDialogElement>(null)
+
+  async function run(kind: 'pause' | 'resume' | 'stop', fn: (id: string) => Promise<{ success: boolean; error?: string }>) {
+    setPending(kind)
+    setError(null)
+    const result = await fn(printerId)
+    setPending(null)
+    if (!result.success) setError(result.error ?? 'Falha ao enviar comando')
+    else dialogRef.current?.close()
+  }
+
+  const canPause = PAUSABLE_STATES.has(gcodeState)
+  const canResume = RESUMABLE_STATES.has(gcodeState)
+  const canStop = STOPPABLE_STATES.has(gcodeState)
+
+  if (!canPause && !canResume && !canStop) return null
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      {canPause && (
+        <button
+          type="button"
+          disabled={pending !== null}
+          onClick={() => run('pause', pausePrintJob)}
+          className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+        >
+          {pending === 'pause' ? 'Pausando…' : 'Pausar'}
+        </button>
+      )}
+      {canResume && (
+        <button
+          type="button"
+          disabled={pending !== null}
+          onClick={() => run('resume', resumePrintJob)}
+          className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
+        >
+          {pending === 'resume' ? 'Retomando…' : 'Retomar'}
+        </button>
+      )}
+      {canStop && (
+        <button
+          type="button"
+          disabled={pending !== null}
+          onClick={() => dialogRef.current?.showModal()}
+          className="rounded-lg border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
+        >
+          Parar
+        </button>
+      )}
+      {error && <p className="w-full text-xs text-red-600 dark:text-red-400">{error}</p>}
+
+      <dialog
+        ref={dialogRef}
+        className="w-96 rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      >
+        <div className="grid gap-3 p-4">
+          <h3 className="font-display text-sm font-semibold">Parar impressão em &ldquo;{printerName}&rdquo;?</h3>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Essa ação não pode ser desfeita — a peça em andamento será perdida.</p>
+          <div className="mt-2 flex items-center justify-end gap-3">
+            <button type="button" onClick={() => dialogRef.current?.close()} className="text-sm text-slate-500 hover:underline dark:text-slate-400">
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={pending !== null}
+              onClick={() => run('stop', stopPrintJob)}
+              className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50 dark:bg-red-500 dark:text-slate-950 dark:hover:bg-red-400"
+            >
+              {pending === 'stop' ? 'Parando…' : 'Parar impressão'}
+            </button>
+          </div>
+        </div>
+      </dialog>
+    </div>
+  )
+}
 
 const STATE_LABELS: Record<string, string> = {
   RUNNING: 'Imprimindo',
@@ -62,6 +147,8 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                   <p className="text-slate-500 dark:text-slate-400">Preparando arquivo: {status.gcodeFilePreparePercent}%</p>
                 )}
                 {status.gcodeFile && <p className="truncate text-slate-500 dark:text-slate-400">{status.gcodeFile}</p>}
+
+                <PrintControls printerId={printer.printerId} printerName={printer.name} gcodeState={status.gcodeState} />
 
                 {status.hmsCodes.length > 0 && (
                   <p className="text-red-600 dark:text-red-400">Alerta HMS: {status.hmsCodes.join(', ')}</p>
