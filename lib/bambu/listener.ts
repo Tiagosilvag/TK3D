@@ -45,7 +45,15 @@ export function createListenerCore(opts: {
 // --- Casca real (não coberta por teste automatizado -- depende da nuvem
 // Bambu de verdade, ver spec §9) ---
 
-let connectionStatus: 'connected' | 'expired' | 'not_configured' = 'not_configured'
+// 'not_configured': sem conta Bambu conectada em Configurações.
+// 'no_printer': conta conectada, mas nenhuma impressora habilitada tem o
+// número de série preenchido (não dá pra saber qual tópico MQTT assinar).
+// 'expired': conta conectada, impressora com serial, mas o broker recusou
+// (token expirado, credencial inválida etc.) -- ver log do servidor.
+// 'connected': tudo certo, recebendo dados.
+export type BambuConnectionStatus = 'connected' | 'expired' | 'not_configured' | 'no_printer'
+
+let connectionStatus: BambuConnectionStatus = 'not_configured'
 let core: ReturnType<typeof createListenerCore> | null = null
 let client: MqttClient | null = null
 
@@ -66,7 +74,7 @@ export async function startBambuListener(): Promise<void> {
     select: { id: true, bambuEnabled: true, bambuSerial: true },
   })
   if (printers.length === 0) {
-    connectionStatus = 'not_configured'
+    connectionStatus = 'no_printer'
     return
   }
 
@@ -142,6 +150,6 @@ export async function restartBambuListener(): Promise<void> {
   await startBambuListener()
 }
 
-export function getConnectionStatus(): 'connected' | 'expired' | 'not_configured' {
+export function getConnectionStatus(): BambuConnectionStatus {
   return connectionStatus
 }

@@ -1,10 +1,28 @@
 'use server'
 import { prisma } from '@/lib/prisma'
 import { getLiveStatus, getConnectionStatus, restartBambuListener } from '@/lib/bambu/listener'
+import { decryptCredential } from '@/lib/bambu/crypto'
+import { fetchBoundDevices, type BambuDevice } from '@/lib/bambu/auth'
 import { revalidatePath } from 'next/cache'
 
 export async function getBambuConnectionStatus() {
   return getConnectionStatus()
+}
+
+// Lista as impressoras vinculadas à conta Bambu já conectada, pra escolher
+// o número de série numa lista em vez de caçar no app/Studio.
+export async function getBambuBoundDevices(): Promise<{ success: boolean; devices?: BambuDevice[]; error?: string }> {
+  const settings = await prisma.settings.findUnique({ where: { id: 1 } })
+  if (!settings?.bambuCloudCredentialEncrypted) {
+    return { success: false, error: 'Conecte a conta Bambu em Configurações primeiro' }
+  }
+  try {
+    const token = decryptCredential(settings.bambuCloudCredentialEncrypted)
+    const devices = await fetchBoundDevices(token)
+    return { success: true, devices }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Falha ao buscar impressoras' }
+  }
 }
 
 // Reconecta manualmente (ex.: sessão expirada) sem precisar de restart do

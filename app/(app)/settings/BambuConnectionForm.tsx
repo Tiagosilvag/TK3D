@@ -11,6 +11,10 @@ const STATUS_BADGE: Record<ConnectionStatus, { label: string; className: string 
   connected: { label: 'MQTT conectado', className: 'text-emerald-600 dark:text-emerald-400' },
   expired: { label: 'MQTT com erro — ver logs do servidor', className: 'text-red-600 dark:text-red-400' },
   not_configured: { label: 'MQTT ainda não conectado', className: 'text-amber-600 dark:text-amber-400' },
+  no_printer: {
+    label: 'Nenhuma impressora com número de série preenchido — ver Impressoras',
+    className: 'text-amber-600 dark:text-amber-400',
+  },
 }
 
 export function BambuConnectionForm({

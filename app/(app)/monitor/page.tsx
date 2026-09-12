@@ -19,6 +19,15 @@ export default async function MonitorPage() {
           </Link>
           .
         </div>
+      ) : connectionStatus === 'no_printer' ? (
+        <div className="tk-panel p-4 text-sm text-amber-600 dark:text-amber-400">
+          Nenhuma impressora habilitada tem o número de série da Bambu preenchido — sem isso não dá pra saber qual
+          impressora monitorar. Edite em{' '}
+          <Link href="/printers" className="underline">
+            Impressoras
+          </Link>{' '}
+          e preencha &quot;Número de série Bambu&quot;.
+        </div>
       ) : connectionStatus !== 'connected' ? (
         <div className="tk-panel p-4 text-sm text-amber-600 dark:text-amber-400">
           Integração Bambu Lab desconectada.{' '}

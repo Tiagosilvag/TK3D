@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { requestLoginCode, confirmLoginCode, fetchUserId } from '@/lib/bambu/auth'
+import { requestLoginCode, confirmLoginCode, fetchUserId, fetchBoundDevices } from '@/lib/bambu/auth'
 
 describe('bambu auth client', () => {
   const originalFetch = global.fetch
@@ -61,5 +61,29 @@ describe('bambu auth client', () => {
   it('fetchUserId lança erro se a Bambu não devolver uid', async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }) as unknown as typeof fetch
     await expect(fetchUserId('token-abc')).rejects.toThrow('Bambu não retornou o id da conta')
+  })
+
+  it('fetchBoundDevices mapeia dev_id/dev_product_name pros campos usados no app', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        devices: [
+          { dev_id: '01P00A000000000', name: 'A1 mini', dev_product_name: 'A1 mini', online: true },
+          { dev_id: '', name: 'sem id', dev_product_name: 'X', online: false }, // sem dev_id -- descartado
+        ],
+      }),
+    }) as unknown as typeof fetch
+    const devices = await fetchBoundDevices('token-abc')
+    expect(devices).toEqual([{ devId: '01P00A000000000', name: 'A1 mini', productName: 'A1 mini', online: true }])
+  })
+
+  it('fetchBoundDevices devolve lista vazia quando a conta não tem impressora vinculada', async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ devices: [] }) }) as unknown as typeof fetch
+    expect(await fetchBoundDevices('token-abc')).toEqual([])
+  })
+
+  it('fetchBoundDevices lança erro com resposta não-ok', async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }) as unknown as typeof fetch
+    await expect(fetchBoundDevices('token-abc')).rejects.toThrow('Falha ao buscar impressoras da conta Bambu')
   })
 })
