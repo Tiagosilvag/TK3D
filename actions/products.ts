@@ -62,7 +62,10 @@ export async function createProduct(formData: FormData): Promise<ActionResult> {
   // Acabamento/Usa cola saíram do formulário -- omitidos aqui de propósito,
   // pro Prisma aplicar o default do schema (NENHUM/false) na criação, em
   // vez de gravar um valor "adivinhado" a partir de um dado que não existe
-  // mais no form.
+  // mais no form. laborTimeHours não precisa do mesmo tratamento -- o
+  // schema Zod já resolve pra 0 quando o campo vem ausente da criação
+  // (`.default(0)`, ver lib/validation/product.ts), então `data.laborTimeHours`
+  // aqui sempre é um number de verdade.
   const baseData = {
     name: data.name,
     category: data.category,

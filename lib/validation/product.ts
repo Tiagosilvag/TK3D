@@ -58,7 +58,19 @@ export const productSchema = z
     filamentId: z.string().optional().nullable(),
     weightGrams: decimalNumber(z.number()).optional(),
     printTimeHours: z.coerce.number().optional(),
-    laborTimeHours: z.coerce.number().nonnegative('Tempo de mão de obra não pode ser negativo'),
+    // Bug "Expected number, received nan" ao criar QUALQUER produto: este
+    // campo só aparece no formulário na EDIÇÃO ("Campos opcionais" fica
+    // escondido na criação, ver ProductForm.tsx) -- sem `.optional()`
+    // aqui, a ausência dele no FormData (undefined) ainda passava pelo
+    // coerce (`Number(undefined)` = NaN) e falhava a validação. O
+    // comentário em actions/products.ts (baseData) já dizia "continua com
+    // o default do schema (0h) quando omitido", mas Product.laborTimeHours
+    // NUNCA teve `@default` no schema.prisma -- não existia default
+    // nenhum pra "continuar valendo". `.default(0)` aqui é o default de
+    // verdade (na validação, não no banco): omitido vira 0 antes mesmo de
+    // chegar em actions/products.ts, que continua recebendo sempre um
+    // number.
+    laborTimeHours: z.coerce.number().nonnegative('Tempo de mão de obra não pode ser negativo').optional().default(0),
     // Acabamento/Usa cola saíram do formulário (nunca mais submetidos) --
     // opcionais aqui só pra não quebrar a validação; actions/products.ts
     // não usa mais nenhum dos dois na escrita (omite dos dois `data:` de
