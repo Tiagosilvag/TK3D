@@ -69,6 +69,13 @@ model Settings {
   bambuCloudUserId              String?
   bambuCloudCredentialEncrypted String?
   bambuCloudRegion              String?      @default("US")
+  // Integração Anycubic Cloud (spec 2026-09-12): auth_token de sessão
+  // trocado a partir do token do Slicer Next colado manualmente pelo
+  // usuário (sem login programático -- ver lib/anycubic/auth.ts). Cifrado
+  // com a mesma chave AES da Bambu (lib/crypto.ts).
+  anycubicAuthTokenEncrypted    String?
+  anycubicUserEmail             String?
+  anycubicUserId                String?
   updatedAt                     DateTime     @updatedAt
 }
 
@@ -112,6 +119,11 @@ model Printer {
   // dos tópicos MQTT da conta (Settings.bambuCloudCredentialEncrypted).
   bambuEnabled           Boolean         @default(false)
   bambuSerial            String?
+  // Integração Anycubic Cloud (spec 2026-09-12): mesmo padrão opt-in da
+  // Bambu -- anycubicPrinterKey é a "key" que a API da Anycubic usa nos
+  // tópicos MQTT (não é um serial no sentido Bambu).
+  anycubicEnabled        Boolean         @default(false)
+  anycubicPrinterKey     String?
   active                 Boolean         @default(true)
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt
