@@ -239,7 +239,7 @@ export function AccessoryForm({
                       )}
                     </div>
                   ))}
-                  <button type="button" onClick={() => setColorRows((rows) => [...rows, emptyColorRow()])} className="w-full rounded-lg border border-dashed border-slate-300 py-1.5 text-xs font-medium text-amber-600 hover:bg-slate-50 dark:border-slate-700 dark:text-amber-400 dark:hover:bg-slate-800/60">
+                  <button type="button" onClick={() => setColorRows((rows) => [...rows, emptyColorRow()])} className="w-full rounded-lg border border-dashed border-slate-300 py-1.5 text-xs font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60">
                     + Adicionar cor
                   </button>
                 </div>

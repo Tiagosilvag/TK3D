@@ -104,7 +104,7 @@ export function FilamentSelect({
                     key={o.id}
                     type="button"
                     onClick={() => pick(o.id)}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 ${o.id === value ? 'bg-amber-50 dark:bg-amber-500/10' : ''}`}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 ${o.id === value ? 'bg-violet-50 dark:bg-violet-500/10' : ''}`}
                   >
                     {o.colorHex ? (
                       <span style={{ background: o.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />

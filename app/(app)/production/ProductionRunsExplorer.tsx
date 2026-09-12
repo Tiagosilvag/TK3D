@@ -123,7 +123,7 @@ export function ProductionRunsExplorer({
                     <td className="text-slate-500 dark:text-slate-400">{run.partName ?? '—'}</td>
                     <td>
                       {run.plateId ? (
-                        <button type="button" onClick={() => void openPlateDetail(run.plateId!)} className="text-amber-600 hover:underline dark:text-amber-400">
+                        <button type="button" onClick={() => void openPlateDetail(run.plateId!)} className="text-violet-600 hover:underline dark:text-violet-400">
                           Ver Plate
                         </button>
                       ) : (
@@ -138,7 +138,7 @@ export function ProductionRunsExplorer({
                     <td className="py-2">
                       <ActionsMenu>
                         {run.status !== 'CANCELADA' && (
-                          <Link href={`/production?editId=${run.id}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                          <Link href={`/production?editId=${run.id}`} className="text-violet-600 hover:underline dark:text-violet-400">
                             Editar
                           </Link>
                         )}
@@ -275,7 +275,7 @@ export function ProductionRunsExplorer({
                     </td>
                     <td>{run.cost != null ? formatCurrency(run.cost) : '—'}</td>
                     <td>
-                      <Link href={`/production?editId=${run.id}`} className="text-amber-600 hover:underline dark:text-amber-400">Editar</Link>
+                      <Link href={`/production?editId=${run.id}`} className="text-violet-600 hover:underline dark:text-violet-400">Editar</Link>
                     </td>
                   </tr>
                 ))}

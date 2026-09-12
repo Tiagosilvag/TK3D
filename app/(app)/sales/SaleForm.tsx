@@ -129,6 +129,13 @@ export function SaleForm({
       formRef.current?.reset()
       setUnitPrice('')
       setColorComboKey('')
+      // Bug fix: formRef.reset() only clears uncontrolled fields. productId
+      // is controlled by useState (drives the color/variant + marketplace
+      // price prefill logic below), so it stayed stuck on the just-sold
+      // product for the next entry -- SaleForm keeps the same instance
+      // mounted across consecutive "new sale" submits (page.tsx keys it
+      // 'new', which never changes between them).
+      setProductId('')
     } else {
       alert(result.error)
     }

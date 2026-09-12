@@ -216,7 +216,7 @@ export default async function ProductionPage({
             ))}
           </select>
         </label>
-        <button type="submit" className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white dark:bg-amber-500 dark:text-slate-950">
+        <button type="submit" className="rounded-lg bg-gradient-to-r from-violet-600 to-fuchsia-600 px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 dark:from-violet-500 dark:to-fuchsia-500 dark:text-slate-950">
           Filtrar
         </button>
         {(productId || printerId || plateId || status) && (
@@ -242,12 +242,12 @@ export default async function ProductionPage({
           <span>Página {currentPage} de {totalPages} ({totalRuns} registros)</span>
           <div className="flex gap-2">
             {currentPage > 1 && (
-              <Link href={pageHref(currentPage - 1)} className="rounded-lg px-3 py-1.5 font-medium text-amber-600 hover:underline dark:text-amber-400">
+              <Link href={pageHref(currentPage - 1)} className="rounded-lg px-3 py-1.5 font-medium text-violet-600 hover:underline dark:text-violet-400">
                 Anterior
               </Link>
             )}
             {currentPage < totalPages && (
-              <Link href={pageHref(currentPage + 1)} className="rounded-lg px-3 py-1.5 font-medium text-amber-600 hover:underline dark:text-amber-400">
+              <Link href={pageHref(currentPage + 1)} className="rounded-lg px-3 py-1.5 font-medium text-violet-600 hover:underline dark:text-violet-400">
                 Próxima
               </Link>
             )}

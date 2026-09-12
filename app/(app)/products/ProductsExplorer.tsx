@@ -96,7 +96,7 @@ export function ProductsExplorer({
             <Link
               key={p.id}
               href={`/products/${p.id}`}
-              className="tk-panel flex gap-3 p-3 hover:border-amber-400 dark:hover:border-amber-500"
+              className="tk-panel flex gap-3 p-3 hover:border-violet-400 dark:hover:border-violet-500"
             >
               <div className="h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800">
                 {p.coverPhotoId ? (

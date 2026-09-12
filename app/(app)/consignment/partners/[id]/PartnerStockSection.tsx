@@ -92,7 +92,7 @@ export function PartnerStockSection({ products }: { products: ConsignmentProduct
                         <Link
                           key={a.id}
                           href={`/accessories?editId=${a.id}`}
-                          className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:border-amber-400 hover:text-amber-700 dark:border-slate-700 dark:text-slate-300 dark:hover:border-amber-500 dark:hover:text-amber-400"
+                          className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 px-2 py-0.5 text-xs text-slate-600 hover:border-violet-400 hover:text-violet-700 dark:border-slate-700 dark:text-slate-300 dark:hover:border-violet-500 dark:hover:text-violet-400"
                         >
                           {a.colorHex && <span style={{ background: a.colorHex }} className="inline-block h-2 w-2 shrink-0 rounded-full" />}
                           {a.name}{a.colorName && ` - ${a.colorName}`}

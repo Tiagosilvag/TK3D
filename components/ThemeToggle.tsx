@@ -48,7 +48,7 @@ export function ThemeToggle() {
         {isDark === null ? 'Tema' : isDark ? 'Tema escuro' : 'Tema claro'}
       </span>
       <span
-        className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${isDark ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-700'}`}
+        className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${isDark ? 'bg-violet-500' : 'bg-slate-300 dark:bg-slate-700'}`}
         aria-hidden
       >
         <span

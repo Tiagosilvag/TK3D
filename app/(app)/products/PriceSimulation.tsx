@@ -125,11 +125,11 @@ export function PriceSimulation({
       </div>
 
       <dl className="mt-4 space-y-1 text-sm">
-        <div className="flex justify-between font-semibold text-amber-700 dark:text-amber-400">
+        <div className="flex justify-between font-semibold text-violet-700 dark:text-violet-400">
           <dt>Preço sugerido (simulado)</dt>
           <dd>{formatCurrency(result.suggestedPrice)}</dd>
         </div>
-        <div className="flex justify-between font-semibold text-amber-700 dark:text-amber-400">
+        <div className="flex justify-between font-semibold text-violet-700 dark:text-violet-400">
           <dt>Preço marketplace (simulado)</dt>
           <dd>{formatCurrency(result.marketplacePrice)}</dd>
         </div>

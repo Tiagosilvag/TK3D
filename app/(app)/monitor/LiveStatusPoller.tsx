@@ -13,6 +13,15 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
   const [pending, setPending] = useState<'pause' | 'resume' | 'stop' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const dialogRef = useRef<HTMLDialogElement>(null)
+  // Bug fix: LiveStatusPoller re-renders this component every 4s with a
+  // fresh gcodeState from the poll. If the print finishes/errors out
+  // (state leaves the pausable/resumable/stoppable sets) while the "Parar
+  // impressão?" confirmation dialog is open, the early `return null` below
+  // used to unmount this whole subtree -- yanking the open dialog (and its
+  // pending/error state) out from under the user mid-confirmation. Tracking
+  // whether the dialog is actually open keeps it (and this component)
+  // mounted until the user closes it themselves.
+  const [dialogOpen, setDialogOpen] = useState(false)
 
   async function run(kind: 'pause' | 'resume' | 'stop', fn: (id: string) => Promise<{ success: boolean; error?: string }>) {
     setPending(kind)
@@ -27,7 +36,7 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
   const canResume = RESUMABLE_STATES.has(gcodeState)
   const canStop = STOPPABLE_STATES.has(gcodeState)
 
-  if (!canPause && !canResume && !canStop) return null
+  if (!canPause && !canResume && !canStop && !dialogOpen) return null
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -55,7 +64,7 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
         <button
           type="button"
           disabled={pending !== null}
-          onClick={() => dialogRef.current?.showModal()}
+          onClick={() => { setDialogOpen(true); dialogRef.current?.showModal() }}
           className="rounded-lg border border-red-300 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
         >
           Parar
@@ -65,6 +74,7 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
 
       <dialog
         ref={dialogRef}
+        onClose={() => setDialogOpen(false)}
         className="w-96 rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
       >
         <div className="grid gap-3 p-4">

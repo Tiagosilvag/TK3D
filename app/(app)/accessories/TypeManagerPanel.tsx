@@ -114,7 +114,7 @@ export function TypeManagerPanel({ types, onBack }: { types: AccessoryTypeOption
             <span className="text-xs text-slate-400 dark:text-slate-500">{t.count} {t.count === 1 ? 'item' : 'items'}</span>
             {renamingId === t.id ? (
               <>
-                <button type="button" onClick={() => confirmRename(t.id)} disabled={busy} className="text-xs text-amber-600 hover:underline dark:text-amber-400">
+                <button type="button" onClick={() => confirmRename(t.id)} disabled={busy} className="text-xs text-violet-600 hover:underline dark:text-violet-400">
                   Salvar
                 </button>
                 <button type="button" onClick={() => setRenamingId(null)} disabled={busy} className="text-xs text-slate-500 hover:underline dark:text-slate-400">
@@ -123,7 +123,7 @@ export function TypeManagerPanel({ types, onBack }: { types: AccessoryTypeOption
               </>
             ) : (
               <>
-                <button type="button" onClick={() => startRename(t)} disabled={busy} className="text-xs text-amber-600 hover:underline dark:text-amber-400">
+                <button type="button" onClick={() => startRename(t)} disabled={busy} className="text-xs text-violet-600 hover:underline dark:text-violet-400">
                   Renomear
                 </button>
                 <button

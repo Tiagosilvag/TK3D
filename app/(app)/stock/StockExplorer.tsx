@@ -50,7 +50,7 @@ const PAGE_SIZE = 10
 function chipClass(active: boolean): string {
   return `rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
     active
-      ? 'bg-amber-600 text-white dark:bg-amber-500 dark:text-slate-950'
+      ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white dark:from-violet-500 dark:to-fuchsia-500 dark:text-slate-950'
       : 'border border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
   }`
 }
@@ -215,7 +215,7 @@ export function StockExplorer({ rows }: { rows: StockRow[] }) {
                         ) : null}
                       </div>
                       <div className="min-w-0">
-                        <Link href={`/products/${r.productId}`} className="block truncate font-medium text-slate-900 hover:text-amber-700 hover:underline dark:text-slate-100 dark:hover:text-amber-400">
+                        <Link href={`/products/${r.productId}`} className="block truncate font-medium text-slate-900 hover:text-violet-700 hover:underline dark:text-slate-100 dark:hover:text-violet-400">
                           {r.productName}
                         </Link>
                         <p className="truncate text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">
@@ -229,7 +229,7 @@ export function StockExplorer({ rows }: { rows: StockRow[] }) {
                     {r.readyToAssemble == null ? (
                       <span className="text-slate-400 dark:text-slate-500">-</span>
                     ) : r.readyToAssemble > 0 ? (
-                      <Link href={`/assembly?productId=${r.productId}`} className="font-medium text-amber-600 hover:underline dark:text-amber-400">
+                      <Link href={`/assembly?productId=${r.productId}`} className="font-medium text-violet-600 hover:underline dark:text-violet-400">
                         {r.readyToAssemble} montar &rarr;
                       </Link>
                     ) : (
@@ -254,10 +254,10 @@ export function StockExplorer({ rows }: { rows: StockRow[] }) {
                         </Link>
                       )}
                       <ActionsMenu>
-                        <Link href={`/sales?productId=${r.productId}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                        <Link href={`/sales?productId=${r.productId}`} className="text-violet-600 hover:underline dark:text-violet-400">
                           Registrar venda direta
                         </Link>
-                        <Link href={`/consignment/deliveries?productId=${r.productId}`} className="text-amber-600 hover:underline dark:text-amber-400">
+                        <Link href={`/consignment/deliveries?productId=${r.productId}`} className="text-violet-600 hover:underline dark:text-violet-400">
                           Entregar a parceiro
                         </Link>
                         <hr className="w-full border-slate-200 dark:border-slate-700" />
@@ -279,10 +279,10 @@ export function StockExplorer({ rows }: { rows: StockRow[] }) {
         <div className="mt-4 flex items-center justify-between text-sm text-slate-500 dark:text-slate-400">
           <span>Mostrando {(currentPage - 1) * PAGE_SIZE + 1}-{Math.min(currentPage * PAGE_SIZE, filteredRows.length)} de {filteredRows.length}</span>
           <div className="flex gap-2">
-            <button type="button" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)} className="rounded-lg px-3 py-1.5 font-medium text-amber-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300 disabled:no-underline dark:text-amber-400 dark:disabled:text-slate-600">
+            <button type="button" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)} className="rounded-lg px-3 py-1.5 font-medium text-violet-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300 disabled:no-underline dark:text-violet-400 dark:disabled:text-slate-600">
               ←
             </button>
-            <button type="button" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)} className="rounded-lg px-3 py-1.5 font-medium text-amber-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300 disabled:no-underline dark:text-amber-400 dark:disabled:text-slate-600">
+            <button type="button" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)} className="rounded-lg px-3 py-1.5 font-medium text-violet-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300 disabled:no-underline dark:text-violet-400 dark:disabled:text-slate-600">
               →
             </button>
           </div>

@@ -77,7 +77,7 @@ export function PartnerForm({
         <div className="text-sm">
           <label className="block">
             Comissão padrão
-            <div className="mt-1 flex items-center rounded-lg border border-slate-300 bg-white px-2.5 transition-colors focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/30 dark:border-slate-700 dark:bg-slate-800">
+            <div className="mt-1 flex items-center rounded-lg border border-slate-300 bg-white px-2.5 transition-colors focus-within:border-violet-500 focus-within:ring-2 focus-within:ring-violet-500/30 dark:border-slate-700 dark:bg-slate-800">
               <input
                 name="defaultCommissionPercent"
                 type="number"

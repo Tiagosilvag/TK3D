@@ -244,7 +244,7 @@ export function PrinterForm({
             type="button"
             onClick={handleSearchBambuDevices}
             disabled={loadingBambuDevices}
-            className="text-xs text-amber-600 hover:underline dark:text-amber-400"
+            className="text-xs text-violet-600 hover:underline dark:text-violet-400"
           >
             {loadingBambuDevices ? 'Buscando…' : 'Buscar impressoras da conta Bambu'}
           </button>
@@ -291,7 +291,7 @@ export function PrinterForm({
             </div>
             <div>
               <p className="text-xs text-slate-500 dark:text-slate-400">Total R$/h</p>
-              <p className="font-semibold text-amber-600 dark:text-amber-400">{Number.isFinite(totalCost) ? `${formatOrDash(totalCost)}/h` : '—'}</p>
+              <p className="font-semibold text-violet-600 dark:text-violet-400">{Number.isFinite(totalCost) ? `${formatOrDash(totalCost)}/h` : '—'}</p>
             </div>
           </div>
         </div>

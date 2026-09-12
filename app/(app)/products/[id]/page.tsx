@@ -12,7 +12,7 @@ import { ProductForm } from '../ProductForm'
 import { CostBreakdown, type MarketplacePlatformPrice } from '../CostBreakdown'
 import { PriceSimulation } from '../PriceSimulation'
 import { ComponentsSection, type ComponentRow, type ProductOption } from '../ComponentsSection'
-import { PhotoGallery } from '../PhotoGallery'
+import { PhotoGallery, PhotoUploadForm } from '../PhotoGallery'
 import {
   getProductCostBreakdown,
   getEditableFilamentOptions,
@@ -21,7 +21,6 @@ import {
   removeProductAccessoryColorUsage,
   deleteProduct,
 } from '@/actions/products'
-import { addProductPhoto } from '@/actions/productPhotos'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { getProductVariantBreakdown } from '@/lib/reports'
 import { productNeedsAssembly } from '@/lib/products'
@@ -356,20 +355,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               </>
             )}
 
-            <form
-              action={async (formData: FormData) => { 'use server'; await addProductPhoto(formData) }}
-              className="flex items-center gap-2"
-            >
-              <input type="hidden" name="productId" value={product.id} />
-              <input
-                type="file"
-                name="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                required
-                className="tk-input flex-1 file:mr-3 file:rounded-md file:border-0 file:bg-amber-600 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white dark:file:bg-amber-500 dark:file:text-slate-950"
-              />
-              <button className="tk-btn-primary shrink-0 px-4">Enviar</button>
-            </form>
+            <PhotoUploadForm productId={product.id} />
             <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">JPEG, PNG, WEBP ou GIF — até 5MB.</p>
           </div>
         </div>

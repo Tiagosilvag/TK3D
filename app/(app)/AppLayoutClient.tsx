@@ -83,7 +83,7 @@ function ProtagonistLink({ href, label, icon: Icon, active }: NavLink & { active
       href={href}
       className={`flex items-center gap-2.5 rounded-lg px-3 py-2.5 font-display text-base font-semibold transition-colors ${
         active
-          ? 'bg-amber-600 text-white dark:bg-amber-500 dark:text-slate-950'
+          ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white dark:from-violet-500 dark:to-fuchsia-500 dark:text-slate-950'
           : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100'
       }`}
     >
@@ -102,7 +102,7 @@ function SecondaryLink({ href, label, icon: Icon, active, badge }: NavLink & { a
       href={href}
       className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
         active
-          ? 'bg-amber-600 text-white dark:bg-amber-500 dark:text-slate-950'
+          ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white dark:from-violet-500 dark:to-fuchsia-500 dark:text-slate-950'
           : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
       }`}
     >
@@ -127,7 +127,7 @@ function NavSection({ title, links, pathname, badges }: { title: string; links: 
       <summary
         className={`flex cursor-pointer list-none items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wide transition-colors ${
           sectionActive
-            ? 'text-amber-700 dark:text-amber-400'
+            ? 'text-violet-700 dark:text-violet-400'
             : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'
         }`}
       >
@@ -166,7 +166,7 @@ export function AppLayoutClient({
   const SETTINGS_BADGES: Record<string, number> = { '/supplies': suppliesOutOfStockCount, '/filaments': filamentsLowStockCount }
 
   return (
-    <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950">
+    <div className="tk-gradient-bg flex min-h-screen">
       <aside className="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div className="border-b border-slate-200 px-4 py-5 dark:border-slate-800">
           <Logo />
