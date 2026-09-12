@@ -13,6 +13,19 @@ function status(overrides: Partial<BambuStatus>): BambuStatus {
     nozzleTemp: null,
     bedTemp: null,
     amsTrays: [],
+    chamberTemp: null,
+    nozzleTargetTemp: null,
+    bedTargetTemp: null,
+    speedLevel: null,
+    fanSpeeds: { heatbreak: null, cooling: null, big1: null, big2: null },
+    wifiSignal: null,
+    gcodeFilePreparePercent: null,
+    nozzleDiameter: null,
+    nozzleType: null,
+    hmsCodes: [],
+    printErrorCode: null,
+    firmwareVersion: null,
+    upgradeState: null,
     ...overrides,
   }
 }
@@ -34,16 +47,16 @@ describe('createJobTracker', () => {
     const firstFinish = new Date('2026-09-11T11:30:00Z')
     const secondFinish = new Date('2026-09-11T11:30:02Z')
     tracker.handleStatus(
-      status({ gcodeState: 'RUNNING', gcodeFile: 'a.3mf', amsTrays: [{ id: '0', type: 'PLA', color: 'FFF', remainPercent: 80 }] }),
+      status({ gcodeState: 'RUNNING', gcodeFile: 'a.3mf', amsTrays: [{ id: '0', type: 'PLA', color: 'FFF', remainPercent: 80, tagUid: null }] }),
       start,
     )
     const pending = tracker.handleStatus(
-      status({ gcodeState: 'FINISH', amsTrays: [{ id: '0', type: 'PLA', color: 'FFF', remainPercent: 75 }] }),
+      status({ gcodeState: 'FINISH', amsTrays: [{ id: '0', type: 'PLA', color: 'FFF', remainPercent: 75, tagUid: null }] }),
       firstFinish,
     )
     expect(pending).toBeNull()
     const capture = tracker.handleStatus(
-      status({ gcodeState: 'FINISH', amsTrays: [{ id: '0', type: 'PLA', color: 'FFF', remainPercent: 75 }] }),
+      status({ gcodeState: 'FINISH', amsTrays: [{ id: '0', type: 'PLA', color: 'FFF', remainPercent: 75, tagUid: null }] }),
       secondFinish,
     )
     expect(capture).not.toBeNull()
@@ -68,6 +81,30 @@ describe('createJobTracker', () => {
     const capture = tracker.handleStatus(status({ gcodeState: 'FAILED' }), new Date(end.getTime() + 2000))
     expect(capture!.outcome).toBe('FAILED')
     expect(capture!.durationHours).toBeCloseTo(1 / 3, 5)
+  })
+
+  it('captura o código HMS quando o job falha, e nunca quando termina com sucesso', () => {
+    const tracker = createJobTracker()
+    const start = new Date('2026-09-11T10:00:00Z')
+    tracker.handleStatus(status({ gcodeState: 'RUNNING' }), start)
+    tracker.handleStatus(status({ gcodeState: 'FAILED', hmsCodes: ['0300120000020001'] }), new Date(start.getTime() + 1000))
+    const capture = tracker.handleStatus(status({ gcodeState: 'FAILED', hmsCodes: ['0300120000020001'] }), new Date(start.getTime() + 2000))
+    expect(capture!.hmsCode).toBe('0300120000020001')
+
+    const tracker2 = createJobTracker()
+    tracker2.handleStatus(status({ gcodeState: 'RUNNING' }), start)
+    tracker2.handleStatus(status({ gcodeState: 'FINISH' }), new Date(start.getTime() + 1000))
+    const success = tracker2.handleStatus(status({ gcodeState: 'FINISH' }), new Date(start.getTime() + 2000))
+    expect(success!.hmsCode).toBeNull()
+  })
+
+  it('usa printErrorCode como fallback quando não há hmsCodes na falha', () => {
+    const tracker = createJobTracker()
+    const start = new Date('2026-09-11T10:00:00Z')
+    tracker.handleStatus(status({ gcodeState: 'RUNNING' }), start)
+    tracker.handleStatus(status({ gcodeState: 'FAILED', printErrorCode: '0500c010' }), new Date(start.getTime() + 1000))
+    const capture = tracker.handleStatus(status({ gcodeState: 'FAILED', printErrorCode: '0500c010' }), new Date(start.getTime() + 2000))
+    expect(capture!.hmsCode).toBe('0500c010')
   })
 
   it('não gera captura se nunca viu o job em RUNNING (restart no meio do job)', () => {

@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { decryptCredential } from '@/lib/bambu/crypto'
 import { parseBambuReport, type BambuStatus } from '@/lib/bambu/parser'
 import { createJobTracker, type CaptureDraft } from '@/lib/bambu/jobTracker'
+import { fetchLatestTask } from '@/lib/bambu/auth'
 
 type PrinterRef = { id: string; bambuEnabled: boolean; bambuSerial: string | null }
 
@@ -92,6 +93,15 @@ export async function startBambuListener(): Promise<void> {
 
   client.on('connect', () => {
     connectionStatus = 'connected'
+    // Pedido "pushall" (ajuste "extrair mais dados", 2026-09-12): única
+    // publicação que este listener faz -- o resto do módulo só assina/lê.
+    // Sem isso, campos que só vêm num dump completo (ex.: versão de
+    // firmware) podem nunca aparecer nos reports incrementais, que só
+    // mandam o que mudou desde o último tick.
+    for (const printer of printers) {
+      if (!printer.bambuSerial) continue
+      client!.publish(`device/${printer.bambuSerial}/request`, JSON.stringify({ pushing: { sequence_id: '0', command: 'pushall' } }))
+    }
   })
   client.on('error', (err) => {
     connectionStatus = 'expired'
@@ -113,6 +123,26 @@ export async function startBambuListener(): Promise<void> {
       })
     },
     onCapture: async (printerId, capture) => {
+      // Enriquecimento com o histórico oficial da nuvem (achado nesta
+      // sessão): peso real calculado pela Bambu (substitui o null que o
+      // cálculo via AMS quase sempre dá) + foto da peça. Nunca bloqueia a
+      // gravação da captura -- se a chamada falhar, grava só o que o
+      // jobTracker já tinha, como sempre fez.
+      let gramsUsedTotal = capture.gramsUsedTotal
+      let thumbnailUrl: string | null = null
+      const serial = printers.find((p) => p.id === printerId)?.bambuSerial
+      if (serial) {
+        try {
+          const task = await fetchLatestTask(token, serial)
+          if (task) {
+            if (gramsUsedTotal === null) gramsUsedTotal = task.weightGrams
+            thumbnailUrl = task.thumbnailUrl
+          }
+        } catch (err) {
+          console.error('[bambu] falha ao buscar histórico da nuvem pra enriquecer captura:', err)
+        }
+      }
+
       await prisma.printerCapture.create({
         data: {
           printerId,
@@ -120,9 +150,11 @@ export async function startBambuListener(): Promise<void> {
           finishedAt: capture.finishedAt,
           gcodeFileName: capture.gcodeFileName,
           durationHours: capture.durationHours,
-          gramsUsedTotal: capture.gramsUsedTotal,
+          gramsUsedTotal,
           amsBreakdown: capture.amsBreakdown as never,
           outcome: capture.outcome,
+          hmsCode: capture.hmsCode,
+          thumbnailUrl,
         },
       })
     },

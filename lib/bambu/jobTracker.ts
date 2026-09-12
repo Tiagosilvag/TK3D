@@ -10,6 +10,9 @@ export type CaptureDraft = {
   gramsUsedTotal: number | null
   amsBreakdown: unknown
   outcome: CaptureOutcome
+  // Código HMS bruto (hex) ou print_error quando o job termina em falha --
+  // null pra sucesso/cancelamento. Sem tradução própria (ver listener.ts).
+  hmsCode: string | null
 }
 
 type RunningJob = {
@@ -81,6 +84,7 @@ export function createJobTracker() {
     pending = null
 
     const durationHours = (finishedAt.getTime() - job.startedAt.getTime()) / 3_600_000
+    const outcome = mapOutcome(status.gcodeState)
     return {
       startedAt: job.startedAt,
       finishedAt,
@@ -88,7 +92,8 @@ export function createJobTracker() {
       gcodeFileName: job.gcodeFile,
       gramsUsedTotal: computeGramsUsedTotal(job.startTrays, status.amsTrays),
       amsBreakdown: { start: job.startTrays, end: status.amsTrays },
-      outcome: mapOutcome(status.gcodeState),
+      outcome,
+      hmsCode: outcome === 'FAILED' ? (status.hmsCodes[0] ?? status.printErrorCode) : null,
     }
   }
 
