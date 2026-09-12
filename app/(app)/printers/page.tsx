@@ -49,6 +49,8 @@ export default async function PrintersPage({
         maintenanceCostPerHour: editingPrinterRecord.maintenanceCostPerHour.toNumber(),
         bambuEnabled: editingPrinterRecord.bambuEnabled,
         bambuSerial: editingPrinterRecord.bambuSerial,
+        anycubicEnabled: editingPrinterRecord.anycubicEnabled,
+        anycubicPrinterKey: editingPrinterRecord.anycubicPrinterKey,
       }
     : undefined
 

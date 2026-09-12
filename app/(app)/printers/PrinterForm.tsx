@@ -3,7 +3,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createPrinter, updatePrinter } from '@/actions/printers'
 import { getBambuBoundDevices } from '@/actions/bambuStatus'
+import { getAnycubicBoundPrinters } from '@/actions/anycubicStatus'
 import type { BambuDevice } from '@/lib/bambu/auth'
+import type { AnycubicPrinterRef } from '@/lib/anycubic/auth'
 import { formatCurrency } from '@/lib/format'
 import { SubmitButton } from '@/components/SubmitButton'
 
@@ -27,6 +29,8 @@ export type EditingPrinter = {
   maintenanceCostPerHour: number
   bambuEnabled: boolean
   bambuSerial: string | null
+  anycubicEnabled: boolean
+  anycubicPrinterKey: string | null
 }
 
 // Melhorias "Impressoras": formulário virou modal (<dialog> nativo, mesmo
@@ -60,6 +64,10 @@ export function PrinterForm({
   const [bambuDevices, setBambuDevices] = useState<BambuDevice[] | null>(null)
   const [bambuDevicesError, setBambuDevicesError] = useState<string | null>(null)
   const [loadingBambuDevices, setLoadingBambuDevices] = useState(false)
+  const [anycubicPrinterKey, setAnycubicPrinterKey] = useState(editingPrinter?.anycubicPrinterKey ?? '')
+  const [anycubicPrinters, setAnycubicPrinters] = useState<AnycubicPrinterRef[] | null>(null)
+  const [anycubicPrintersError, setAnycubicPrintersError] = useState<string | null>(null)
+  const [loadingAnycubicPrinters, setLoadingAnycubicPrinters] = useState(false)
 
   async function handleSearchBambuDevices() {
     setLoadingBambuDevices(true)
@@ -75,6 +83,22 @@ export function PrinterForm({
       return
     }
     setBambuDevices(result.devices)
+  }
+
+  async function handleSearchAnycubicPrinters() {
+    setLoadingAnycubicPrinters(true)
+    setAnycubicPrintersError(null)
+    const result = await getAnycubicBoundPrinters()
+    setLoadingAnycubicPrinters(false)
+    if (!result.success || !result.printers) {
+      setAnycubicPrintersError(result.error ?? 'Falha ao buscar impressoras')
+      return
+    }
+    if (result.printers.length === 0) {
+      setAnycubicPrintersError('Nenhuma impressora vinculada à conta Anycubic')
+      return
+    }
+    setAnycubicPrinters(result.printers)
   }
 
   useEffect(() => {
@@ -106,6 +130,9 @@ export function PrinterForm({
     setBambuSerial(editingPrinter?.bambuSerial ?? '')
     setBambuDevices(null)
     setBambuDevicesError(null)
+    setAnycubicPrinterKey(editingPrinter?.anycubicPrinterKey ?? '')
+    setAnycubicPrinters(null)
+    setAnycubicPrintersError(null)
   }
 
   const price = parseFloat(purchasePrice)
@@ -267,6 +294,50 @@ export function PrinterForm({
                     <span className={device.online ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}>
                       {device.online ? 'online' : 'offline'}
                     </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <label className="col-span-2 flex items-center gap-2 text-sm">
+          <input type="checkbox" name="anycubicEnabled" defaultChecked={editingPrinter?.anycubicEnabled ?? false} />
+          Integração Anycubic (monitoramento)
+        </label>
+        <label className="col-span-2 text-sm">
+          Key da impressora Anycubic (opcional)
+          <input
+            name="anycubicPrinterKey"
+            className="tk-input-full"
+            value={anycubicPrinterKey}
+            onChange={(e) => setAnycubicPrinterKey(e.target.value)}
+          />
+        </label>
+        <div className="col-span-2 -mt-2">
+          <button
+            type="button"
+            onClick={handleSearchAnycubicPrinters}
+            disabled={loadingAnycubicPrinters}
+            className="text-xs text-violet-600 hover:underline dark:text-violet-400"
+          >
+            {loadingAnycubicPrinters ? 'Buscando…' : 'Buscar impressoras da conta Anycubic'}
+          </button>
+          {anycubicPrintersError && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{anycubicPrintersError}</p>}
+          {anycubicPrinters && (
+            <ul className="mt-2 divide-y divide-slate-100 rounded-lg border border-slate-200 dark:divide-slate-800 dark:border-slate-700">
+              {anycubicPrinters.map((printer) => (
+                <li key={printer.key}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAnycubicPrinterKey(printer.key)
+                      setAnycubicPrinters(null)
+                    }}
+                    className="flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                  >
+                    <span>{printer.name}</span>
+                    <span className="text-slate-400">{printer.key}</span>
                   </button>
                 </li>
               ))}
