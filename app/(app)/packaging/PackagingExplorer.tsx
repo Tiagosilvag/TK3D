@@ -209,12 +209,12 @@ export function PackagingExplorer({ rows, editingItem }: { rows: PackagingRow[];
                       </details>
                     )}
                     <ActionsMenu>
-                      <Link href={`/packaging?editId=${r.id}`} className="text-violet-600 hover:underline dark:text-violet-400">
+                      <Link href={`/packaging?editId=${r.id}`} className="tk-menu-item">
                         Editar
                       </Link>
-                      <RestockForm packagingItemId={r.id} packagingItemName={r.name} />
+                      <RestockForm packagingItemId={r.id} packagingItemName={r.name} className="tk-menu-item" />
                       <AdjustStockButton resourceType="PACKAGING" resourceId={r.id} resourceName={r.name} currentQuantity={r.currentStock} unitLabel=" un" />
-                      <ConfirmDeleteForm action={async () => { return await deletePackagingItem(r.id) }} />
+                      <ConfirmDeleteForm action={async () => { return await deletePackagingItem(r.id) }} className="tk-menu-item-danger" />
                     </ActionsMenu>
                   </div>
                 </td>

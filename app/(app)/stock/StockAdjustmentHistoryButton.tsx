@@ -23,7 +23,7 @@ export function StockAdjustmentHistoryButton({ productName, adjustments }: { pro
 
   return (
     <>
-      <button type="button" onClick={() => dialogRef.current?.showModal()} className="text-violet-600 hover:underline dark:text-violet-400">
+      <button type="button" onClick={() => dialogRef.current?.showModal()} className="tk-menu-item">
         Histórico de ajustes
       </button>
       <dialog

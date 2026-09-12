@@ -51,7 +51,7 @@ export function AccessoryHistoryButton({
 
   return (
     <>
-      <button type="button" onClick={() => dialogRef.current?.showModal()} className="text-xs text-violet-600 hover:underline dark:text-violet-400">
+      <button type="button" onClick={() => dialogRef.current?.showModal()} className="tk-menu-item">
         Histórico ({total})
       </button>
       <dialog

@@ -284,7 +284,7 @@ export function SuppliesExplorer({
                   )}
                   <RestockForm supplyId={r.id} supplyName={r.name} />
                   <ActionsMenu>
-                    <Link href={`/supplies?editId=${r.id}`} className="text-violet-600 hover:underline dark:text-violet-400">
+                    <Link href={`/supplies?editId=${r.id}`} className="tk-menu-item">
                       Editar
                     </Link>
                     <AdjustStockButton
@@ -294,7 +294,7 @@ export function SuppliesExplorer({
                       currentQuantity={r.currentStock}
                       unitLabel={r.unit === 'UN' ? '' : ` ${SUPPLY_UNIT_SUFFIX[r.unit]}`}
                     />
-                    <ConfirmDeleteForm action={async () => { return await deleteSupply(r.id) }} />
+                    <ConfirmDeleteForm action={async () => { return await deleteSupply(r.id) }} className="tk-menu-item-danger" />
                   </ActionsMenu>
                 </div>
               </td>

@@ -8,7 +8,7 @@ import { SubmitButton } from '@/components/SubmitButton'
 // "Repor estoque" -- mesmo padrão do RestockForm de Acessórios/Insumos,
 // sem campo de data (o cadastro/reposição de embalagem não pede data,
 // mesma decisão do modal "Nova embalagem").
-export function RestockForm({ packagingItemId, packagingItemName }: { packagingItemId: string; packagingItemName: string }) {
+export function RestockForm({ packagingItemId, packagingItemName, className = 'text-xs text-violet-600 hover:underline dark:text-violet-400' }: { packagingItemId: string; packagingItemName: string; className?: string }) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [quantity, setQuantity] = useState('')
@@ -33,7 +33,7 @@ export function RestockForm({ packagingItemId, packagingItemName }: { packagingI
 
   return (
     <>
-      <button type="button" onClick={() => dialogRef.current?.showModal()} className="text-xs text-violet-600 hover:underline dark:text-violet-400">
+      <button type="button" onClick={() => dialogRef.current?.showModal()} className={className}>
         Repor estoque
       </button>
       <dialog

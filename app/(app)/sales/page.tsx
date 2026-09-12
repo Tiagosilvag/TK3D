@@ -175,10 +175,10 @@ export default async function SalesPage({
                 </td>
                 <td>
                   <ActionsMenu>
-                    <Link href={`/sales?editId=${s.id}`} className="text-violet-600 hover:underline dark:text-violet-400">
+                    <Link href={`/sales?editId=${s.id}`} className="tk-menu-item">
                       Editar
                     </Link>
-                    <ConfirmDeleteForm action={async () => { 'use server'; return await deleteSale(s.id) }} />
+                    <ConfirmDeleteForm action={async () => { 'use server'; return await deleteSale(s.id) }} className="tk-menu-item-danger" />
                   </ActionsMenu>
                 </td>
               </tr>

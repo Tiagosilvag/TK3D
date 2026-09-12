@@ -23,7 +23,7 @@ export function ThemeToggle() {
     setIsDark(document.documentElement.classList.contains('dark'))
   }, [])
 
-  function toggle() {
+  function toggle(e: React.MouseEvent<HTMLButtonElement>) {
     const next = !document.documentElement.classList.contains('dark')
     document.documentElement.classList.toggle('dark', next)
     try {
@@ -34,6 +34,13 @@ export function ThemeToggle() {
       // session, so silently skipping persistence is an acceptable fallback.
     }
     setIsDark(next)
+    // Bug "botão de tema com contorno preso": focus-visible ainda ficava
+    // visível após o clique em alguns navegadores/heurísticas (não é
+    // universal que :focus-visible se apague num clique de mouse em
+    // <button>). Tirar o foco explicitamente após o clique garante que o
+    // anel nunca fique preso, sem depender dessa heurística -- Tab ainda
+    // foca e mostra o anel normalmente pra navegação por teclado.
+    e.currentTarget.blur()
   }
 
   return (

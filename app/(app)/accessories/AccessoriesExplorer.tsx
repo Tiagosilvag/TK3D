@@ -205,10 +205,10 @@ export function AccessoriesExplorer({
               <td><StatusBadge badge={getStockStatusBadge(r.status)} /></td>
               <td>
                 <ActionsMenu>
-                  <Link href={`/accessories?editId=${r.id}`} className="text-violet-600 hover:underline dark:text-violet-400">
+                  <Link href={`/accessories?editId=${r.id}`} className="tk-menu-item">
                     Editar
                   </Link>
-                  <RestockForm accessoryId={r.id} accessoryName={r.name} />
+                  <RestockForm accessoryId={r.id} accessoryName={r.name} className="tk-menu-item" />
                   <AccessoryHistoryButton
                     accessoryName={r.name}
                     purchases={r.purchases}
@@ -216,7 +216,7 @@ export function AccessoriesExplorer({
                     consumptionHistory={r.consumptionHistory}
                   />
                   <AdjustStockButton resourceType="ACCESSORY" resourceId={r.id} resourceName={r.name} currentQuantity={r.currentStock} />
-                  <ConfirmDeleteForm action={async () => { return await deleteAccessory(r.id) }} />
+                  <ConfirmDeleteForm action={async () => { return await deleteAccessory(r.id) }} className="tk-menu-item-danger" />
                 </ActionsMenu>
               </td>
             </tr>

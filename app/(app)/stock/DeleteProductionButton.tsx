@@ -85,7 +85,7 @@ export function DeleteProductionButton({ productId, productName }: { productId: 
 
   return (
     <>
-      <button type="button" onClick={open} className="tk-link-danger text-left">
+      <button type="button" onClick={open} className="tk-menu-item-danger">
         Excluir produção
       </button>
       <dialog
