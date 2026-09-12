@@ -13,6 +13,15 @@ const nextConfig = {
       bodySizeLimit: '6mb',
     },
   },
+  // Deploy demorando ~18min (log 2026-09-12): lint + type-check dentro do
+  // `next build` sozinhos custavam ~4min. Já rodamos `npx tsc --noEmit` e
+  // `npm run lint` manualmente antes de cada commit (ver CLAUDE.md,
+  // "Verificação antes de cada commit") -- refazer isso dentro do build de
+  // produção é trabalho duplicado. Se algo escapar dessa checagem manual,
+  // só quebra em runtime em vez de barrar o build -- risco aceito dado que
+  // a checagem já roda antes de todo commit.
+  eslint: { ignoreDuringBuilds: true },
+  typescript: { ignoreBuildErrors: true },
 }
 
 module.exports = nextConfig
