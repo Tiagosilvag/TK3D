@@ -166,8 +166,8 @@ export function AppLayoutClient({
   const SETTINGS_BADGES: Record<string, number> = { '/supplies': suppliesOutOfStockCount, '/filaments': filamentsLowStockCount }
 
   return (
-    <div className="tk-gradient-bg flex min-h-screen">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+    <div className="tk-gradient-bg flex h-screen overflow-hidden">
+      <aside className="flex w-60 shrink-0 flex-col border-r border-slate-300 bg-white shadow-[2px_0_10px_-2px_rgba(15,23,42,0.10)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-none">
         <div className="border-b border-slate-200 px-4 py-5 dark:border-slate-800">
           <Logo />
           <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Controle de Produção</p>
@@ -214,7 +214,7 @@ export function AppLayoutClient({
           </div>
         </div>
       </aside>
-      <main className="print-bed-bg flex-1 overflow-y-auto p-6">{children}</main>
+      <main className="flex-1 overflow-y-auto p-6">{children}</main>
     </div>
   )
 }

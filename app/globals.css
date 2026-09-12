@@ -25,47 +25,6 @@ body {
   @apply bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 dark:from-slate-950 dark:via-violet-950/40 dark:to-fuchsia-950/30;
 }
 
-/* Subtle FDM print-layer + print-bed grid texture for the main content area.
-   Pure CSS, no image assets. Uses currentColor so light/dark opacity is set
-   independently below without duplicating the gradient definitions. */
-/* The FDM-layer-lines + print-bed-grid texture uses `currentColor` in its
-   gradient stops so its opacity can differ between light/dark via `color`
-   alone. That `color` must live on a `::before` pseudo-element, never on
-   `.print-bed-bg` itself — `color` is inherited, and setting it on the
-   element directly (a past version of this rule did) makes every
-   descendant text node without its own explicit color class (e.g. plain
-   `<td>`s) inherit a nearly-invisible near-transparent color instead of a
-   normal one. The pseudo-element establishes its own box, so its `color`
-   never reaches real content. */
-.print-bed-bg {
-  position: relative;
-}
-
-.print-bed-bg::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background-image:
-    repeating-linear-gradient(to bottom, currentColor 0, currentColor 1px, transparent 1px, transparent 6px),
-    repeating-linear-gradient(to right, currentColor 0, currentColor 1px, transparent 1px, transparent 32px),
-    repeating-linear-gradient(to bottom, currentColor 0, currentColor 1px, transparent 1px, transparent 32px);
-  color: rgb(0 0 0 / 0.035);
-}
-
-/* Dark mode is class-based (see the inline script in app/layout.tsx and
-   ThemeToggle), so the texture opacity keys off .dark rather than a media
-   query — it always matches whatever theme is actually applied. */
-.dark .print-bed-bg::before {
-  color: rgb(255 255 255 / 0.05);
-}
-
-.print-bed-bg > * {
-  position: relative;
-  z-index: 1;
-}
-
 /* Modais em <dialog> nativo (padrão do app -- ver components/
    AdjustStockButton.tsx, DeletePrinterButton.tsx e os RestockForm de
    accessories/supplies -- sem lib nova, spec do projeto). O preflight do
@@ -116,7 +75,7 @@ dialog {
   }
 
   .tk-btn-primary {
-    @apply rounded-lg bg-violet-600 py-1.5 text-sm font-medium text-white transition-colors hover:bg-violet-700 dark:bg-violet-500 dark:text-slate-950 dark:hover:bg-violet-400;
+    @apply rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-violet-700 dark:bg-violet-500 dark:text-slate-950 dark:hover:bg-violet-400;
   }
 
   .tk-table-head-row {
