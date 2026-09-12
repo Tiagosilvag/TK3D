@@ -19,3 +19,19 @@ function lastMatch(text: string, pattern: RegExp): string | null {
 export function extractSlicerTokenFromText(text: string): string | null {
   return lastMatch(text, LOG_TOKEN_PATTERN) ?? lastMatch(text, CONF_TOKEN_PATTERN)
 }
+
+export type LogFileCandidate = { name: string; lastModified: number; text: string }
+
+// Escolhe entre vários arquivos (a pasta inteira de log selecionada pelo
+// usuário) qual tem o token mais recente -- tenta do mais novo (por data de
+// modificação) pro mais velho, parando no primeiro que tiver um login
+// registrado. Cobre o caso de o arquivo mais novo ser de uma atualização
+// recente do Slicer Next sem nenhum login ainda (ver conversa de suporte).
+export function pickSlicerTokenFromCandidates(files: LogFileCandidate[]): string | null {
+  const sorted = [...files].sort((a, b) => b.lastModified - a.lastModified)
+  for (const file of sorted) {
+    const token = extractSlicerTokenFromText(file.text)
+    if (token) return token
+  }
+  return null
+}
