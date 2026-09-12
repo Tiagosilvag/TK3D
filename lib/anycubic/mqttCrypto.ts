@@ -9,10 +9,13 @@ function md5Hex(input: string): string {
 // Separado de encryptMqttToken pra ser testável com uma chave de teste
 // (a CA real da Anycubic não precisa entrar no teste unitário).
 export function encryptMqttTokenWithKey(authToken: string, publicKey: KeyLike): string {
-  const encrypted = publicEncrypt(
-    { key: publicKey, padding: constants.RSA_PKCS1_PADDING },
-    Buffer.from(authToken, 'utf8'),
-  )
+  // A assinatura de tipos do node:crypto tem várias sobrecargas pra
+  // publicEncrypt (KeyObjectInput/PrivateKeyInput/PublicKeyInput/
+  // JsonWebKeyInput) que não resolvem bem quando a chave chega como o
+  // union genérico KeyLike -- o cast abaixo aponta pro shape que a
+  // implementação de fato espera em runtime (key + padding).
+  const options = { key: publicKey, padding: constants.RSA_PKCS1_PADDING } as Parameters<typeof publicEncrypt>[0]
+  const encrypted = publicEncrypt(options, Buffer.from(authToken, 'utf8'))
   return encrypted.toString('base64')
 }
 
