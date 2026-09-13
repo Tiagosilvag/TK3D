@@ -31,6 +31,7 @@ export function RegisterSaleForm({
   const formRef = useRef<HTMLFormElement>(null)
   const [open, setOpen] = useState(false)
   const [deliveryId, setDeliveryId] = useState('')
+  const [quantitySold, setQuantitySold] = useState('')
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -41,9 +42,15 @@ export function RegisterSaleForm({
 
   const selected = useMemo(() => deliveries.find((d) => d.deliveryId === deliveryId), [deliveries, deliveryId])
 
+  function handleDeliveryChange(id: string) {
+    setDeliveryId(id)
+    setQuantitySold('')
+  }
+
   function resetFields() {
     formRef.current?.reset()
     setDeliveryId('')
+    setQuantitySold('')
   }
 
   async function action(formData: FormData) {
@@ -80,7 +87,7 @@ export function RegisterSaleForm({
 
           <label className="text-sm">
             Produto
-            <select name="deliveryId" value={deliveryId} onChange={(e) => setDeliveryId(e.target.value)} className="tk-input-full" required>
+            <select name="deliveryId" value={deliveryId} onChange={(e) => handleDeliveryChange(e.target.value)} className="tk-input-full" required>
               <option value="" disabled>Selecione</option>
               {deliveries.map((d) => (
                 <option key={d.deliveryId} value={d.deliveryId}>
@@ -91,13 +98,26 @@ export function RegisterSaleForm({
           </label>
 
           <label className="text-sm">
-            Quantidade vendida
+            <span className="flex items-center justify-between gap-2">
+              Quantidade vendida
+              {selected && (
+                <button
+                  type="button"
+                  onClick={() => setQuantitySold(String(selected.remaining))}
+                  className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400"
+                >
+                  Vender tudo ({selected.remaining})
+                </button>
+              )}
+            </span>
             <input
               name="quantitySold"
               type="number"
               step="1"
               min="1"
               max={selected?.remaining}
+              value={quantitySold}
+              onChange={(e) => setQuantitySold(e.target.value)}
               className="tk-input-full"
               required
             />
