@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatCurrency } from '@/lib/format'
-import { deleteConsignmentDelivery } from '@/actions/consignmentDeliveries'
+import { deleteConsignmentDelivery, updateConsignmentDeliveryQuantity } from '@/actions/consignmentDeliveries'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { DeliveryBatchForm, type PartnerOption, type ProductOption } from './DeliveryBatchForm'
 
@@ -13,6 +13,12 @@ export interface DeliveryBatchItem {
   colorHex: string | null
   quantityDelivered: number
   unitPrice: number
+  // Bug "remover entrega já vendida deve ser possível + ajustar
+  // quantidade": pra validar o mínimo do campo de quantidade (não dá pra
+  // baixar pra menos do que já foi vendido) e pra avisar quantos
+  // relatórios de venda somem junto se a entrega inteira for removida.
+  quantitySold: number
+  saleReportsCount: number
 }
 
 export interface DeliveryBatchRow {
@@ -70,6 +76,15 @@ export function DeliveriesExplorer({
     return result
   }
 
+  async function handleUpdateQuantity(id: string, formData: FormData) {
+    const result = await updateConsignmentDeliveryQuantity(id, formData)
+    if (!result.success) {
+      alert(result.error)
+      return
+    }
+    router.refresh()
+  }
+
   return (
     <>
       <div className="flex justify-end">
@@ -122,7 +137,7 @@ export function DeliveriesExplorer({
       <dialog
         ref={dialogRef}
         onClose={() => setSelected(null)}
-        className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+        className="w-full [--tk-dialog-cap:32rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
       >
         {selected && (
           <div className="grid gap-3 p-5">
@@ -152,10 +167,34 @@ export function DeliveriesExplorer({
                         {item.productName}{item.colorLabel && <span className="text-slate-500 dark:text-slate-400"> - {item.colorLabel}</span>}
                       </span>
                     </td>
-                    <td>{item.quantityDelivered}</td>
+                    <td>
+                      <form action={(fd) => handleUpdateQuantity(item.id, fd)} className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          name="quantityDelivered"
+                          step="1"
+                          min={item.quantitySold || 1}
+                          defaultValue={item.quantityDelivered}
+                          className="tk-input w-16 text-right"
+                        />
+                        <button type="submit" className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                          Salvar
+                        </button>
+                      </form>
+                      {item.quantitySold > 0 && (
+                        <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Vendido: {item.quantitySold}</p>
+                      )}
+                    </td>
                     <td>{formatCurrency(item.unitPrice)}</td>
                     <td>
-                      <ConfirmDeleteForm action={() => handleRemoveItem(item.id)} />
+                      <ConfirmDeleteForm
+                        action={() => handleRemoveItem(item.id)}
+                        confirmMessage={
+                          item.saleReportsCount > 0
+                            ? `Remover esta entrega? Isso também apaga ${item.saleReportsCount} relatório(s) de venda já registrado(s) contra ela.`
+                            : 'Tem certeza?'
+                        }
+                      />
                     </td>
                   </tr>
                 ))}

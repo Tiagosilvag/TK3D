@@ -82,7 +82,7 @@ export async function getRevenueByChannel(): Promise<Record<'DIRETA' | 'MARKETPL
 export async function getConsignmentRevenue(): Promise<number> {
   const reports = await prisma.consignmentSaleReport.findMany({ include: { delivery: true } })
   return reports.reduce((sum, r) => {
-    const unitPrice = r.delivery.unitPrice.toNumber()
+    const unitPrice = r.unitPrice?.toNumber() ?? r.delivery.unitPrice.toNumber()
     const commission = r.commissionPercent.toNumber()
     return sum + r.quantitySold * unitPrice * (1 - commission)
   }, 0)
@@ -351,11 +351,39 @@ export interface ProductVariantBreakdownRow {
   // simples); nulo pra combo multi-filamento (peça com 2+ componentes ao
   // mesmo tempo), onde uma única cor não representaria a variante direito.
   colorHex: string | null
+  // Melhoria "Modal de variações -- chips por hierarquia": mesma
+  // informação de `label`, mas ESTRUTURADA (nome/valor/cor por atributo)
+  // em vez de um texto único já concatenado -- pra telas que precisam
+  // desenhar cada atributo como um chip separado (VariantsModal), com
+  // peso visual diferente por hierarquia (`tier`). Vazio quando a
+  // montagem é anterior ao rastreamento de colorChoices (mesmo caso em
+  // que `label` também não existe pra essa variante).
+  attrs: VariantAttr[]
 }
 
-function accessoryLabel(a: { name: string; colorName: string }): string {
-  return a.colorName ? `${a.name} — ${a.colorName}` : a.name
+// Peça (ProductPart) é a própria peça impressa que compõe o produto --
+// hierarquia visual mais forte ("produto"); Product usado como componente
+// (ex.: Mosquetão dentro de um chaveiro) é uma peça funcional que integra
+// o produto mas não é ele mesmo -- hierarquia "complemento"; Accessory
+// (ex.: Corrente) é só um item aplicado/trocável -- hierarquia mais
+// discreta, "acessorio". Deriva do TIPO da fonte que resolveu o
+// colorChoices (ver resolveChoiceAttr), nunca do NOME do atributo -- assim
+// generaliza pra qualquer nome de peça/componente/acessório sem precisar
+// de um mapa fixo por texto, e uma 4ª fonte futura (se existir) cai em
+// "complemento" por padrão com segurança.
+export type VariantAttrTier = 'produto' | 'complemento' | 'acessorio'
+
+export interface VariantAttr {
+  name: string
+  value: string
+  tier: VariantAttrTier
+  // 1 elemento no caso comum (1 cor); 2 pra combo de peça multi-filamento
+  // (ex.: "Lavanda + Roxo") -- só os 2 primeiros são usados na bolinha
+  // dupla da UI, mesmo limite do protótipo original.
+  colorHexes: string[]
 }
+
+const VARIANT_ATTR_TIER_RANK: Record<VariantAttrTier, number> = { produto: 0, complemento: 1, acessorio: 2 }
 
 // Melhoria "Editar variação": exportada pra actions/assembly.ts também usar
 // (encontrar quais ProductAssembly batem com o comboKey de uma variante
@@ -399,12 +427,20 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
     const filaments = await prisma.filament.findMany({ where: { id: { in: runs.map((r) => r.filamentId) } } })
     const filamentById = new Map(filaments.map((f) => [f.id, f]))
     return runs
-      .map((r) => ({
-        key: r.filamentId,
-        label: filamentById.get(r.filamentId)?.colorName ?? r.filamentId,
-        quantity: r._sum.quantitySuccess ?? 0,
-        colorHex: filamentById.get(r.filamentId)?.colorHex ?? null,
-      }))
+      .map((r) => {
+        const f = filamentById.get(r.filamentId)
+        const label = f?.colorName ?? r.filamentId
+        return {
+          key: r.filamentId,
+          label,
+          quantity: r._sum.quantitySuccess ?? 0,
+          colorHex: f?.colorHex ?? null,
+          // Produto simples sem componente: a única variação é a cor dele
+          // mesmo -- sempre hierarquia "produto" (é o produto em si, não um
+          // complemento nem um acessório aplicado).
+          attrs: [{ name: 'Cor', value: label, tier: 'produto' as const, colorHexes: f?.colorHex ? [f.colorHex] : [] }],
+        }
+      })
       .sort((a, b) => b.quantity - a.quantity)
   }
 
@@ -462,6 +498,40 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
     return rawKey.split(',').map((id) => filamentById.get(id)?.colorName ?? id).join(' + ')
   }
 
+  function filamentComboHexes(rawKey: string): string[] {
+    return rawKey.split(',').map((id) => filamentById.get(id)?.colorHex).filter((h): h is string => Boolean(h))
+  }
+
+  // Resolve UM par (choiceKey, rawKey) de colorChoices na sua fonte
+  // estrutural -- ProductPart (peça), Product (componente) ou Accessory
+  // (acessório com cor variável) -- usada tanto pra montar `label` (texto
+  // único, formato antigo preservado) quanto `attrs` (chips por hierarquia,
+  // ver VariantAttrTier acima). A hierarquia visual vem DAQUI, não de
+  // combinar nomes num mapa fixo -- generaliza pra qualquer nome de peça/
+  // componente/acessório.
+  function resolveChoiceAttr(choiceKey: string, rawKey: string): VariantAttr {
+    const partName = partNameById.get(choiceKey)
+    if (partName) return { name: partName, value: filamentComboLabel(rawKey), tier: 'produto', colorHexes: filamentComboHexes(rawKey) }
+    const componentName = componentProductNameById.get(choiceKey)
+    if (componentName) return { name: componentName, value: filamentComboLabel(rawKey), tier: 'complemento', colorHexes: filamentComboHexes(rawKey) }
+    const chosenAccessory = accessoryById.get(rawKey)
+    if (chosenAccessory) {
+      return {
+        name: chosenAccessory.name,
+        value: chosenAccessory.colorName ?? '',
+        tier: 'acessorio',
+        colorHexes: chosenAccessory.colorHex ? [chosenAccessory.colorHex] : [],
+      }
+    }
+    return { name: '', value: filamentComboLabel(rawKey), tier: 'complemento', colorHexes: filamentComboHexes(rawKey) }
+  }
+
+  function attrToLegacyLabel(attr: VariantAttr): string {
+    if (!attr.name) return attr.value
+    if (attr.tier === 'acessorio') return attr.value ? `${attr.name} — ${attr.value}` : attr.name
+    return `${attr.name}: ${attr.value}`
+  }
+
   // Montagem sem colorChoices gravado (anterior ao ajuste de cor variável,
   // ou produto cujas peças nunca tiveram cor variável nenhuma) não entra
   // nessa quebra por variante -- não dá pra saber qual cor foi consumida
@@ -469,38 +539,34 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
   // função). Essa quantidade continua contando normalmente em "Produzido"
   // (getOwnStockSummary, tabela principal de /stock), só não aparece
   // detalhada aqui.
-  const totals = new Map<string, { label: string; quantity: number; colorHex: string | null }>()
+  const totals = new Map<string, { label: string; quantity: number; colorHex: string | null; attrs: VariantAttr[] }>()
   for (const a of assemblies) {
     const choices = a.colorChoices as Record<string, string> | null
     if (!choices || Object.keys(choices).length === 0) continue
     const key = serializeColorChoices(choices)
-    const label = Object.entries(choices)
-      .map(([choiceKey, rawKey]) => {
-        const partName = partNameById.get(choiceKey)
-        if (partName) return `${partName}: ${filamentComboLabel(rawKey)}`
-        const componentName = componentProductNameById.get(choiceKey)
-        if (componentName) return `${componentName}: ${filamentComboLabel(rawKey)}`
-        const chosenAccessory = accessoryById.get(rawKey)
-        if (chosenAccessory) return accessoryLabel(chosenAccessory)
-        return filamentComboLabel(rawKey)
-      })
-      .sort()
-      .join(', ')
-    // Bolinha de cor: só quando a variante inteira se resolve num único
-    // valor (1 peça/componente/acessório, sem multi-filamento) -- qualquer
+    const resolvedAttrs = Object.entries(choices).map(([choiceKey, rawKey]) => resolveChoiceAttr(choiceKey, rawKey))
+    const label = resolvedAttrs.map(attrToLegacyLabel).sort().join(', ')
+    // Chips reordenados por hierarquia (Produto → Complemento → Acessório),
+    // nunca alfabética como `label` acima -- é exatamente essa reordenação
+    // que dá o agrupamento visual pedido (Base/Tampa antes de Corrente,
+    // mesmo que o texto original venha em outra ordem).
+    const attrs = [...resolvedAttrs].sort((x, y) => VARIANT_ATTR_TIER_RANK[x.tier] - VARIANT_ATTR_TIER_RANK[y.tier])
+    // Bolinha de cor (usada por telas que só precisam de 1 cor por
+    // variante): só quando a variante inteira se resolve num único valor
+    // (1 peça/componente/acessório, sem multi-filamento) -- qualquer
     // combinação com mais de um valor não tem uma bolinha que a represente
     // direito.
     const choiceValues = Object.values(choices)
     const colorHex = choiceValues.length === 1 && !choiceValues[0].includes(',')
       ? (filamentById.get(choiceValues[0])?.colorHex ?? accessoryById.get(choiceValues[0])?.colorHex ?? null)
       : null
-    const entry = totals.get(key) ?? { label, quantity: 0, colorHex }
+    const entry = totals.get(key) ?? { label, quantity: 0, colorHex, attrs }
     entry.quantity += a.quantity
     totals.set(key, entry)
   }
 
   return Array.from(totals.entries())
-    .map(([key, { label, quantity, colorHex }]) => ({ key, label, quantity, colorHex }))
+    .map(([key, { label, quantity, colorHex, attrs }]) => ({ key, label, quantity, colorHex, attrs }))
     .sort((a, b) => b.quantity - a.quantity)
 }
 
@@ -754,6 +820,23 @@ export interface ConsignmentHistoryEvent {
   quantity: number
 }
 
+// Melhoria "Parceiros de consignação": entrega individual com saldo > 0,
+// candidata a receber um novo relatório de venda (mesma granularidade de
+// ConsignmentSaleReport.deliveryId -- uma entrega específica, não o
+// agregado por produto/cor que `products` acima mostra).
+export interface ConsignmentSaleableDelivery {
+  deliveryId: string
+  productName: string
+  colorLabel: string | null
+  colorHex: string | null
+  remaining: number
+  // Preço cadastrado na entrega -- pré-preenche o campo editável de preço
+  // unitário no modal "Registrar venda" (pedido "às vezes o valor é
+  // diferente do cadastrado na parceria"), sem obrigar a sobrescrever
+  // quando a venda foi pelo valor combinado de sempre.
+  unitPrice: number
+}
+
 export interface ConsignmentPartnerDetail {
   partnerId: string
   partnerName: string
@@ -763,6 +846,7 @@ export interface ConsignmentPartnerDetail {
   totalSold: number
   commissionOwed: number
   products: ConsignmentProductBreakdown[]
+  saleableDeliveries: ConsignmentSaleableDelivery[]
   history: ConsignmentHistoryEvent[]
 }
 
@@ -821,9 +905,25 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
   let totalSold = 0
   let commissionOwed = 0
 
+  const saleableDeliveries: ConsignmentSaleableDelivery[] = []
+
   for (const delivery of partner.deliveries) {
     const variantKey = delivery.colorComboKey
-    const colorLabel = variantKey ? (variantInfoByProductAndKey.get(`${delivery.productId}::${variantKey}`)?.label ?? null) : null
+    const variantInfo = variantKey ? variantInfoByProductAndKey.get(`${delivery.productId}::${variantKey}`) : undefined
+    const colorLabel = variantKey ? (variantInfo?.label ?? null) : null
+
+    const deliverySold = delivery.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
+    const deliveryRemaining = Math.max(0, delivery.quantityDelivered - deliverySold)
+    if (deliveryRemaining > 0) {
+      saleableDeliveries.push({
+        deliveryId: delivery.id,
+        productName: delivery.product.name,
+        colorLabel,
+        colorHex: variantInfo?.colorHex ?? null,
+        remaining: deliveryRemaining,
+        unitPrice: delivery.unitPrice.toNumber(),
+      })
+    }
 
     const product = byProduct.get(delivery.productId) ?? { productName: delivery.product.name, delivered: 0, sold: 0, variants: new Map() }
     product.delivered += delivery.quantityDelivered
@@ -837,7 +937,8 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
       product.sold += report.quantitySold
       variant.sold += report.quantitySold
       totalSold += report.quantitySold
-      commissionOwed += report.quantitySold * delivery.unitPrice.toNumber() * report.commissionPercent.toNumber()
+      const reportUnitPrice = report.unitPrice?.toNumber() ?? delivery.unitPrice.toNumber()
+      commissionOwed += report.quantitySold * reportUnitPrice * report.commissionPercent.toNumber()
       history.push({ date: report.reportDate, type: 'venda', productName: delivery.product.name, colorLabel, quantity: report.quantitySold })
     }
 
@@ -875,6 +976,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
     totalSold,
     commissionOwed,
     products: productsBreakdown,
+    saleableDeliveries,
     history,
   }
 }

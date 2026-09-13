@@ -1,7 +1,8 @@
 'use client'
 import { useRef, useState } from 'react'
 import Link from 'next/link'
-import type { ConsignmentProductBreakdown } from '@/lib/reports'
+import type { ConsignmentProductBreakdown, ConsignmentSaleableDelivery } from '@/lib/reports'
+import { RegisterSaleForm } from './RegisterSaleForm'
 
 // Melhoria "Parceiros de consignação" §5: uma linha por PRODUTO (totais
 // somados de todas as cores) -- clicar abre um modal com um bloco por cor,
@@ -9,7 +10,15 @@ import type { ConsignmentProductBreakdown } from '@/lib/reports'
 // acessório que ela usa (link externo pra abrir o acessório na tela de
 // Acessórios). Produto sem nenhuma cor conhecida (variants = [{key: null}])
 // não ganha "(N cores)" nem chips -- só os totais, sem detalhe extra.
-export function PartnerStockSection({ products }: { products: ConsignmentProductBreakdown[] }) {
+export function PartnerStockSection({
+  products,
+  saleableDeliveries,
+  defaultCommissionPercent,
+}: {
+  products: ConsignmentProductBreakdown[]
+  saleableDeliveries: ConsignmentSaleableDelivery[]
+  defaultCommissionPercent: number
+}) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [selected, setSelected] = useState<ConsignmentProductBreakdown | null>(null)
 
@@ -29,8 +38,13 @@ export function PartnerStockSection({ products }: { products: ConsignmentProduct
 
   return (
     <div className="tk-panel p-4">
-      <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Estoque com o parceiro</h2>
-      <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Clique em um produto pra ver o detalhe por cor.</p>
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Estoque com o parceiro</h2>
+          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Clique em um produto pra ver o detalhe por cor.</p>
+        </div>
+        <RegisterSaleForm deliveries={saleableDeliveries} defaultCommissionPercent={defaultCommissionPercent} />
+      </div>
       <table className="mt-3 w-full text-sm">
         <thead>
           <tr className="tk-table-head-row">
@@ -63,7 +77,7 @@ export function PartnerStockSection({ products }: { products: ConsignmentProduct
       <dialog
         ref={dialogRef}
         onClose={() => setSelected(null)}
-        className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+        className="w-full [--tk-dialog-cap:32rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
       >
         {selected && (
           <div className="grid gap-3 p-5">

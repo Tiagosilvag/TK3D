@@ -69,19 +69,48 @@ export async function createConsignmentDeliveryBatch(formData: FormData): Promis
 }
 
 // ConsignmentDelivery has no soft-delete flag (it's not a catalog entity like
-// Partner/Product/Printer/Filament). A delivery with no sale reports yet can
-// be removed physically to fix a mistake; one that already has sale reports
-// against it must be kept so that history stays consistent — deleting it
-// would silently break the remaining-balance math for those reports.
+// Partner/Product/Printer/Filament) -- physical delete, same as
+// ConsignmentSaleReport itself. Bug "TEM Q SER POSSIVEL REMOVER": removing a
+// delivery that already had sale reports against it used to be blocked
+// outright (deleting it would silently break the remaining-balance math for
+// those reports). Now it cascades instead of blocking -- removing the whole
+// delivery event means undoing everything recorded against it, so its sale
+// reports go together, in the same transaction (both succeed or neither
+// does). The UI (DeliveriesExplorer) warns how many reports will go with it
+// before confirming.
 export async function deleteConsignmentDelivery(id: string): Promise<ActionResult> {
+  await prisma.$transaction([
+    prisma.consignmentSaleReport.deleteMany({ where: { deliveryId: id } }),
+    prisma.consignmentDelivery.delete({ where: { id } }),
+  ])
+  revalidatePath('/consignment/deliveries')
+  revalidatePath('/consignment/reports')
+  return { success: true }
+}
+
+// Melhoria "ajustar a quantidade" (mesmo pedido do bug acima): corrige uma
+// entrega já registrada (quantidade errada) sem precisar apagar e recriar
+// -- min de `quantitySold` (não dá pra baixar pra menos do que já foi
+// vendido; vender mais não é limitado, é só aumentar a entrega). Estoque
+// disponível em toda tela (Parceiros, Relatórios de venda, esta mesma
+// lista) é sempre derivado de quantityDelivered - vendido ao vivo, nunca um
+// contador redundante, então este update já reflete em tudo sozinho.
+export async function updateConsignmentDeliveryQuantity(id: string, formData: FormData): Promise<ActionResult> {
+  const quantityDelivered = parseInt(String(formData.get('quantityDelivered') ?? ''), 10)
+  if (!Number.isFinite(quantityDelivered) || quantityDelivered <= 0) {
+    return { success: false, error: 'Quantidade inválida' }
+  }
+
   const delivery = await prisma.consignmentDelivery.findUniqueOrThrow({
     where: { id },
     include: { saleReports: true },
   })
-  if (delivery.saleReports.length > 0) {
-    return { success: false, error: 'Não é possível remover uma entrega que já tem relatórios de venda' }
+  const alreadySold = delivery.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
+  if (quantityDelivered < alreadySold) {
+    return { success: false, error: `Quantidade não pode ser menor que o já vendido (${alreadySold})` }
   }
-  await prisma.consignmentDelivery.delete({ where: { id } })
+
+  await prisma.consignmentDelivery.update({ where: { id }, data: { quantityDelivered } })
   revalidatePath('/consignment/deliveries')
   return { success: true }
 }

@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { AdjustStockButton } from '@/components/AdjustStockButton'
 import { ActionsMenu } from '@/components/ActionsMenu'
+import type { VariantAttr } from '@/lib/reports'
 import { StockAdjustmentHistoryButton, type AdjustmentEntry } from './StockAdjustmentHistoryButton'
 import { VariantsModal } from './VariantsModal'
 import { DeleteProductionButton } from './DeleteProductionButton'
@@ -11,6 +12,10 @@ export interface StockVariantRow {
   key: string
   label: string
   colorHex: string | null
+  // Melhoria "Modal de variações -- chips por hierarquia": vazio pro bucket
+  // sintético "Sem cor registrada" (não vem de nenhum colorChoices real) --
+  // VariantsModal cai pro texto simples de `label` nesse caso.
+  attrs: VariantAttr[]
   available: number
   // null = não aplicável/não atribuível a esta variante (bucket "Sem cor
   // registrada") -- nunca 0 inventado quando na verdade é desconhecido.

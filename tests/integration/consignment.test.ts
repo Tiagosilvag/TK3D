@@ -8,6 +8,7 @@ import {
 import {
   createConsignmentDelivery,
   deleteConsignmentDelivery,
+  updateConsignmentDeliveryQuantity,
 } from '@/actions/consignmentDeliveries'
 import {
   createConsignmentSaleReport,
@@ -85,7 +86,7 @@ describe('consignmentPartners actions', () => {
 })
 
 describe('consignmentDeliveries actions', () => {
-  it('cria uma entrega e bloqueia delete físico se houver relatórios de venda', async () => {
+  it('remove uma entrega e seus relatórios de venda em cascata', async () => {
     const { product } = await createSupportRecords()
     const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
 
@@ -107,10 +108,12 @@ describe('consignmentDeliveries actions', () => {
     }))
     expect(saleResult.success).toBe(true)
 
-    const blocked = await deleteConsignmentDelivery(delivery.id)
-    expect(blocked.success).toBe(false)
-    const stillThere = await prisma.consignmentDelivery.findUnique({ where: { id: delivery.id } })
-    expect(stillThere).not.toBeNull()
+    const removed = await deleteConsignmentDelivery(delivery.id)
+    expect(removed.success).toBe(true)
+    const goneDelivery = await prisma.consignmentDelivery.findUnique({ where: { id: delivery.id } })
+    expect(goneDelivery).toBeNull()
+    const goneReports = await prisma.consignmentSaleReport.findMany({ where: { deliveryId: delivery.id } })
+    expect(goneReports).toHaveLength(0)
   })
 
   it('remove fisicamente uma entrega sem relatórios de venda', async () => {
@@ -130,6 +133,35 @@ describe('consignmentDeliveries actions', () => {
     expect(del.success).toBe(true)
     const gone = await prisma.consignmentDelivery.findUnique({ where: { id: delivery.id } })
     expect(gone).toBeNull()
+  })
+
+  it('ajusta a quantidade entregue, recusando um valor abaixo do já vendido', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '10',
+      unitPrice: '25',
+      deliveryDate: '2026-09-01',
+    }))
+    const delivery = await prisma.consignmentDelivery.findFirstOrThrow({ where: { partnerId: partner.id } })
+
+    await createConsignmentSaleReport(fd({
+      deliveryId: delivery.id,
+      quantitySold: '3',
+      reportDate: '2026-09-05',
+      commissionPercent: '0.3',
+    }))
+
+    const tooLow = await updateConsignmentDeliveryQuantity(delivery.id, fd({ quantityDelivered: '2' }))
+    expect(tooLow.success).toBe(false)
+
+    const ok = await updateConsignmentDeliveryQuantity(delivery.id, fd({ quantityDelivered: '6' }))
+    expect(ok.success).toBe(true)
+    const updated = await prisma.consignmentDelivery.findUniqueOrThrow({ where: { id: delivery.id } })
+    expect(updated.quantityDelivered).toBe(6)
   })
 })
 

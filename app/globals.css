@@ -43,13 +43,31 @@ body {
    margem automática que centraliza um <dialog> aberto via showModal().
    Sem ela o navegador só aplica position:fixed; inset:0 do UA sem
    margin:auto, então o dialog fica encostado no canto superior esquerdo
-   em vez de centralizado. Restaurado aqui pra toda <dialog> do app, com
-   largura/altura máxima responsiva (a largura em si continua vindo da
-   classe Tailwind de cada componente, ex. w-80/w-96) pra nunca estourar
-   a tela em telas estreitas nem ficar cortado em telas baixas. */
+   em vez de centralizado. Restaurado aqui pra toda <dialog> do app.
+
+   Bug "todas as modais esticadas": esta regra tinha `max-width: calc(100vw
+   - 2rem)` direto (sem @layer) -- no Tailwind v4 (@import "tailwindcss"),
+   toda classe utilitária (max-w-lg, max-w-4xl, max-w-[760px]...) nasce
+   DENTRO de um @layer, e uma regra SEM layer nenhum sempre vence qualquer
+   regra COM layer, não importa a especificidade. Resultado: o max-w-* de
+   CADA modal (ex. AssemblyDetailModal.tsx, VariantsModal.tsx) nunca tinha
+   efeito nenhum -- toda modal renderizava em calc(100vw - 2rem), quase a
+   largura inteira da tela, em vez da largura pretendida.
+
+   Fix: a largura máxima "de verdade" de cada modal agora vem de
+   `--tk-dialog-cap` (setado por classe utilitária tipo
+   `[--tk-dialog-cap:56rem]` no próprio <dialog>, ver AssemblyDetailModal.tsx
+   e os outros) -- só uma variável CSS, não um max-width direto, então não
+   compete com nenhuma outra regra. Esta regra global combina esse valor
+   com `min()` contra o limite de tela pequena (calc(100vw - 2rem)),
+   igual antes -- nunca estoura em tela estreita, mas agora respeita a
+   largura pretendida de cada modal em tela larga. Modal sem
+   --tk-dialog-cap próprio (popups pequenos de largura fixa, ex.
+   AdjustStockButton w-80/DeletePrinterButton w-96) cai no fallback de
+   24rem, maior que qualquer um deles -- nunca os restringe à toa. */
 dialog {
   margin: auto;
-  max-width: calc(100vw - 2rem);
+  max-width: min(var(--tk-dialog-cap, 24rem), calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
   overflow-y: auto;
 }

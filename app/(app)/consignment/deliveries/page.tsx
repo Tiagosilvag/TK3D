@@ -21,7 +21,7 @@ export default async function ConsignmentDeliveriesPage({
         ...(partnerId ? { partnerId } : {}),
       },
       orderBy: { deliveryDate: 'desc' },
-      include: { partner: true, product: true },
+      include: { partner: true, product: true, saleReports: true },
     }),
     prisma.consignmentPartner.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getProductVariantStockOptions(),
@@ -73,6 +73,8 @@ export default async function ConsignmentDeliveriesPage({
       colorHex: variantInfo?.colorHex ?? null,
       quantityDelivered: d.quantityDelivered,
       unitPrice: d.unitPrice.toNumber(),
+      quantitySold: d.saleReports.reduce((sum, r) => sum + r.quantitySold, 0),
+      saleReportsCount: d.saleReports.length,
     })
     batchesMap.set(d.batchId, batch)
   }

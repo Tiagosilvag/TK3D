@@ -138,6 +138,12 @@ export function ConfirmAssemblyForm({
 }) {
   const router = useRouter()
   const [step, setStep] = useState<1 | 2 | 3>(1)
+  // Melhoria "aviso de sucesso": fechar a modal direto (fix anterior) tirava
+  // a tela debaixo do usuário rápido demais pra notar que a montagem
+  // realmente aconteceu -- mostra "Montagem confirmada!" por um instante
+  // ANTES de navegar pra /assembly (mesmo redirecionamento de antes, só
+  // com um respiro visual no meio).
+  const [confirmed, setConfirmed] = useState(false)
   const selectables = useMemo(() => toSelectables(parts, components), [parts, components])
   const accessoryColorSelectables = useMemo(() => toAccessoryColorSelectables(accessoryRequirements), [accessoryRequirements])
   const colorSelectables = useMemo(
@@ -219,7 +225,17 @@ export function ConfirmAssemblyForm({
     formData.set('supplyUsagesJson', JSON.stringify(supplyRows.map((r) => ({ id: r.id, quantityPerUnit: parseFloat(r.quantityPerUnit) || 0 }))))
     const result = await confirmAssembly(formData)
     if (result.success) {
-      router.refresh()
+      // Bug "sem confirmação de sucesso": router.refresh() só atualizava os
+      // números no fundo (ex.: "sem estoque" quando a última unidade acabou
+      // de ser consumida) -- a modal continuava aberta na mesma tela,
+      // exatamente como estava, sem NENHUM sinal de que a montagem tinha
+      // sido registrada. Mostra "Montagem confirmada!" por 1,2s -- tempo
+      // suficiente pra notar -- e só então navega pra /assembly (mesmo
+      // redirecionamento de antes: AssemblyDetailModal fecha sozinha ao
+      // voltar sem ?productId=, e a lista geral já chega com os números
+      // atualizados via revalidatePath dentro de confirmAssembly).
+      setConfirmed(true)
+      setTimeout(() => router.push('/assembly'), 1200)
     } else {
       alert(result.error)
     }
@@ -227,6 +243,19 @@ export function ConfirmAssemblyForm({
 
   const partItems = selectables.slice(0, parts.length)
   const componentItems = selectables.slice(parts.length)
+
+  if (confirmed) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+        <span className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400">
+          <svg viewBox="0 0 20 20" fill="currentColor" className="h-7 w-7" aria-hidden>
+            <path fillRule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7.5 7.5a1 1 0 0 1-1.4 0l-3.5-3.5a1 1 0 1 1 1.4-1.4l2.8 2.8 6.8-6.8a1 1 0 0 1 1.4 0Z" clipRule="evenodd" />
+          </svg>
+        </span>
+        <p className="font-display text-base font-semibold text-emerald-600 dark:text-emerald-400">Montagem confirmada!</p>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
@@ -379,14 +408,22 @@ export function ConfirmAssemblyForm({
               const chosen = item.colorOptions?.find((o) => o.key === colorChoices[item.key]) ?? null
               const bad = item.colorOptions ? (!chosen || chosen.available <= 0) : item.maxUnits <= 0
               return (
-                <div key={item.key} className="flex items-center gap-2 text-xs">
+                <div key={item.key} className="flex items-start gap-2 text-xs">
                   {chosen?.colorHex ? (
-                    <span style={{ background: chosen.colorHex }} className="inline-block h-3.5 w-3.5 shrink-0 rounded-md border border-slate-300/50 dark:border-slate-600/50" />
+                    <span style={{ background: chosen.colorHex }} className="mt-0.5 inline-block h-3.5 w-3.5 shrink-0 rounded-md border border-slate-300/50 dark:border-slate-600/50" />
                   ) : (
-                    <span className="inline-block h-3.5 w-3.5 shrink-0 rounded-md border border-dashed border-slate-300 dark:border-slate-600" />
+                    <span className="mt-0.5 inline-block h-3.5 w-3.5 shrink-0 rounded-md border border-dashed border-slate-300 dark:border-slate-600" />
                   )}
-                  <span className="flex-1 truncate text-slate-500 dark:text-slate-400">{item.name}</span>
-                  <span className={`shrink-0 truncate font-medium ${bad ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                  <span className="shrink-0 text-slate-500 dark:text-slate-400">{item.name}</span>
+                  {/* Bug "nome sem quebra de linha": combo de peça multi-filamento
+                      (ex. "MULTIFILA PRETO — Rolo #001 + MASTERPRINT BRANCO —
+                      Rolo #001") é bem mais longo que uma cor só -- `shrink-0
+                      truncate` antes travava esse valor no tamanho do próprio
+                      conteúdo (shrink-0 nunca deixa truncate ativar de verdade),
+                      empurrando a ficha inteira pra fora e criando barra de
+                      rolagem horizontal na modal. `min-w-0 flex-1` deixa
+                      encolher, `break-words` quebra em vez de estourar. */}
+                  <span className={`min-w-0 flex-1 break-words text-right font-medium ${bad ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-300'}`}>
                     {chosen?.label ?? (item.colorOptions ? '—' : 'ok')}
                   </span>
                 </div>
