@@ -85,7 +85,7 @@ function ProtagonistLink({ href, label, icon: Icon, active }: NavLink & { active
       href={href}
       className={`flex items-center gap-2.5 rounded-lg px-3 py-2.5 font-display text-base font-semibold transition-colors ${
         active
-          ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white dark:from-violet-500 dark:to-fuchsia-500 dark:text-slate-950'
+          ? 'bg-gradient-to-r from-violet-600 to-blue-600 text-white dark:from-violet-500 dark:to-blue-500 dark:text-slate-950'
           : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100'
       }`}
     >
@@ -104,7 +104,7 @@ function SecondaryLink({ href, label, icon: Icon, active, badge }: NavLink & { a
       href={href}
       className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
         active
-          ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white dark:from-violet-500 dark:to-fuchsia-500 dark:text-slate-950'
+          ? 'bg-gradient-to-r from-violet-600 to-blue-600 text-white dark:from-violet-500 dark:to-blue-500 dark:text-slate-950'
           : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
       }`}
     >
@@ -183,7 +183,11 @@ export function AppLayoutClient({
   // próprio conteúdo.
   return (
     <div className="tk-gradient-bg flex h-screen overflow-hidden">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-slate-300 bg-violet-100/70 shadow-[2px_0_10px_-2px_rgba(15,23,42,0.10)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-none">
+      {/* Degradê vertical roxo->azul no tema claro -- ecoa as cores reais
+          da logo (que fica bem no topo, ver <Logo /> abaixo), não mais um
+          tom sólido só. Tema escuro sem gradiente (fica bg-slate-900
+          chapado, já tinha contraste suficiente). */}
+      <aside className="flex w-60 shrink-0 flex-col border-r border-slate-300 bg-gradient-to-b from-violet-100 via-violet-50 to-blue-50 shadow-[2px_0_10px_-2px_rgba(15,23,42,0.10)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-none">
         <div className="border-b border-slate-200 px-4 py-5 dark:border-slate-800">
           <Logo />
           <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Controle de Produção</p>

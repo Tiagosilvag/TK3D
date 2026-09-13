@@ -64,7 +64,7 @@ function barColorClass(percent: number): string {
 function chipClass(active: boolean): string {
   return `rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
     active
-      ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white dark:from-violet-500 dark:to-fuchsia-500 dark:text-slate-950'
+      ? 'bg-gradient-to-r from-violet-600 to-blue-600 text-white dark:from-violet-500 dark:to-blue-500 dark:text-slate-950'
       : 'border border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
   }`
 }

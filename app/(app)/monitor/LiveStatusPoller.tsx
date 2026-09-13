@@ -267,7 +267,7 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                   {printer.status.progressPercent !== null && (
                     <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-500"
+                        className="h-full rounded-full bg-gradient-to-r from-violet-600 to-blue-500"
                         style={{ width: `${printer.status.progressPercent}%` }}
                       />
                     </div>

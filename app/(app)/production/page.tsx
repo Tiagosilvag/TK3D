@@ -216,7 +216,7 @@ export default async function ProductionPage({
             ))}
           </select>
         </label>
-        <button type="submit" className="rounded-lg bg-gradient-to-r from-violet-600 to-fuchsia-600 px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 dark:from-violet-500 dark:to-fuchsia-500 dark:text-slate-950">
+        <button type="submit" className="rounded-lg bg-gradient-to-r from-violet-600 to-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 dark:from-violet-500 dark:to-blue-500 dark:text-slate-950">
           Filtrar
         </button>
         {(productId || printerId || plateId || status) && (

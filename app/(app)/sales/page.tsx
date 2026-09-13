@@ -99,7 +99,7 @@ export default async function SalesPage({
               href={href}
               className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
                 isActive
-                  ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white dark:from-violet-500 dark:to-fuchsia-500 dark:text-slate-950'
+                  ? 'bg-gradient-to-r from-violet-600 to-blue-600 text-white dark:from-violet-500 dark:to-blue-500 dark:text-slate-950'
                   : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
               }`}
             >

@@ -71,12 +71,18 @@ body {
    renderizar em vez de só um fundo escuro intencional. Base em slate-900
    (mesmo tom da sidebar) em vez de slate-950 garante que esse vão nunca
    fica mais escuro que a própria sidebar ao lado. */
-/* Tons -200 (era -100, antes -50): pedido explícito do usuário pra
-   escurecer mais o degradê do tema claro e deixar num roxo só (sem o
-   fuchsia nas pontas, que puxava pra rosa) -- via-violet-50 no meio em vez
-   de via-white, pra não lavar o tom de volta pro branco puro. */
+/* Repensado a partir das cores REAIS da logo (public/brand/logo-icon.png,
+   sampleadas via PIL): o "T" é roxo (~#6c0cf0, perto de violet-600) e o
+   "K" é AZUL (~#0054f0, perto de blue-600) -- nunca foi roxo->fúcsia,
+   essa combinação era um chute inicial errado (fúcsia puxava pra rosa,
+   sem relação com a marca de verdade). Direção do degradê troca de
+   diagonal (to-br) pra horizontal (to-r): o "T" roxo fica à ESQUERDA e o
+   "K" azul à DIREITA na logo, então to-r ecoa esse mesmo posicionamento
+   -- a sidebar (à esquerda, ver AppLayoutClient.tsx) puxa mais roxo, o
+   conteúdo principal (à direita) puxa mais azul, igual a logo no topo da
+   sidebar. */
 .tk-gradient-bg {
-  @apply bg-gradient-to-br from-violet-200 via-violet-50 to-violet-200 dark:from-slate-900 dark:via-violet-900/40 dark:to-fuchsia-900/25;
+  @apply bg-gradient-to-r from-violet-100 via-white to-blue-100 dark:from-slate-900 dark:via-violet-950/30 dark:to-blue-950/30;
 }
 
 /* Modais em <dialog> nativo (padrão do app -- ver components/
