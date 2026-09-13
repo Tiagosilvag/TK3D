@@ -186,8 +186,15 @@ export function AppLayoutClient({
       {/* Degradê vertical roxo->azul no tema claro -- ecoa as cores reais
           da logo (que fica bem no topo, ver <Logo /> abaixo), não mais um
           tom sólido só. Tema escuro sem gradiente (fica bg-slate-900
-          chapado, já tinha contraste suficiente). */}
-      <aside className="flex w-60 shrink-0 flex-col border-r border-slate-300 bg-gradient-to-b from-violet-100 via-violet-50 to-blue-50 shadow-[2px_0_10px_-2px_rgba(15,23,42,0.10)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-none">
+          chapado, já tinha contraste suficiente).
+          Bug "sidebar sempre clara mesmo no tema escuro": `dark:bg-slate-900`
+          sozinho só sobrescreve `background-color` -- o `background-image`
+          do gradiente (bg-gradient-to-b + from/via/to) não tem nenhum
+          `dark:` equivalente pra cancelá-lo, então ele continua pintando por
+          cima da cor sólida em QUALQUER tema (gradiente opaco sempre cobre a
+          background-color por baixo). `dark:bg-none` remove essa imagem no
+          tema escuro, deixando o `dark:bg-slate-900` finalmente aparecer. */}
+      <aside className="flex w-60 shrink-0 flex-col border-r border-slate-300 bg-gradient-to-b from-violet-100 via-violet-50 to-blue-50 shadow-[2px_0_10px_-2px_rgba(15,23,42,0.10)] dark:border-slate-800 dark:bg-none dark:bg-slate-900 dark:shadow-none">
         <div className="border-b border-slate-200 px-4 py-5 dark:border-slate-800">
           <Logo />
           <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Controle de Produção</p>
