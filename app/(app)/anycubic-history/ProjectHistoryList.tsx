@@ -98,7 +98,11 @@ export function ProjectHistoryList({ initialTasks, initialNextPage }: { initialT
                 ) : null}
                 {totalGrams !== null && <span>{Math.round(totalGrams * 10) / 10}g</span>}
                 {formatMinutes(task.printTimeMinutes) && <span>{formatMinutes(task.printTimeMinutes)}</span>}
-                {formatUnixSeconds(task.endTime) && <span>{formatUnixSeconds(task.endTime)}</span>}
+                {formatUnixSeconds(task.endTime) ? (
+                  <span>{formatUnixSeconds(task.endTime)}</span>
+                ) : task.printStatus === 1 ? (
+                  <span className="text-violet-600 dark:text-violet-400">Impressão em andamento</span>
+                ) : null}
               </div>
               {task.modelDimensions && <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{task.modelDimensions}</p>}
               {task.materialBreakdown && task.materialBreakdown.length > 0 && (
