@@ -10,11 +10,13 @@
 //
 // Bug "só aparece uma pontinha no canto / some no tema claro": o
 // deslocamento negativo (-bottom-16 -right-16) empurrava a MAIORIA da
-// imagem pra fora da janela, sobrando só uma tira -- e opacity-[0.05]
-// é baixo demais pra ler contra um fundo claro (funciona melhor sobre
-// escuro, onde a MESMA diferença absoluta de cor fica mais perceptível).
-// Agora fica inteira dentro da tela (bottom-6 right-6, sem recorte) e
-// com opacidade maior no claro que no escuro (inverso de antes).
+// imagem pra fora da janela, sobrando só uma tira. Pedido explícito do
+// usuário depois: maior e bem menos transparente -- w-[20rem]/opacity
+// 0.05-0.14 ainda lia fraco demais, sobretudo no tema claro (a mesma
+// diferença absoluta de cor precisa de opacidade MAIOR contra um fundo
+// claro pra dar o mesmo contraste percebido que contra um fundo
+// escuro). Tamanho quase dobrado e opacidade bem mais alta nos dois
+// temas, maior ainda no claro.
 //
 // <img> direto em vez de next/image -- ver comentário em components/
 // Logo.tsx (bug "logo não aparece em produção": next/image precisa de
@@ -29,7 +31,7 @@ export function LogoWatermark() {
       aria-hidden="true"
       width={1190}
       height={624}
-      className="pointer-events-none fixed bottom-6 right-6 -z-10 h-auto w-[20rem] max-w-[55vw] select-none opacity-[0.14] dark:opacity-[0.09]"
+      className="pointer-events-none fixed bottom-4 right-4 -z-10 h-auto w-[34rem] max-w-[75vw] select-none opacity-[0.35] dark:opacity-[0.18]"
     />
   )
 }
