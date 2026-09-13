@@ -120,6 +120,15 @@ function formatTemp(current: number | null, target: number | null): string | nul
   return target !== null && target > 0 ? `${current}°C (alvo ${target}°C)` : `${current}°C`
 }
 
+// Mesma conta que o próprio Anycubic Slicer faz pra mostrar "Término
+// estimado" na tela de detalhes da tarefa -- agora + minutos restantes,
+// sem precisar de nenhum dado novo do servidor.
+function formatEta(remainingMinutes: number | null): string | null {
+  if (remainingMinutes === null) return null
+  const eta = new Date(Date.now() + remainingMinutes * 60_000)
+  return eta.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
 const ANYCUBIC_STATE_LABELS: Record<string, string> = {
   IDLE: 'Ocioso',
   DOWNLOADING: 'Baixando arquivo',
@@ -145,7 +154,7 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {printers.map((printer) => (
         <div key={printer.printerId} className="tk-panel flex gap-3 p-4">
-          {printer.brand === 'bambu' && printer.thumbnailUrl && (
+          {printer.thumbnailUrl && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={printer.thumbnailUrl}
@@ -213,21 +222,67 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
             ) : !printer.status ? (
               <p className="mt-2 text-sm text-slate-400">Sem dados ainda</p>
             ) : (
-              <div className="mt-2 space-y-1 text-sm text-slate-700 dark:text-slate-300">
-                <p>{ANYCUBIC_STATE_LABELS[printer.status.printState] ?? printer.status.printState}</p>
-                {printer.status.progressPercent !== null && <p>{printer.status.progressPercent}%</p>}
-                {printer.status.remainingMinutes !== null && <p>{printer.status.remainingMinutes} min restantes</p>}
+              <div className="mt-2 space-y-2 text-sm text-slate-700 dark:text-slate-300">
+                <div>
+                  <div className="flex items-baseline justify-between">
+                    <span>{ANYCUBIC_STATE_LABELS[printer.status.printState] ?? printer.status.printState}</span>
+                    {printer.status.progressPercent !== null && (
+                      <span className="font-display font-semibold text-violet-600 dark:text-violet-400">{printer.status.progressPercent}%</span>
+                    )}
+                  </div>
+                  {printer.status.progressPercent !== null && (
+                    <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-500"
+                        style={{ width: `${printer.status.progressPercent}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+
                 {printer.status.gcodeFile && <p className="truncate text-slate-500 dark:text-slate-400">{printer.status.gcodeFile}</p>}
-                {printer.status.currentLayer !== null && printer.status.totalLayers !== null && (
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Camada {printer.status.currentLayer}/{printer.status.totalLayers}
-                  </p>
-                )}
+
                 {printer.status.printErrorMessage && (
                   <p className="text-red-600 dark:text-red-400">Erro: {printer.status.printErrorMessage}</p>
                 )}
+
+                <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                  {printer.status.currentLayer !== null && printer.status.totalLayers !== null && (
+                    <p>
+                      Camada {printer.status.currentLayer}/{printer.status.totalLayers}
+                    </p>
+                  )}
+                  {printer.status.printTimeMinutes !== null && <p>{printer.status.printTimeMinutes} min decorridos</p>}
+                  {printer.status.remainingMinutes !== null && <p>{printer.status.remainingMinutes} min restantes</p>}
+                  {formatEta(printer.status.remainingMinutes) && <p>Término estimado: {formatEta(printer.status.remainingMinutes)}</p>}
+                </div>
+
                 <details className="pt-1">
-                  <summary className="tk-summary cursor-pointer text-xs">Detalhes</summary>
+                  <summary className="tk-summary cursor-pointer text-xs">Informações do arquivo</summary>
+                  <div className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                    {printer.status.modelDimensions && <p>Dimensões: {printer.status.modelDimensions}</p>}
+                    {printer.status.suppliesUsage !== null && <p>Consumo estimado: {printer.status.suppliesUsage}g</p>}
+                    {printer.status.materialBreakdown && printer.status.materialBreakdown.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-0.5">
+                        {printer.status.materialBreakdown.map((material, i) => (
+                          <span
+                            key={i}
+                            className="rounded border border-slate-200 px-1.5 py-0.5 dark:border-slate-700"
+                            style={{ backgroundColor: material.color }}
+                          >
+                            {material.grams}g
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {!printer.status.modelDimensions && printer.status.suppliesUsage === null && (
+                      <p className="italic">Sem dados de arquivo disponíveis ainda</p>
+                    )}
+                  </div>
+                </details>
+
+                <details className="pt-1">
+                  <summary className="tk-summary cursor-pointer text-xs">Parâmetros</summary>
                   <div className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
                     {formatTemp(printer.status.nozzleTemp, printer.status.nozzleTargetTemp) && (
                       <p>Bico: {formatTemp(printer.status.nozzleTemp, printer.status.nozzleTargetTemp)}</p>

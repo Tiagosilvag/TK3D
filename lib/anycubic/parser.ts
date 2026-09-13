@@ -3,9 +3,13 @@
 // o "report" quase inteiro a cada tick. Por isso o parser devolve um PATCH
 // parcial pra mesclar no estado acumulado (ver applyStatusPatch), não um
 // objeto completo. Mapeamento de campos vem da leitura do código-fonte do
-// projeto de referência (ver spec §2.2) -- unidades de remain_time/
-// print_time/supplies_usage não confirmadas contra uma conta real ainda
-// (mesma ressalva que a Bambu teve pro peso, resolvida com teste ao vivo).
+// projeto de referência (ver spec §2.2) -- remain_time confirmado em
+// MINUTOS testando ao vivo (79→76 acompanhando o relógio real); print_time
+// tratado como minuto também por simetria de nome/mensagem com remain_time
+// (mesma inferência, não 100% confirmada de forma independente --
+// supplies_usage (gramas) ainda não confirmado, mas é o mesmo "Consumo
+// estimado" que o próprio Anycubic Slicer mostra na tela de detalhes do
+// job).
 export type AnycubicPrintState = 'IDLE' | 'DOWNLOADING' | 'CHECKING' | 'PREHEATING' | 'PRINTING' | 'PAUSED' | 'FINISHED' | 'CANCELLED'
 
 export type AnycubicStatus = {
@@ -15,7 +19,7 @@ export type AnycubicStatus = {
   currentLayer: number | null
   totalLayers: number | null
   gcodeFile: string | null
-  printTimeSeconds: number | null
+  printTimeMinutes: number | null
   nozzleTemp: number | null
   bedTemp: number | null
   nozzleTargetTemp: number | null
@@ -26,6 +30,14 @@ export type AnycubicStatus = {
   suppliesUsage: number | null
   firmwareVersion: string | null
   printErrorMessage: string | null
+  // "Informações do arquivo" que o próprio Anycubic Slicer mostra
+  // (dimensões do modelo, consumo por cor) não vêm do MQTT nem de nenhuma
+  // API de nuvem -- o app lê isso direto de dentro do arquivo .3mf/.gcode
+  // (ZIP com metadado embutido). Campos ficam aqui, sempre null por
+  // enquanto, prontos pro dia que um parser de arquivo for construído
+  // (precisa antes achar um endpoint de download do arquivo original).
+  modelDimensions: string | null
+  materialBreakdown: { color: string; grams: number }[] | null
 }
 
 export const INITIAL_ANYCUBIC_STATUS: AnycubicStatus = {
@@ -35,7 +47,7 @@ export const INITIAL_ANYCUBIC_STATUS: AnycubicStatus = {
   currentLayer: null,
   totalLayers: null,
   gcodeFile: null,
-  printTimeSeconds: null,
+  printTimeMinutes: null,
   nozzleTemp: null,
   bedTemp: null,
   nozzleTargetTemp: null,
@@ -46,6 +58,8 @@ export const INITIAL_ANYCUBIC_STATUS: AnycubicStatus = {
   suppliesUsage: null,
   firmwareVersion: null,
   printErrorMessage: null,
+  modelDimensions: null,
+  materialBreakdown: null,
 }
 
 export type AnycubicMqttMessage = {
@@ -150,7 +164,7 @@ export function buildStatusPatch(msg: AnycubicMqttMessage): Partial<AnycubicStat
     const filename = strIfPresent(msg.data, 'filename')
     if (filename !== undefined) patch.gcodeFile = filename
     const printTime = numIfPresent(msg.data, 'print_time')
-    if (printTime !== undefined) patch.printTimeSeconds = printTime
+    if (printTime !== undefined) patch.printTimeMinutes = printTime
     const progress = numIfPresent(msg.data, 'progress')
     if (progress !== undefined) patch.progressPercent = progress
     const remainTime = numIfPresent(msg.data, 'remain_time')

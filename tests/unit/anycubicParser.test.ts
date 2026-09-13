@@ -42,7 +42,7 @@ describe('anycubic parser', () => {
       gcodeFile: 'peca.gcode',
       progressPercent: 6,
       remainingMinutes: 118,
-      printTimeSeconds: 320,
+      printTimeMinutes: 320,
     })
   })
 
