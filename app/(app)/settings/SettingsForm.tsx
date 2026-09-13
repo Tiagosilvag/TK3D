@@ -211,7 +211,7 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
   }
 
   return (
-    <form action={action} className="grid max-w-2xl grid-cols-1 gap-4 pb-24">
+    <form action={action} className="grid max-w-2xl grid-cols-1 gap-4 pb-36">
       <Card title="Custos" description="Usado para calcular o custo real de produção por hora.">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Custo de energia">
@@ -356,8 +356,13 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
 
       {/* Item 8 do brief: botão fixo no rodapé da área rolável (<main
           overflow-y-auto> em AppLayoutClient), sempre visível sem precisar
-          rolar de volta ao fim da tela toda vez que um campo é ajustado. */}
-      <div className="sticky bottom-0 flex items-center gap-3 rounded-lg border border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
+          rolar de volta ao fim da tela toda vez que um campo é ajustado.
+          Bug "botão flutuando por cima do conteúdo": fundo translúcido
+          (bg-white/95 + backdrop-blur) deixava a última linha da tabela de
+          Marketplaces "vazar" por trás da barra quando o scroll chegava no
+          fim -- vira opaco (sem blur) e o form ganha mais respiro embaixo
+          (pb-36) pra nunca sobrar conteúdo bem debaixo da barra. */}
+      <div className="sticky bottom-0 flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-[0_-4px_12px_-4px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-900">
         <SubmitButton pendingLabel="Salvando…">Salvar alterações</SubmitButton>
         {message && <p className="text-sm text-slate-600 dark:text-slate-400">{message}</p>}
       </div>

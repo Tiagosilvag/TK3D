@@ -20,9 +20,18 @@ body {
    compartilhada em vez de repetir a mesma string de gradiente nos dois
    arquivos. Tons bem claros/escuros de propósito: o degradê só aparece nas
    bordas/vãos ao redor dos painéis (`tk-panel` continua opaco), nunca atrás
-   de texto ou tabela. */
+   de texto ou tabela.
+   Bug "área preta enorme embaixo": <main> (AppLayoutClient) sempre estica
+   pra altura toda da tela, mas não tem fundo próprio -- só este degradê
+   aparece atrás dele. Numa tela com pouco conteúdo (ex.: Configurações
+   sem os cards de Marketplaces expandidos), o vão vazio abaixo do
+   conteúdo mostrava as pontas do degradê escuro (slate-950/violet-950 a
+   40%), que são visualmente quase pretas -- parecia tela quebrada/sem
+   renderizar em vez de só um fundo escuro intencional. Base em slate-900
+   (mesmo tom da sidebar) em vez de slate-950 garante que esse vão nunca
+   fica mais escuro que a própria sidebar ao lado. */
 .tk-gradient-bg {
-  @apply bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 dark:from-slate-950 dark:via-violet-950/40 dark:to-fuchsia-950/30;
+  @apply bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 dark:from-slate-900 dark:via-violet-900/40 dark:to-fuchsia-900/25;
 }
 
 /* Modais em <dialog> nativo (padrão do app -- ver components/
