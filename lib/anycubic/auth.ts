@@ -134,13 +134,23 @@ function extractModelDimensions(sliceParam: Record<string, unknown>): string | n
 export async function fetchProjectInfo(authToken: string, taskId: number): Promise<AnycubicProjectInfo> {
   const res = await signedFetch(`/v2/project/info?id=${taskId}`, { authToken })
   if (!res.ok) throw new Error('Falha ao buscar informações do job na nuvem Anycubic')
-  const data = (await res.json()) as { data?: { image_id?: string; slice_param?: unknown } }
+  const data = (await res.json()) as { data?: Record<string, unknown> }
   const projectData = data.data
   if (!projectData) return { thumbnailUrl: null, materialBreakdown: null, modelDimensions: null }
 
+  // DEBUG temporário (2026-09-13): campo de cor dentro de paint_infos e o
+  // campo de thumbnail ainda não confirmados contra uma resposta real --
+  // esse log aparece nos logs do servidor na próxima vez que um job novo
+  // começar, pra eu conseguir ver o JSON de verdade e acertar de vez.
+  // Remover depois de confirmado.
+  console.error('[anycubic debug] project/info raw response:', JSON.stringify(projectData))
+
   const sliceParam = parseSliceParam(projectData.slice_param)
-  const imageId = typeof projectData.image_id === 'string' ? projectData.image_id : strFromRecord(sliceParam, 'image_id')
-  const thumbnailUrl = imageId ? `${PROJECT_IMAGE_BASE_URL}${imageId}` : null
+  // "img" é o campo confirmado no código de referência (from_list_json);
+  // "image_id" no nível raiz ou dentro de slice_param são tentativas
+  // alternativas pra essa mesma resposta específica, ainda não confirmadas.
+  const imgField = strFromRecord(projectData, 'img') ?? strFromRecord(projectData, 'image_id') ?? strFromRecord(sliceParam, 'image_id')
+  const thumbnailUrl = imgField ? (imgField.startsWith('http') ? imgField : `${PROJECT_IMAGE_BASE_URL}${imgField}`) : null
 
   return {
     thumbnailUrl,

@@ -120,6 +120,15 @@ function formatTemp(current: number | null, target: number | null): string | nul
   return target !== null && target > 0 ? `${current}°C (alvo ${target}°C)` : `${current}°C`
 }
 
+// O supplies_usage que vem do MQTT se mostrou não confiável (visto em
+// produção: reportou 64143g pra uma peça de ~202g reais) -- soma do
+// consumo por cor de project/info é a fonte confirmada, usada aqui em vez
+// disso pro total (mesmo número que o próprio Anycubic Slicer mostra).
+function sumMaterialGrams(breakdown: { grams: number }[] | null): number | null {
+  if (!breakdown || breakdown.length === 0) return null
+  return Math.round(breakdown.reduce((sum, m) => sum + m.grams, 0) * 10) / 10
+}
+
 // Mesma conta que o próprio Anycubic Slicer faz pra mostrar "Término
 // estimado" na tela de detalhes da tarefa -- agora + minutos restantes,
 // sem precisar de nenhum dado novo do servidor.
@@ -261,7 +270,9 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                   <summary className="tk-summary cursor-pointer text-xs">Informações do arquivo</summary>
                   <div className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
                     {printer.modelDimensions && <p>Dimensões: {printer.modelDimensions}</p>}
-                    {printer.status.suppliesUsage !== null && <p>Consumo estimado: {printer.status.suppliesUsage}g</p>}
+                    {sumMaterialGrams(printer.materialBreakdown) !== null && (
+                      <p>Consumo estimado: {sumMaterialGrams(printer.materialBreakdown)}g</p>
+                    )}
                     {printer.materialBreakdown && printer.materialBreakdown.length > 0 && (
                       <div className="flex flex-wrap gap-1 pt-0.5">
                         {printer.materialBreakdown.map((material, i) => (
@@ -275,7 +286,7 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                         ))}
                       </div>
                     )}
-                    {!printer.modelDimensions && printer.status.suppliesUsage === null && (
+                    {!printer.modelDimensions && sumMaterialGrams(printer.materialBreakdown) === null && (
                       <p className="italic">Sem dados de arquivo disponíveis ainda</p>
                     )}
                   </div>
