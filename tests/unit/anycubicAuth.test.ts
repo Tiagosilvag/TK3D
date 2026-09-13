@@ -87,15 +87,16 @@ describe('anycubic auth client', () => {
     expect(String(url)).toContain('/v2/project/info?id=12345')
   })
 
-  it('fetchProjectInfo extrai o consumo por cor de slice_param.paint_infos (filament_used em gramas)', async () => {
+  it('fetchProjectInfo extrai o consumo por cor de slice_param.paint_infos, convertendo paint_color [r,g,b] pra hex (confirmado contra resposta real)', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         data: {
           slice_param: {
             paint_infos: [
-              { material_type: 'PLA', color: '#dc2626', filament_used: 36.1 },
-              { material_type: 'PLA', color: '#111827', filament_used: 136.7 },
+              { material_type: 'PLA', paint_color: [255, 0, 0], filament_used: 36.11 },
+              { material_type: 'PLA', paint_color: [255, 255, 255], filament_used: 29.45 },
+              { material_type: 'PLA', paint_color: [0, 0, 0], filament_used: 136.65 },
             ],
           },
         },
@@ -104,41 +105,62 @@ describe('anycubic auth client', () => {
 
     const info = await fetchProjectInfo('session-token-abc', 12345)
     expect(info.materialBreakdown).toEqual([
-      { materialType: 'PLA', colorHex: '#dc2626', grams: 36.1 },
-      { materialType: 'PLA', colorHex: '#111827', grams: 136.7 },
+      { materialType: 'PLA', colorHex: '#ff0000', grams: 36.11 },
+      { materialType: 'PLA', colorHex: '#ffffff', grams: 29.45 },
+      { materialType: 'PLA', colorHex: '#000000', grams: 136.65 },
     ])
   })
 
-  it('fetchProjectInfo extrai as dimensões do modelo quando slice_param tem x/y/z_size', async () => {
+  it('fetchProjectInfo aceita cor como string hex também (formato alternativo, defensivo)', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ data: { slice_param: { x_size: 216, y_size: 191, z_size: 27 } } }),
+      json: async () => ({
+        data: { slice_param: { paint_infos: [{ material_type: 'PLA', color: '#dc2626', filament_used: 36.1 }] } },
+      }),
     }) as unknown as typeof fetch
 
     const info = await fetchProjectInfo('session-token-abc', 12345)
-    expect(info.modelDimensions).toBe('216 x 191 x 27 mm')
+    expect(info.materialBreakdown).toEqual([{ materialType: 'PLA', colorHex: '#dc2626', grams: 36.1 }])
   })
 
-  it('fetchProjectInfo aceita slice_param como string JSON (formato alternativo visto no código de referência)', async () => {
+  it('fetchProjectInfo extrai as dimensões do modelo de slice_result.size_x/y/z (confirmado contra resposta real -- não fica dentro de slice_param)', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ data: { slice_param: JSON.stringify({ x_size: 100, y_size: 100, z_size: 50 }) } }),
+      json: async () => ({ data: { slice_result: { size_x: 216.2, size_y: 191.78, size_z: 27.4 } } }),
     }) as unknown as typeof fetch
 
     const info = await fetchProjectInfo('session-token-abc', 12345)
-    expect(info.modelDimensions).toBe('100 x 100 x 50 mm')
+    expect(info.modelDimensions).toBe('216.2 x 191.78 x 27.4 mm')
   })
 
   it('fetchProjectInfo devolve tudo null quando a resposta não tem os campos esperados, sem lançar erro', async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: {} }) }) as unknown as typeof fetch
 
     const info = await fetchProjectInfo('session-token-abc', 12345)
-    expect(info).toEqual({ thumbnailUrl: null, materialBreakdown: null, modelDimensions: null })
+    expect(info).toEqual({ thumbnailUrl: null, materialBreakdown: null, modelDimensions: null, printSpeedModeLabels: null })
   })
 
   it('fetchProjectInfo lança erro em resposta HTTP não-ok', async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }) as unknown as typeof fetch
     await expect(fetchProjectInfo('session-token-abc', 12345)).rejects.toThrow('Falha ao buscar informações do job')
+  })
+
+  it('fetchProjectInfo extrai os nomes dos modos de velocidade de print_speed_model_des (confirmado contra resposta real)', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: {
+          print_speed_model_des: [
+            { print_speed_mode: 1, title: 'Quiet' },
+            { print_speed_mode: 2, title: 'Standard' },
+            { print_speed_mode: 3, title: 'Sport' },
+          ],
+        },
+      }),
+    }) as unknown as typeof fetch
+
+    const info = await fetchProjectInfo('session-token-abc', 12345)
+    expect(info.printSpeedModeLabels).toEqual({ 1: 'Quiet', 2: 'Standard', 3: 'Sport' })
   })
 
   it('fetchProjectHistory mapeia os registros da lista de projetos (nome, impressora, status, tempos)', async () => {
@@ -176,6 +198,7 @@ describe('anycubic auth client', () => {
         thumbnailUrl: 'https://workbentch.s3.us-east-2.amazonaws.com/proj/111.png',
         materialBreakdown: [{ materialType: 'PLA', colorHex: '#dc2626', grams: 10 }],
         modelDimensions: null,
+        printSpeedModeLabels: null,
       },
     ])
 

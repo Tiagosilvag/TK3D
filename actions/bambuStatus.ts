@@ -62,6 +62,7 @@ export async function getAllLiveStatuses() {
       thumbnailUrl: projectInfo?.thumbnailUrl ?? null,
       modelDimensions: projectInfo?.modelDimensions ?? null,
       materialBreakdown: projectInfo?.materialBreakdown ?? null,
+      printSpeedModeLabels: projectInfo?.printSpeedModeLabels ?? null,
     }
   })
 }

@@ -160,7 +160,7 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
   }, [])
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       {printers.map((printer) => (
         <div key={printer.printerId} className="tk-panel flex gap-3 p-4">
           {printer.thumbnailUrl && (
@@ -168,7 +168,7 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
             <img
               src={printer.thumbnailUrl}
               alt="Modelo em impressão"
-              className="h-16 w-16 shrink-0 rounded-lg object-cover"
+              className="h-28 w-28 shrink-0 rounded-lg object-cover"
             />
           )}
           <div className="min-w-0 flex-1">
@@ -303,7 +303,9 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                     )}
                     {printer.status.fanSpeedPercent !== null && <p>Ventoinha: {printer.status.fanSpeedPercent}%</p>}
                     {printer.status.printSpeedPercent !== null && <p>Velocidade: {printer.status.printSpeedPercent}%</p>}
-                    {printer.status.printSpeedMode !== null && <p>Modo de velocidade: {printer.status.printSpeedMode}</p>}
+                    {printer.status.printSpeedMode !== null && (
+                      <p>Modo de velocidade: {printer.printSpeedModeLabels?.[printer.status.printSpeedMode] ?? printer.status.printSpeedMode}</p>
+                    )}
                     {printer.status.firmwareVersion && <p>Firmware: {printer.status.firmwareVersion}</p>}
                   </div>
                 </details>

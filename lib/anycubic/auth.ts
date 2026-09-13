@@ -67,6 +67,10 @@ export type AnycubicProjectInfo = {
   thumbnailUrl: string | null
   materialBreakdown: AnycubicMaterialUsage[] | null
   modelDimensions: string | null
+  // Nomes reais dos modos de velocidade (ex.: {1: 'Quiet', 2: 'Standard',
+  // 3: 'Sport'}), confirmados contra resposta real em print_speed_model_des
+  // -- chave é o mesmo número de printSpeedMode que já vem do MQTT ao vivo.
+  printSpeedModeLabels: Record<number, string> | null
 }
 
 function toNumber(value: unknown): number | undefined {
@@ -91,11 +95,22 @@ function parseSliceParam(raw: unknown): Record<string, unknown> | null {
   return null
 }
 
+// paint_color vem como array RGB [r,g,b] (0-255) -- confirmado contra
+// resposta real. Vira hex pra usar direto como CSS backgroundColor.
+function rgbArrayToHex(value: unknown): string | undefined {
+  if (!Array.isArray(value) || value.length < 3) return undefined
+  const [r, g, b] = value
+  if (![r, g, b].every((c) => typeof c === 'number' && c >= 0 && c <= 255)) return undefined
+  const toHex = (c: number) => Math.round(c).toString(16).padStart(2, '0')
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`
+}
+
 // Cada entrada de paint_infos tem um `filament_used` (gramas) direto --
 // confirmado lendo slice_total_filament_used no código de referência, que
-// soma esse campo pra cada item da lista sem nenhuma conversão. Nomes de
-// cor/material não confirmados contra uma resposta real ainda -- tenta as
-// chaves mais prováveis, ignora a entrada se não achar peso nenhuma.
+// soma esse campo pra cada item da lista sem nenhuma conversão, e também
+// contra resposta real. Cor vem como paint_color [r,g,b] (confirmado);
+// color/color_hex/hex como string ficam de fallback defensivo caso a
+// Anycubic mude o formato.
 function extractMaterialBreakdown(sliceParam: Record<string, unknown>): AnycubicMaterialUsage[] | null {
   const paintInfos = sliceParam.paint_infos
   if (!Array.isArray(paintInfos)) return null
@@ -109,20 +124,41 @@ function extractMaterialBreakdown(sliceParam: Record<string, unknown>): Anycubic
     const materialTypeRaw = e.material_type ?? e.type ?? e.material
     const materialType = typeof materialTypeRaw === 'string' ? materialTypeRaw : 'Filamento'
     const colorRaw = e.color ?? e.color_hex ?? e.hex ?? e.material_color
-    const colorHex = typeof colorRaw === 'string' ? colorRaw : null
+    const colorHex = typeof colorRaw === 'string' ? colorRaw : (rgbArrayToHex(e.paint_color) ?? null)
     result.push({ materialType, colorHex, grams })
   }
   return result.length > 0 ? result : null
 }
 
-// Nomes de campo de dimensão não confirmados contra uma resposta real --
-// tenta as duas variantes mais prováveis (x_size/width etc.).
-function extractModelDimensions(sliceParam: Record<string, unknown>): string | null {
-  const x = toNumber(sliceParam.x_size ?? sliceParam.width)
-  const y = toNumber(sliceParam.y_size ?? sliceParam.depth)
-  const z = toNumber(sliceParam.z_size ?? sliceParam.height)
+// Dimensões vêm em slice_result.size_x/size_y/size_z -- um campo IRMÃO de
+// slice_param no registro do projeto, não dentro dele (confirmado contra
+// resposta real -- diferente do que a primeira tentativa assumiu).
+function extractModelDimensions(record: Record<string, unknown>): string | null {
+  const sliceResult = record.slice_result
+  if (typeof sliceResult !== 'object' || sliceResult === null) return null
+  const sr = sliceResult as Record<string, unknown>
+  const x = toNumber(sr.size_x)
+  const y = toNumber(sr.size_y)
+  const z = toNumber(sr.size_z)
   if (x === undefined || y === undefined || z === undefined) return null
   return `${x} x ${y} x ${z} mm`
+}
+
+// print_speed_model_des dá o nome real de cada modo (confirmado contra
+// resposta real: [{print_speed_mode:1,title:'Quiet'}, ...]) -- chave pelo
+// mesmo número que já vem em printSpeedMode no status ao vivo (MQTT).
+function extractPrintSpeedModeLabels(record: Record<string, unknown>): Record<number, string> | null {
+  const list = record.print_speed_model_des
+  if (!Array.isArray(list)) return null
+  const labels: Record<number, string> = {}
+  for (const entry of list) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const e = entry as Record<string, unknown>
+    const mode = toNumber(e.print_speed_mode)
+    const title = e.title
+    if (mode !== undefined && typeof title === 'string') labels[mode] = title
+  }
+  return Object.keys(labels).length > 0 ? labels : null
 }
 
 function strFromRecord(record: Record<string, unknown> | null, key: string): string | undefined {
@@ -145,7 +181,8 @@ function extractThumbnailAndSliceInfo(record: Record<string, unknown>): Anycubic
   return {
     thumbnailUrl,
     materialBreakdown: sliceParam ? extractMaterialBreakdown(sliceParam) : null,
-    modelDimensions: sliceParam ? extractModelDimensions(sliceParam) : null,
+    modelDimensions: extractModelDimensions(record),
+    printSpeedModeLabels: extractPrintSpeedModeLabels(record),
   }
 }
 
@@ -160,14 +197,7 @@ export async function fetchProjectInfo(authToken: string, taskId: number): Promi
   if (!res.ok) throw new Error('Falha ao buscar informações do job na nuvem Anycubic')
   const data = (await res.json()) as { data?: Record<string, unknown> }
   const projectData = data.data
-  if (!projectData) return { thumbnailUrl: null, materialBreakdown: null, modelDimensions: null }
-
-  // DEBUG temporário (2026-09-13): campo de cor dentro de paint_infos e o
-  // campo de thumbnail ainda não confirmados contra uma resposta real --
-  // esse log aparece nos logs do servidor na próxima vez que um job novo
-  // começar, pra eu conseguir ver o JSON de verdade e acertar de vez.
-  // Remover depois de confirmado.
-  console.error('[anycubic debug] project/info raw response:', JSON.stringify(projectData))
+  if (!projectData) return { thumbnailUrl: null, materialBreakdown: null, modelDimensions: null, printSpeedModeLabels: null }
 
   return extractThumbnailAndSliceInfo(projectData)
 }
