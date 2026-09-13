@@ -1,6 +1,6 @@
 'use server'
 import { prisma } from '@/lib/prisma'
-import { consignmentSaleReportSchema } from '@/lib/validation/consignment'
+import { consignmentSaleReportSchema, consignmentSaleReportBatchSchema } from '@/lib/validation/consignment'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
@@ -28,6 +28,57 @@ export async function createConsignmentSaleReport(formData: FormData): Promise<A
   }
 
   await prisma.consignmentSaleReport.create({ data: parsed.data })
+  revalidatePath('/consignment/reports')
+  revalidatePath('/consignment/deliveries')
+  return { success: true }
+}
+
+// Melhoria "Registrar venda" (parceiros de consignação): "selecionar todos
+// os produtos entregues e disponíveis pra lançar a venda de uma vez" --
+// mesmo padrão de createProductionRunBatch (checagem de saldo de cada
+// item ANTES de escrever qualquer coisa, tudo dentro de uma transação só,
+// pra um lote com algum item sem saldo suficiente não gravar nada, nem os
+// outros itens que passariam no check).
+export async function createConsignmentSaleReportBatch(formData: FormData): Promise<ActionResult> {
+  const raw = Object.fromEntries(formData)
+  let items: unknown = []
+  try {
+    items = JSON.parse(String(raw.itemsJson ?? '[]'))
+  } catch {
+    items = []
+  }
+  const parsed = consignmentSaleReportBatchSchema.safeParse({ reportDate: raw.reportDate, notes: raw.notes || null, items })
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+
+  const deliveries = await prisma.consignmentDelivery.findMany({
+    where: { id: { in: parsed.data.items.map((i) => i.deliveryId) } },
+    include: { saleReports: true },
+  })
+  const deliveryById = new Map(deliveries.map((d) => [d.id, d]))
+
+  for (const item of parsed.data.items) {
+    const delivery = deliveryById.get(item.deliveryId)
+    if (!delivery) return { success: false, error: 'Entrega não encontrada' }
+    const alreadySold = delivery.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
+    const remaining = Math.max(0, delivery.quantityDelivered - alreadySold)
+    if (item.quantitySold > remaining) {
+      return { success: false, error: `Quantidade excede o saldo disponível (${remaining}) de ${delivery.id}` }
+    }
+  }
+
+  await prisma.$transaction(
+    parsed.data.items.map((item) =>
+      prisma.consignmentSaleReport.create({
+        data: {
+          deliveryId: item.deliveryId,
+          quantitySold: item.quantitySold,
+          commissionPercent: item.commissionPercent,
+          reportDate: parsed.data.reportDate,
+          notes: parsed.data.notes,
+        },
+      }),
+    ),
+  )
   revalidatePath('/consignment/reports')
   revalidatePath('/consignment/deliveries')
   return { success: true }
