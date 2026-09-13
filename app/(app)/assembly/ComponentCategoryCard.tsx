@@ -55,6 +55,7 @@ export function ComponentCategoryCard({
   const [search, setSearch] = useState('')
   const [mounted, setMounted] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => setMounted(true), [])
 
@@ -70,8 +71,19 @@ export function ComponentCategoryCard({
   // (Playwright + build local), não é elemento aninhado no React nem bug
   // de portal. Fix: este picker deixa de ser <dialog>/showModal() -- vira
   // um painel comum controlado por estado React (backdrop + painel,
-  // Esc/clique-fora fecham via listener), portado pra <body> só pra
-  // escapar de overflow/clipping de ancestrais, igual ActionsMenu.
+  // Esc/clique-fora fecham via listener).
+  //
+  // Bug "nenhum botão funciona" (adicionar acessório/insumo não abria
+  // nada): o fix acima ainda portava pra <body> -- só que <body> não é
+  // descendente do <dialog> modal de AssemblyDetailModal, e um <dialog>
+  // showModal() pinta na "top layer" do navegador por CIMA de QUALQUER
+  // outro conteúdo (z-index não importa), então esse painel ficava
+  // escondido atrás do próprio modal E com clique bloqueado por ele
+  // (confirmado ao vivo com Playwright isolado). Portar pro <dialog>
+  // ancestral (closest('dialog') a partir do botão que abre o painel) em
+  // vez de <body> resolve -- painel continua descendente do modal, na
+  // mesma top layer, clicável de verdade. Cai de volta pro <body> se
+  // usado fora de um <dialog> (nenhum caso hoje).
   useEffect(() => {
     if (!pickerOpen) return
     function handleKeyDown(e: KeyboardEvent) {
@@ -147,6 +159,7 @@ export function ComponentCategoryCard({
       )}
 
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setPickerOpen(true)}
         className="mt-3 w-full rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60"
@@ -194,7 +207,7 @@ export function ComponentCategoryCard({
             </div>
           </div>
         </div>,
-        document.body,
+        triggerRef.current?.closest('dialog') ?? document.body,
       )}
     </div>
   )

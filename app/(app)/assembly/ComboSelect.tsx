@@ -23,12 +23,27 @@ function Swatch({ colorHex, className = 'h-5 w-5' }: { colorHex: string | null; 
 // (que não permite bolinha de cor nem destaque visual) -- mesma
 // necessidade que FilamentSelect.tsx já resolveu, adaptado aqui pro
 // shape AssemblyPartColorOption (key/label/colorHex/available) e sem
-// busca (poucas opções, tipicamente 1-5). Painel em backdrop+portal
-// pro <body>, nunca <dialog> -- este seletor vive dentro do modal de
-// Montagem, que já é um <dialog> nativo; dois <dialog> empilhados têm
-// um bug de stacking real em Chrome (ver comentário em
-// ComponentCategoryCard.tsx), então segue o mesmo padrão já corrigido
-// lá (painel comum controlado por estado, não showModal()).
+// busca (poucas opções, tipicamente 1-5). Painel em backdrop+portal,
+// nunca <dialog> -- este seletor vive dentro do modal de Montagem, que
+// já é um <dialog> nativo; dois <dialog> empilhados têm um bug de
+// stacking real em Chrome (ver comentário em ComponentCategoryCard.tsx),
+// então segue o mesmo padrão já corrigido lá (painel comum controlado
+// por estado, não showModal()).
+//
+// Bug "nenhum botão funciona" (clicar pra trocar cor não abria nada):
+// portalar pro <body> tira este painel de dentro do <dialog> modal --
+// enquanto um <dialog> está showModal(), o navegador promove ele (e SÓ
+// ele + seus próprios descendentes) pra "top layer", que pinta por CIMA
+// de QUALQUER outro conteúdo da página, não importa o z-index. Um <div>
+// portado pro <body> não é descendente do <dialog>, então fica por BAIXO
+// dele visualmente (escondido atrás do próprio modal, opaco) E com
+// clique bloqueado (o <dialog> intercepta o ponteiro) -- confirmado ao
+// vivo com Playwright isolado, reproduz 100% das vezes. Fix: portar pro
+// próprio <dialog> ancestral (via closest('dialog') a partir do botão
+// que abre o painel) em vez de <body> -- assim o painel continua
+// descendente do modal, na mesma "top layer", clicável de verdade.
+// Cai de volta pro <body> se por acaso for usado fora de um <dialog>
+// (nenhum caso hoje, mas não quebra se acontecer).
 export function ComboSelect({
   options,
   value,
@@ -93,7 +108,7 @@ export function ComboSelect({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={() => setOpen(false)}>
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+            className="max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
           >
             <div className="grid gap-2 p-3">
               <div className="flex items-center justify-between px-1">
@@ -127,7 +142,7 @@ export function ComboSelect({
             </div>
           </div>
         </div>,
-        document.body,
+        triggerRef.current?.closest('dialog') ?? document.body,
       )}
     </>
   )
