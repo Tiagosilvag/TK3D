@@ -5,6 +5,7 @@ import { createProductionRunBatch, createPlate } from '@/actions/productionRuns'
 import { getProductProductionDefaults, type ProductProductionPartDefault } from '@/actions/products'
 import { getAvailablePrinterCapture } from '@/actions/bambuStatus'
 import { buildPlateAutofill } from '@/lib/bambu/autofill'
+import { allocatePlatePrintTime } from '@/lib/costing'
 import { WASTE_REASON_LABELS } from '@/lib/format'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
@@ -13,6 +14,11 @@ import type { WasteReason } from '@prisma/client'
 const WASTE_REASON_OPTIONS = Object.keys(WASTE_REASON_LABELS) as WasteReason[]
 
 type Option = { id: string; name: string }
+// Melhoria "Registrar produção" (rateio ao vivo): impressora carrega seu
+// custo/hora (depreciação + manutenção + energia) já calculado no server --
+// usado só pro campo informativo e pela prévia de rateio da Plate, nunca
+// enviado ao servidor (ver PrinterCostField mais abaixo).
+type PrinterOption = { id: string; name: string; costPerHour: number }
 // Melhoria "Produção" (reformulação Plate): filamento agora carrega
 // pricePerGram -- usado pelas novas colunas R$/g e Custo da tabela de
 // cores (spec §3 do pedido de reformulação), calculado uma vez no server
@@ -59,6 +65,11 @@ interface RunRow {
   // true só pra linha criada via "+ Adicionar outra cor desta peça" --
   // só essas podem ser removidas (a peça original nunca some da lista).
   isColorCopy: boolean
+  // Melhoria "Registrar produção" (quantidade padrão cascateando): true
+  // quando "Planejada" desta peça foi editada diretamente, então ela para
+  // de seguir a "Quantidade padrão" -- link "usar padrão" reseta pra false
+  // e reaplica o padrão atual.
+  overridden: boolean
 }
 
 // Melhoria "Produção" (reformulação Plate) REGRA 9: um item de uma Plate --
@@ -81,7 +92,7 @@ interface PlateItemRow {
   notes: string
 }
 
-function buildRowsFromParts(parts: ProductProductionPartDefault[]): RunRow[] {
+function buildRowsFromParts(parts: ProductProductionPartDefault[], globalQty: string): RunRow[] {
   return parts.map((p) => ({
     key: p.id,
     partId: p.id,
@@ -91,12 +102,13 @@ function buildRowsFromParts(parts: ProductProductionPartDefault[]): RunRow[] {
     printerId: p.printerId,
     printTimeHoursPerUnit: p.printTimeHours,
     filaments: p.filaments.map((f) => ({ filamentId: f.filamentId, weightGramsPerUnit: String(f.weightGrams), gramsWasted: '0' })),
-    quantityPlanned: '',
-    quantitySuccess: '',
+    quantityPlanned: globalQty,
+    quantitySuccess: globalQty,
     timeWastedHours: '0',
     wasteReason: '',
     notes: '',
     isColorCopy: false,
+    overridden: false,
   }))
 }
 
@@ -104,6 +116,48 @@ function failedFor(row: { quantityPlanned: string; quantitySuccess: string }): n
   const planned = parseInt(row.quantityPlanned, 10) || 0
   const success = parseInt(row.quantitySuccess, 10) || 0
   return Math.max(0, planned - success)
+}
+
+function clampInt(v: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, v))
+}
+
+// Melhoria "Registrar produção": Planejada/Sucesso/Falhas totalmente
+// interligados -- os 3 helpers abaixo são a única fonte de verdade pra
+// recalcular os outros dois campos quando um muda, reaproveitados tanto
+// pelas linhas do modo Individual (RunRow) quanto pelos itens da Plate
+// (PlateItemRow, mesmo shape de quantityPlanned/quantitySuccess/filaments).
+// Falhas nunca vira um campo armazenado à parte -- continua sendo só uma
+// VIEW alternativa de quantitySuccess (mesmo princípio que failedFor() já
+// usava), só que agora editável.
+function suggestWaste<T extends { filaments: FilamentComponentRow[] }>(row: T, failed: number): Partial<T> {
+  if (row.filaments.length !== 1) return {}
+  const weightPerUnit = parseFloat(row.filaments[0].weightGramsPerUnit) || 0
+  return { filaments: [{ ...row.filaments[0], gramsWasted: String(+(failed * weightPerUnit).toFixed(2)) }] } as Partial<T>
+}
+
+function plannedChangePatch<T extends { quantityPlanned: string; quantitySuccess: string; filaments: FilamentComponentRow[] }>(
+  row: T,
+  newPlannedRaw: string,
+): Partial<T> {
+  const newPlanned = Math.max(0, parseInt(newPlannedRaw, 10) || 0)
+  const failed = Math.min(failedFor(row), newPlanned)
+  const success = newPlanned - failed
+  return { quantityPlanned: String(newPlanned), quantitySuccess: String(success), ...suggestWaste(row, failed) } as Partial<T>
+}
+
+function successChangePatch<T extends { quantityPlanned: string; filaments: FilamentComponentRow[] }>(row: T, newSuccessRaw: string): Partial<T> {
+  const planned = parseInt(row.quantityPlanned, 10) || 0
+  const success = clampInt(parseInt(newSuccessRaw, 10) || 0, 0, planned)
+  const failed = planned - success
+  return { quantitySuccess: String(success), ...suggestWaste(row, failed) } as Partial<T>
+}
+
+function failedChangePatch<T extends { quantityPlanned: string; filaments: FilamentComponentRow[] }>(row: T, newFailedRaw: string): Partial<T> {
+  const planned = parseInt(row.quantityPlanned, 10) || 0
+  const failed = clampInt(parseInt(newFailedRaw, 10) || 0, 0, planned)
+  const success = planned - failed
+  return { quantitySuccess: String(success), ...suggestWaste(row, failed) } as Partial<T>
 }
 
 // Melhoria "Produção" (reformulação Plate) §3: editor de filamento(s) de
@@ -225,7 +279,7 @@ export function ProductionRunBatchForm({
   open: boolean
   onOpenChange: (open: boolean) => void
   products: Option[]
-  printers: Option[]
+  printers: PrinterOption[]
   filaments: FilamentOption[]
 }) {
   const router = useRouter()
@@ -253,6 +307,11 @@ export function ProductionRunBatchForm({
   // --- Estado do modo "Produção individual" (igual antes, + date por linha)
   const [productId, setProductId] = useState('')
   const [rows, setRows] = useState<RunRow[]>([])
+  // Melhoria "Registrar produção" (quantidade padrão cascateando): aplica-se
+  // a toda peça com `overridden === false`; peça editada diretamente marca
+  // `overridden = true` e para de seguir esse valor (ver plannedChangePatch/
+  // handleGlobalQtyChange/resetRowToGlobal).
+  const [globalQty, setGlobalQty] = useState('')
 
   // --- Estado do modo "Plate"
   const [plateDate, setPlateDate] = useState(today())
@@ -294,6 +353,7 @@ export function ProductionRunBatchForm({
     setMode('individual')
     setProductId('')
     setRows([])
+    setGlobalQty('')
     setPlateDate(today())
     setPlatePrinterId('')
     setPlateNotes('')
@@ -314,7 +374,7 @@ export function ProductionRunBatchForm({
       const defaults = await getProductProductionDefaults(newProductId)
       if (latestProductIdRef.current !== newProductId) return
       if (defaults.isComposite) {
-        setRows(buildRowsFromParts(defaults.parts ?? []))
+        setRows(buildRowsFromParts(defaults.parts ?? [], globalQty))
       } else {
         const product = products.find((p) => p.id === newProductId)
         setRows([
@@ -327,12 +387,13 @@ export function ProductionRunBatchForm({
             printerId: defaults.printerId ?? '',
             printTimeHoursPerUnit: defaults.printTimeHours ?? 0,
             filaments: [{ filamentId: defaults.filamentId ?? '', weightGramsPerUnit: String(defaults.weightGrams ?? 0), gramsWasted: '0' }],
-            quantityPlanned: '',
-            quantitySuccess: '',
+            quantityPlanned: globalQty,
+            quantitySuccess: globalQty,
             timeWastedHours: '0',
             wasteReason: '',
             notes: '',
             isColorCopy: false,
+            overridden: false,
           },
         ])
       }
@@ -343,6 +404,19 @@ export function ProductionRunBatchForm({
 
   function updateRow(key: string, patch: Partial<RunRow>) {
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)))
+  }
+
+  // Melhoria "Registrar produção": "Quantidade padrão" muda -> aplica em
+  // toda peça ainda não personalizada (mesma regra de plannedChangePatch,
+  // preserva a contagem de falhas de cada peça, clampada ao novo valor).
+  function handleGlobalQtyChange(newQtyRaw: string) {
+    setGlobalQty(newQtyRaw)
+    setRows((prev) => prev.map((r) => (r.overridden ? r : { ...r, ...plannedChangePatch(r, newQtyRaw) })))
+  }
+
+  // "usar padrão": volta a peça a seguir a quantidade padrão atual.
+  function resetRowToGlobal(key: string) {
+    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, overridden: false, ...plannedChangePatch(r, globalQty) } : r)))
   }
 
   // Melhoria "Produção": "produzir mais de uma cor da mesma peça na mesma
@@ -361,12 +435,13 @@ export function ProductionRunBatchForm({
         key: `${original.partId ?? 'product'}-cor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         label: `${original.label} (outra cor)`,
         filaments: original.filaments.map((f) => ({ ...f, filamentId: '', gramsWasted: '0' })),
-        quantityPlanned: '',
-        quantitySuccess: '',
+        quantityPlanned: globalQty,
+        quantitySuccess: globalQty,
         timeWastedHours: '0',
         wasteReason: '',
         notes: '',
         isColorCopy: true,
+        overridden: false,
       }
       return [...prev.slice(0, index + 1), copy, ...prev.slice(index + 1)]
     })
@@ -449,6 +524,24 @@ export function ProductionRunBatchForm({
   function removePlateItem(key: string) {
     setPlateItems((prev) => prev.filter((r) => r.key !== key))
   }
+
+  const selectedPlatePrinter = printers.find((p) => p.id === platePrinterId) ?? null
+
+  // Melhoria "Registrar produção" (rateio ao vivo): mesma função pura usada
+  // pelo servidor em createPlate (lib/costing.ts#allocatePlatePrintTime) --
+  // reaproveitada tal como está pra prévia nunca poder divergir do que é
+  // realmente salvo. Regra real (não a soma ingênua do mockup): o tempo
+  // total da Plate é o da peça mais LENTA, rateado entre todas
+  // proporcionalmente a tempo × quantidade de cada uma.
+  const plateAllocatedHours = allocatePlatePrintTime(
+    plateItems.map((item) => ({
+      printTimeHoursPerUnit: item.printTimeHoursPerUnit,
+      quantityPlanned: parseInt(item.quantityPlanned, 10) || 0,
+    })),
+  )
+  const plateTotalAllocatedHours = plateAllocatedHours.reduce((sum, h) => sum + h, 0)
+  const plateMachineCostPerItem = plateAllocatedHours.map((h) => h * (selectedPlatePrinter?.costPerHour ?? 0))
+  const plateTotalMachineCost = plateMachineCostPerItem.reduce((sum, c) => sum + c, 0)
 
   // Melhoria "Produção" §3: "Gasto por peça"/"Gasto total" -- sempre
   // derivado de peso-por-unidade × planejada de cada linha/item ATIVO, ao
@@ -612,6 +705,26 @@ export function ProductionRunBatchForm({
 
             {rows.length > 0 && (
               <div>
+                {/* Melhoria "Registrar produção" (quantidade padrão
+                    cascateando): sempre visível, mesmo pra produto simples
+                    de 1 peça só -- aplica-se a toda peça ainda não
+                    personalizada individualmente (ver handleGlobalQtyChange/
+                    plannedChangePatch). */}
+                <div className="mb-3 flex flex-wrap items-end gap-3 rounded-lg border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-800/60 dark:bg-amber-500/5">
+                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Quantidade padrão
+                    <input
+                      type="number"
+                      step="1"
+                      min="0"
+                      value={globalQty}
+                      onChange={(e) => handleGlobalQtyChange(e.target.value)}
+                      className="tk-input-full w-28"
+                    />
+                  </label>
+                  <p className="flex-1 text-xs text-slate-500 dark:text-slate-400">Aplica-se a todas as peças que ainda não foram personalizadas individualmente.</p>
+                </div>
+
                 {isComposite && (
                   <div className="mb-2 flex items-center justify-between">
                     <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Peças deste produto</p>
@@ -632,15 +745,29 @@ export function ProductionRunBatchForm({
                     const planned = parseInt(row.quantityPlanned, 10) || 0
                     return (
                       <div key={row.key} className={`rounded-lg border p-3 ${row.checked ? 'border-slate-200 dark:border-slate-700' : 'border-slate-100 opacity-60 dark:border-slate-800'}`}>
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          {isComposite ? (
-                            <label className="flex items-center gap-2 text-sm font-medium">
-                              <input type="checkbox" checked={row.checked} onChange={(e) => updateRow(row.key, { checked: e.target.checked })} className="rounded border" />
-                              {row.label}
-                            </label>
-                          ) : (
-                            <span className="text-sm font-medium">{row.label}</span>
-                          )}
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            {isComposite ? (
+                              <label className="flex items-center gap-2 text-sm font-medium">
+                                <input type="checkbox" checked={row.checked} onChange={(e) => updateRow(row.key, { checked: e.target.checked })} className="rounded border" />
+                                {row.label}
+                              </label>
+                            ) : (
+                              <span className="text-sm font-medium">{row.label}</span>
+                            )}
+                            {/* Melhoria "Registrar produção" (quantidade
+                                padrão cascateando): peça com "Planejada"
+                                editada diretamente para de seguir a
+                                quantidade padrão -- link volta a seguir. */}
+                            {row.overridden && (
+                              <>
+                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-400">personalizado</span>
+                                <button type="button" onClick={() => resetRowToGlobal(row.key)} className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                                  usar padrão
+                                </button>
+                              </>
+                            )}
+                          </div>
                           {/* Melhoria "Produção": produzir a mesma peça em mais de uma
                               cor na mesma leva (ex.: PICOLÉ 4 numa cor + 4 noutra) --
                               cada cópia vira um item independente no lote (mesmo
@@ -706,7 +833,7 @@ export function ProductionRunBatchForm({
                               step="1"
                               min="0"
                               value={row.quantityPlanned}
-                              onChange={(e) => updateRow(row.key, { quantityPlanned: e.target.value })}
+                              onChange={(e) => updateRow(row.key, { ...plannedChangePatch(row, e.target.value), overridden: true })}
                               className="tk-input-full"
                               disabled={!row.checked}
                             />
@@ -718,19 +845,27 @@ export function ProductionRunBatchForm({
                               step="1"
                               min="0"
                               value={row.quantitySuccess}
-                              onChange={(e) => updateRow(row.key, { quantitySuccess: e.target.value })}
+                              onChange={(e) => updateRow(row.key, successChangePatch(row, e.target.value))}
                               className="tk-input-full"
                               disabled={!row.checked}
                             />
                           </label>
                           <label className="text-xs">
-                            Falhas (auto)
-                            <input type="number" value={failed} disabled className="tk-input-full opacity-60" />
+                            Falhas
+                            <input
+                              type="number"
+                              step="1"
+                              min="0"
+                              value={failed}
+                              onChange={(e) => updateRow(row.key, failedChangePatch(row, e.target.value))}
+                              className="tk-input-full"
+                              disabled={!row.checked}
+                            />
                           </label>
                         </div>
 
                         {row.checked && planned > 0 && failed > 0 && (
-                          <details className="mt-2">
+                          <details className="mt-2" open={row.checked && planned > 0 && failed > 0}>
                             <summary className="cursor-pointer text-xs font-medium text-amber-600 dark:text-amber-400">Detalhes do desperdício (opcional)</summary>
                             <div className="mt-2 grid grid-cols-2 gap-2">
                               {row.filaments.length === 1 && (
@@ -781,7 +916,7 @@ export function ProductionRunBatchForm({
               cada peça; o custo de filamento continua 100% por peça.
             </p>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
               <label className="text-xs">
                 Data da Plate
                 <input type="date" value={plateDate} onChange={(e) => setPlateDate(e.target.value)} className="tk-input-full" required />
@@ -794,6 +929,16 @@ export function ProductionRunBatchForm({
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
+              </label>
+              {/* Melhoria "Registrar produção" (rateio ao vivo): só
+                  informativo -- createPlate SEMPRE recalcula o custo de
+                  impressora a partir do Printer no banco no momento do
+                  submit, nunca lê este campo (CLAUDE.md "nunca inventa
+                  custo": nenhuma capacidade nova de sobrescrever esse
+                  custo). */}
+              <label className="text-xs">
+                Custo da impressora (R$/hora)
+                <input type="text" value={selectedPlatePrinter ? selectedPlatePrinter.costPerHour.toFixed(2) : '—'} disabled className="tk-input-full opacity-60" />
               </label>
             </div>
 
@@ -873,9 +1018,11 @@ export function ProductionRunBatchForm({
 
             {plateItems.length > 0 && (
               <div className="space-y-3">
-                {plateItems.map((item) => {
+                {plateItems.map((item, index) => {
                   const failed = failedFor(item)
                   const planned = parseInt(item.quantityPlanned, 10) || 0
+                  const machineCost = plateMachineCostPerItem[index] ?? 0
+                  const machinePct = plateTotalAllocatedHours > 0 ? ((plateAllocatedHours[index] ?? 0) / plateTotalAllocatedHours) * 100 : 0
                   return (
                     <div key={item.key} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
                       <div className="mb-2 flex items-center justify-between">
@@ -917,7 +1064,7 @@ export function ProductionRunBatchForm({
                             step="1"
                             min="0"
                             value={item.quantityPlanned}
-                            onChange={(e) => updatePlateItem(item.key, { quantityPlanned: e.target.value })}
+                            onChange={(e) => updatePlateItem(item.key, plannedChangePatch(item, e.target.value))}
                             className="tk-input-full"
                           />
                         </label>
@@ -928,18 +1075,35 @@ export function ProductionRunBatchForm({
                             step="1"
                             min="0"
                             value={item.quantitySuccess}
-                            onChange={(e) => updatePlateItem(item.key, { quantitySuccess: e.target.value })}
+                            onChange={(e) => updatePlateItem(item.key, successChangePatch(item, e.target.value))}
                             className="tk-input-full"
                           />
                         </label>
                         <label className="text-xs">
-                          Falhas (auto)
-                          <input type="number" value={failed} disabled className="tk-input-full opacity-60" />
+                          Falhas
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            value={failed}
+                            onChange={(e) => updatePlateItem(item.key, failedChangePatch(item, e.target.value))}
+                            className="tk-input-full"
+                          />
                         </label>
                       </div>
 
+                      {/* Melhoria "Registrar produção" (rateio ao vivo):
+                          mesma função (allocatePlatePrintTime) e o mesmo
+                          Printer.costPerHour usados no submit -- prévia sem
+                          risco de divergir do custo realmente salvo. */}
+                      {selectedPlatePrinter && planned > 0 && (
+                        <p className="mt-2 text-xs text-violet-600 dark:text-violet-400">
+                          Rateio impressora: R$ {machineCost.toFixed(2)} ({machinePct.toFixed(0)}%)
+                        </p>
+                      )}
+
                       {planned > 0 && failed > 0 && (
-                        <details className="mt-2">
+                        <details className="mt-2" open={planned > 0 && failed > 0}>
                           <summary className="cursor-pointer text-xs font-medium text-amber-600 dark:text-amber-400">Detalhes do desperdício (opcional)</summary>
                           <div className="mt-2 grid grid-cols-2 gap-2">
                             {item.filaments.length === 1 && (
@@ -978,6 +1142,34 @@ export function ProductionRunBatchForm({
                     </div>
                   )
                 })}
+              </div>
+            )}
+
+            {/* Melhoria "Registrar produção" (rateio ao vivo): resumo
+                agregado da Plate -- estimativa (allocatePlatePrintTime ×
+                Printer.costPerHour), o costSnapshot de verdade continua
+                100% calculado no servidor no submit. */}
+            {plateItems.length > 0 && selectedPlatePrinter && (
+              <div className="rounded-lg bg-violet-50 p-3 text-sm dark:bg-violet-500/10">
+                <p className="mb-1 font-medium text-slate-700 dark:text-slate-300">Rateio da Plate</p>
+                <dl className="space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                  <div className="flex justify-between gap-2">
+                    <dt>Tempo total de máquina</dt>
+                    <dd className="tabular-nums">{plateTotalAllocatedHours.toFixed(2)}h</dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt>Custo total da impressora</dt>
+                    <dd className="tabular-nums">R$ {plateTotalMachineCost.toFixed(2)}</dd>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <dt>Custo total de filamento</dt>
+                    <dd className="tabular-nums">R$ {gastoTotalCost.toFixed(2)}</dd>
+                  </div>
+                </dl>
+                <div className="mt-1 flex justify-between border-t border-violet-200 pt-1 text-sm font-semibold text-slate-900 dark:border-violet-500/30 dark:text-slate-100">
+                  <dt>Custo total da Plate</dt>
+                  <dd className="tabular-nums">R$ {(plateTotalMachineCost + gastoTotalCost).toFixed(2)}</dd>
+                </div>
               </div>
             )}
           </>

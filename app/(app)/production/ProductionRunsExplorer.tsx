@@ -12,6 +12,12 @@ import { ProductionRunBatchForm } from './ProductionRunBatchForm'
 import type { ProductionStatus } from '@prisma/client'
 
 type Option = { id: string; name: string }
+// Melhoria "Registrar produção" (rateio ao vivo): impressora carrega seu
+// custo/hora (depreciação + manutenção + energia) já calculado no server
+// (mesma fórmula de products/[id]/page.tsx#printerOptions), pra
+// ProductionRunBatchForm mostrar o campo informativo e o rateio da Plate ao
+// vivo sem precisar buscar o Printer inteiro no client.
+type PrinterOption = { id: string; name: string; costPerHour: number }
 type FilamentOption = { id: string; name: string; pricePerGram: number }
 
 // Melhoria "Produção" (reformulação Plate): a lista principal volta a ser
@@ -46,7 +52,7 @@ export function ProductionRunsExplorer({
   byProduct: ProductionByProductRow[]
   plates: PlateListRow[]
   products: Option[]
-  printers: Option[]
+  printers: PrinterOption[]
   filaments: FilamentOption[]
 }) {
   const router = useRouter()

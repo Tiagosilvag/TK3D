@@ -4,7 +4,7 @@ import { EditProductionRunForm } from './EditProductionRunForm'
 import { ProductionRunsExplorer, type ProductionRunRow } from './ProductionRunsExplorer'
 import { getProductionByProduct, getPlates } from '@/actions/productionRuns'
 import type { ProductionCostSnapshot } from '@/lib/costing'
-import { calculateFilamentPricePerGram } from '@/lib/costing'
+import { calculateFilamentPricePerGram, calculatePrinterDepreciationCostPerHour } from '@/lib/costing'
 import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
 import { resolveDateRange } from '@/lib/dateRange'
 import type { ProductionStatus } from '@prisma/client'
@@ -233,7 +233,15 @@ export default async function ProductionPage({
         byProduct={byProduct}
         plates={plates}
         products={products.map((p) => ({ id: p.id, name: p.name }))}
-        printers={printers.map((p) => ({ id: p.id, name: p.name }))}
+        printers={printers.map((p) => {
+          const purchasePrice = p.purchasePrice.toNumber()
+          const depreciationHours = p.depreciationHours.toNumber()
+          const costPerHour =
+            calculatePrinterDepreciationCostPerHour({ purchasePrice, depreciationHours }) +
+            p.maintenanceCostPerHour.toNumber() +
+            p.avgPowerConsumptionKwh.toNumber() * p.energyCostPerKwh.toNumber()
+          return { id: p.id, name: p.name, costPerHour }
+        })}
         filaments={filaments}
       />
 
