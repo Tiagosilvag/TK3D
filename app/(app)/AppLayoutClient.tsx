@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Logo } from '@/components/Logo'
+import { LogoWatermark } from '@/components/LogoWatermark'
 import {
   NavDashboardIcon,
   NavOrdersIcon,
@@ -229,7 +230,10 @@ export function AppLayoutClient({
           </div>
         </div>
       </aside>
-      <main className="min-h-0 min-w-0 flex-1 overscroll-contain overflow-y-auto p-6">{children}</main>
+      <main className="min-h-0 min-w-0 flex-1 overscroll-contain overflow-y-auto p-6">
+        <LogoWatermark />
+        {children}
+      </main>
     </div>
   )
 }

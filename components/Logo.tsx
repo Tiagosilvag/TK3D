@@ -1,26 +1,30 @@
+import Image from 'next/image'
+
+// Proporção real do recorte do ícone (public/brand/logo-icon.png,
+// 1190×624) -- usada pra calcular a largura a partir da altura (`size`)
+// sem distorcer, já que next/image exige width+height explícitos.
+const ICON_ASPECT = 1190 / 624
+
 /**
- * TK3D mark: a tapering stack of layers evoking an FDM print building up,
- * paired with the wordmark. `iconOnly` renders just the badge (used for
- * tight spaces); otherwise the full lockup with "TK3D" next to it.
+ * TK3D mark: logo de verdade (fornecida pelo usuário, não mais desenhada
+ * em SVG) -- o ícone é um recorte só do monograma "TK" (o bocal de
+ * impressora + fio de filamento embutidos nas letras), extraído da peça
+ * completa em public/brand/logo-icon.png; a peça completa (ícone + "TK3D"
+ * por extenso empilhados) fica em logo-full.png, usada só como fonte pros
+ * recortes (ver docs do commit), não referenciada diretamente na UI.
+ * `iconOnly` renderiza só o ícone (usado em espaços apertados); senão o
+ * lockup completo com "TK3D" ao lado.
  */
 export function Logo({ iconOnly = false, size = 32 }: { iconOnly?: boolean; size?: number }) {
   const icon = (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <defs>
-        {/* Fixed (non theme-aware) stops: the badge is a colorful mark that
-            reads fine on both light and dark surfaces, unlike solid slate
-            text elsewhere -- no need to swap it per theme. */}
-        <linearGradient id="tk3d-logo-gradient" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#7c3aed" />
-          <stop offset="1" stopColor="#c026d3" />
-        </linearGradient>
-      </defs>
-      <rect width="32" height="32" rx="8" fill="url(#tk3d-logo-gradient)" />
-      <rect x="8" y="20" width="16" height="3" rx="1.2" fill="white" />
-      <rect x="10" y="15" width="12" height="3" rx="1.2" fill="white" opacity="0.85" />
-      <rect x="12" y="10" width="8" height="3" rx="1.2" fill="white" opacity="0.7" />
-      <rect x="14" y="5" width="4" height="3" rx="1.2" fill="white" opacity="0.55" />
-    </svg>
+    <Image
+      src="/brand/logo-icon.png"
+      alt="TK3D"
+      width={Math.round(size * ICON_ASPECT)}
+      height={size}
+      priority
+      className="shrink-0"
+    />
   )
 
   if (iconOnly) return icon
