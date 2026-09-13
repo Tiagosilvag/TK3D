@@ -671,40 +671,61 @@ export function ProductionRunBatchForm({
     <dialog
       ref={dialogRef}
       onClose={() => { onOpenChange(false); resetAll() }}
-      className="w-full [--tk-dialog-cap:56rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      className="w-full [--tk-dialog-cap:64rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
-      <form action={mode === 'individual' ? individualAction : plateAction} className="grid gap-3 p-5">
+      <form action={mode === 'individual' ? individualAction : plateAction} className="grid gap-4 p-5">
         <div className="flex items-center justify-between">
           <h3 className="font-display text-base font-semibold">Registrar produção</h3>
           <button type="button" onClick={() => dialogRef.current?.close()} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
         </div>
 
-        <label className="text-sm">
-          Modo de produção
-          <select
-            value={mode}
-            onChange={(e) => { setMode(e.target.value as 'individual' | 'plate'); setProductId(''); setRows([]); setPlateItems([]) }}
-            className="tk-input-full"
-          >
-            <option value="individual">Produção individual</option>
-            <option value="plate">Adicionar a uma Plate (impressão simultânea)</option>
-          </select>
-        </label>
+        <div className="tk-panel p-3">
+          <label className="text-sm">
+            Modo de produção
+            <select
+              value={mode}
+              onChange={(e) => { setMode(e.target.value as 'individual' | 'plate'); setProductId(''); setRows([]); setPlateItems([]) }}
+              className="tk-input-full"
+            >
+              <option value="individual">Produção individual</option>
+              <option value="plate">Adicionar a uma Plate (impressão simultânea)</option>
+            </select>
+          </label>
+        </div>
 
         {mode === 'individual' ? (
           <>
-            <label className="text-sm">
-              Produto
-              <select value={productId} onChange={(e) => void handleProductChange(e.target.value)} className="tk-input-full" required>
-                <option value="" disabled>Selecione</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </label>
+            <div className="tk-panel p-3">
+              <label className="text-sm">
+                Produto
+                <select value={productId} onChange={(e) => void handleProductChange(e.target.value)} className="tk-input-full" required>
+                  <option value="" disabled>Selecione</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
 
             {rows.length > 0 && (
-              <div>
+              <div className="tk-panel p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Peças deste produto</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">A quantidade padrão preenche todas — edite &quot;Planejada&quot; numa peça específica pra ela seguir um número diferente.</p>
+                  </div>
+                  {isComposite && (
+                    <div className="flex shrink-0 gap-3 text-xs font-medium">
+                      <button type="button" onClick={() => setRows((prev) => prev.map((r) => ({ ...r, checked: true })))} className="text-violet-600 hover:underline dark:text-violet-400">
+                        Marcar todas
+                      </button>
+                      <button type="button" onClick={() => setRows((prev) => prev.map((r) => ({ ...r, checked: false })))} className="text-violet-600 hover:underline dark:text-violet-400">
+                        Desmarcar todas
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 {/* Melhoria "Registrar produção" (quantidade padrão
                     cascateando): sempre visível, mesmo pra produto simples
                     de 1 peça só -- aplica-se a toda peça ainda não
@@ -724,20 +745,6 @@ export function ProductionRunBatchForm({
                   </label>
                   <p className="flex-1 text-xs text-slate-500 dark:text-slate-400">Aplica-se a todas as peças que ainda não foram personalizadas individualmente.</p>
                 </div>
-
-                {isComposite && (
-                  <div className="mb-2 flex items-center justify-between">
-                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Peças deste produto</p>
-                    <div className="flex gap-3 text-xs font-medium">
-                      <button type="button" onClick={() => setRows((prev) => prev.map((r) => ({ ...r, checked: true })))} className="text-violet-600 hover:underline dark:text-violet-400">
-                        Marcar todas
-                      </button>
-                      <button type="button" onClick={() => setRows((prev) => prev.map((r) => ({ ...r, checked: false })))} className="text-violet-600 hover:underline dark:text-violet-400">
-                        Desmarcar todas
-                      </button>
-                    </div>
-                  </div>
-                )}
 
                 <div className="space-y-3">
                   {rows.map((row) => {
@@ -909,250 +916,302 @@ export function ProductionRunBatchForm({
             )}
           </>
         ) : (
-          <>
-            <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
-              Plate = várias peças impressas JUNTAS na mesma impressão física (mesma data/impressora), mesmo que de produtos diferentes.
-              O custo de impressora (depreciação, manutenção, energia) é rateado entre elas proporcionalmente ao tempo × quantidade de
-              cada peça; o custo de filamento continua 100% por peça.
-            </p>
-
-            <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-              <label className="text-xs">
-                Data da Plate
-                <input type="date" value={plateDate} onChange={(e) => setPlateDate(e.target.value)} className="tk-input-full" required />
-              </label>
-              <label className="text-xs">
-                Impressora da Plate
-                <select value={platePrinterId} onChange={(e) => setPlatePrinterId(e.target.value)} className="tk-input-full" required>
-                  <option value="" disabled>Selecione</option>
-                  {printers.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              </label>
-              {/* Melhoria "Registrar produção" (rateio ao vivo): só
-                  informativo -- createPlate SEMPRE recalcula o custo de
-                  impressora a partir do Printer no banco no momento do
-                  submit, nunca lê este campo (CLAUDE.md "nunca inventa
-                  custo": nenhuma capacidade nova de sobrescrever esse
-                  custo). */}
-              <label className="text-xs">
-                Custo da impressora (R$/hora)
-                <input type="text" value={selectedPlatePrinter ? selectedPlatePrinter.costPerHour.toFixed(2) : '—'} disabled className="tk-input-full opacity-60" />
-              </label>
-            </div>
-
-            {availableCapture && (
-              <div className="rounded-lg bg-emerald-50 p-3 text-sm dark:bg-emerald-900/20">
-                <p>
-                  Impressão dessa impressora terminou às {new Date(availableCapture.finishedAt).toLocaleTimeString('pt-BR')}, durou{' '}
-                  {availableCapture.durationHours.toFixed(2)}h
-                  {availableCapture.gramsUsedTotal !== null && `, ~${availableCapture.gramsUsedTotal.toFixed(1)}g de filamento`}.
+          <div className="flex flex-col gap-4 md:flex-row md:items-start">
+            <div className="min-w-0 flex-1 space-y-4">
+              <div className="tk-panel p-4">
+                <p className="mb-3 rounded-lg bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+                  Plate = várias peças impressas JUNTAS na mesma impressão física (mesma data/impressora), mesmo que de produtos diferentes.
+                  O custo de impressora (depreciação, manutenção, energia) é rateado entre elas proporcionalmente ao tempo × quantidade de
+                  cada peça; o custo de filamento continua 100% por peça.
                 </p>
-                <button
-                  type="button"
-                  className="mt-1 font-medium text-emerald-700 hover:underline dark:text-emerald-400"
-                  onClick={() => {
-                    const autofill = buildPlateAutofill(
-                      { durationHours: availableCapture.durationHours, gramsUsedTotal: availableCapture.gramsUsedTotal, outcome: availableCapture.outcome },
-                      plateItems.map((item) => {
-                        const perUnit = parseFloat(item.filaments[0]?.weightGramsPerUnit ?? '0') || 0
-                        const qty = parseInt(item.quantityPlanned, 10) || 0
-                        return { key: item.key, theoreticalGramsUsed: perUnit * qty }
-                      }),
-                    )
-                    setPlateActualPrintTimeHours(autofill.actualPrintTimeHours)
-                    setPlateItems((rows) =>
-                      rows.map((row) => {
-                        const timeWasted = autofill.timeWastedHoursByItem[row.key]
-                        const gramsWasted = autofill.gramsWastedByItem[row.key]
-                        return {
-                          ...row,
-                          timeWastedHours: timeWasted !== undefined ? String(timeWasted) : row.timeWastedHours,
-                          filaments:
-                            gramsWasted !== undefined && row.filaments.length === 1
-                              ? [{ ...row.filaments[0], gramsWasted: String(gramsWasted) }]
-                              : row.filaments,
-                        }
-                      }),
-                    )
-                    setUsedCaptureId(availableCapture.id)
-                  }}
-                >
-                  Usar esses dados
-                </button>
-              </div>
-            )}
 
-            <label className="text-xs">
-              Observações da Plate (opcional)
-              <textarea value={plateNotes} onChange={(e) => setPlateNotes(e.target.value)} className="tk-input-full" rows={1} />
-            </label>
-
-            <div className="rounded-lg border border-dashed border-slate-300 p-2 dark:border-slate-700">
-              <p className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">Adicionar peça à Plate</p>
-              <label className="text-xs">
-                Produto
-                <select value={addProductId} onChange={(e) => void handleAddProductChange(e.target.value)} className="tk-input-full">
-                  <option value="" disabled>Selecione</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              </label>
-              {addProductParts && addProductParts.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {addProductParts.map((part) => (
-                    <button
-                      key={part.id}
-                      type="button"
-                      onClick={() => addPlateItem(part)}
-                      className="rounded-lg border border-amber-300 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-500/10"
-                    >
-                      + {part.name}
-                    </button>
-                  ))}
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                  <label className="text-xs">
+                    Data da Plate
+                    <input type="date" value={plateDate} onChange={(e) => setPlateDate(e.target.value)} className="tk-input-full" required />
+                  </label>
+                  <label className="text-xs">
+                    Impressora da Plate
+                    <select value={platePrinterId} onChange={(e) => setPlatePrinterId(e.target.value)} className="tk-input-full" required>
+                      <option value="" disabled>Selecione</option>
+                      {printers.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {/* Melhoria "Registrar produção" (rateio ao vivo): só
+                      informativo -- createPlate SEMPRE recalcula o custo de
+                      impressora a partir do Printer no banco no momento do
+                      submit, nunca lê este campo (CLAUDE.md "nunca inventa
+                      custo": nenhuma capacidade nova de sobrescrever esse
+                      custo). */}
+                  <label className="text-xs">
+                    Custo da impressora (R$/hora)
+                    <input type="text" value={selectedPlatePrinter ? selectedPlatePrinter.costPerHour.toFixed(2) : '—'} disabled className="tk-input-full opacity-60" />
+                  </label>
                 </div>
-              )}
-            </div>
 
-            {plateItems.length > 0 && (
-              <div className="space-y-3">
-                {plateItems.map((item, index) => {
-                  const failed = failedFor(item)
-                  const planned = parseInt(item.quantityPlanned, 10) || 0
-                  const machineCost = plateMachineCostPerItem[index] ?? 0
-                  const machinePct = plateTotalAllocatedHours > 0 ? ((plateAllocatedHours[index] ?? 0) / plateTotalAllocatedHours) * 100 : 0
-                  return (
-                    <div key={item.key} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-                      <div className="mb-2 flex items-center justify-between">
-                        <span className="text-sm font-medium">{item.partName} <span className="font-normal text-slate-500 dark:text-slate-400">({item.productName})</span></span>
-                        <button type="button" onClick={() => removePlateItem(item.key)} className="text-xs text-red-600 hover:underline dark:text-red-400">Remover</button>
-                      </div>
+                <label className="mt-3 block text-xs">
+                  Observações da Plate (opcional)
+                  <textarea value={plateNotes} onChange={(e) => setPlateNotes(e.target.value)} className="tk-input-full" rows={1} />
+                </label>
 
-                      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                        <label className="text-xs">
-                          Tempo por unidade (HH:MM)
-                          <HoursInput
-                            value={item.printTimeHoursPerUnit}
-                            onChange={(hours) => updatePlateItem(item.key, { printTimeHoursPerUnit: hours })}
-                            className="tk-input-full"
-                          />
-                        </label>
-                        {item.filaments.length === 1 && (
-                          <FilamentEditor
-                            filaments={item.filaments}
-                            filamentOptions={filaments}
-                            onChange={(i, patch) => updatePlateItemFilament(item.key, i, patch)}
-                          />
-                        )}
-                      </div>
+                {availableCapture && (
+                  <div className="mt-3 rounded-lg bg-emerald-50 p-3 text-sm dark:bg-emerald-900/20">
+                    <p>
+                      Impressão dessa impressora terminou às {new Date(availableCapture.finishedAt).toLocaleTimeString('pt-BR')}, durou{' '}
+                      {availableCapture.durationHours.toFixed(2)}h
+                      {availableCapture.gramsUsedTotal !== null && `, ~${availableCapture.gramsUsedTotal.toFixed(1)}g de filamento`}.
+                    </p>
+                    <button
+                      type="button"
+                      className="mt-1 font-medium text-emerald-700 hover:underline dark:text-emerald-400"
+                      onClick={() => {
+                        const autofill = buildPlateAutofill(
+                          { durationHours: availableCapture.durationHours, gramsUsedTotal: availableCapture.gramsUsedTotal, outcome: availableCapture.outcome },
+                          plateItems.map((item) => {
+                            const perUnit = parseFloat(item.filaments[0]?.weightGramsPerUnit ?? '0') || 0
+                            const qty = parseInt(item.quantityPlanned, 10) || 0
+                            return { key: item.key, theoreticalGramsUsed: perUnit * qty }
+                          }),
+                        )
+                        setPlateActualPrintTimeHours(autofill.actualPrintTimeHours)
+                        setPlateItems((rows) =>
+                          rows.map((row) => {
+                            const timeWasted = autofill.timeWastedHoursByItem[row.key]
+                            const gramsWasted = autofill.gramsWastedByItem[row.key]
+                            return {
+                              ...row,
+                              timeWastedHours: timeWasted !== undefined ? String(timeWasted) : row.timeWastedHours,
+                              filaments:
+                                gramsWasted !== undefined && row.filaments.length === 1
+                                  ? [{ ...row.filaments[0], gramsWasted: String(gramsWasted) }]
+                                  : row.filaments,
+                            }
+                          }),
+                        )
+                        setUsedCaptureId(availableCapture.id)
+                      }}
+                    >
+                      Usar esses dados
+                    </button>
+                  </div>
+                )}
+              </div>
 
-                      {item.filaments.length > 1 && (
-                        <FilamentEditor
-                          filaments={item.filaments}
-                          filamentOptions={filaments}
-                          onChange={(i, patch) => updatePlateItemFilament(item.key, i, patch)}
-                        />
-                      )}
+              <div className="tk-panel p-4">
+                <p className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">Adicionar peça à Plate</p>
+                <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">Escolha o produto — se ele for composto por várias peças, você decide quais entram nesta impressão.</p>
+                <label className="text-xs">
+                  Produto
+                  <select value={addProductId} onChange={(e) => void handleAddProductChange(e.target.value)} className="tk-input-full">
+                    <option value="" disabled>Selecione</option>
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </label>
+                {addProductParts && addProductParts.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {addProductParts.map((part) => (
+                      <button
+                        key={part.id}
+                        type="button"
+                        onClick={() => addPlateItem(part)}
+                        className="rounded-lg border border-amber-300 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-500/10"
+                      >
+                        + {part.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
 
-                      <div className="mt-2 grid grid-cols-3 gap-2">
-                        <label className="text-xs">
-                          Planejada
-                          <input
-                            type="number"
-                            step="1"
-                            min="0"
-                            value={item.quantityPlanned}
-                            onChange={(e) => updatePlateItem(item.key, plannedChangePatch(item, e.target.value))}
-                            className="tk-input-full"
-                          />
-                        </label>
-                        <label className="text-xs">
-                          Sucesso
-                          <input
-                            type="number"
-                            step="1"
-                            min="0"
-                            value={item.quantitySuccess}
-                            onChange={(e) => updatePlateItem(item.key, successChangePatch(item, e.target.value))}
-                            className="tk-input-full"
-                          />
-                        </label>
-                        <label className="text-xs">
-                          Falhas
-                          <input
-                            type="number"
-                            step="1"
-                            min="0"
-                            value={failed}
-                            onChange={(e) => updatePlateItem(item.key, failedChangePatch(item, e.target.value))}
-                            className="tk-input-full"
-                          />
-                        </label>
-                      </div>
+              <div className="tk-panel p-4">
+                <p className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">Peças desta Plate</p>
+                {plateItems.length === 0 ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Nenhuma peça adicionada ainda.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {plateItems.map((item, index) => {
+                      const failed = failedFor(item)
+                      const planned = parseInt(item.quantityPlanned, 10) || 0
+                      const machineCost = plateMachineCostPerItem[index] ?? 0
+                      const itemFilamentCost = item.filaments.reduce((sum, f) => {
+                        if (!f.filamentId) return sum
+                        const filament = filaments.find((x) => x.id === f.filamentId)
+                        const grams = (parseFloat(f.weightGramsPerUnit) || 0) * planned
+                        return sum + grams * (filament?.pricePerGram ?? 0)
+                      }, 0)
+                      return (
+                        <div key={item.key} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-sm font-medium">{item.partName} <span className="font-normal text-slate-500 dark:text-slate-400">({item.productName})</span></span>
+                            <button type="button" onClick={() => removePlateItem(item.key)} className="text-xs text-red-600 hover:underline dark:text-red-400">Remover</button>
+                          </div>
 
-                      {/* Melhoria "Registrar produção" (rateio ao vivo):
-                          mesma função (allocatePlatePrintTime) e o mesmo
-                          Printer.costPerHour usados no submit -- prévia sem
-                          risco de divergir do custo realmente salvo. */}
-                      {selectedPlatePrinter && planned > 0 && (
-                        <p className="mt-2 text-xs text-violet-600 dark:text-violet-400">
-                          Rateio impressora: R$ {machineCost.toFixed(2)} ({machinePct.toFixed(0)}%)
-                        </p>
-                      )}
-
-                      {planned > 0 && failed > 0 && (
-                        <details className="mt-2" open={planned > 0 && failed > 0}>
-                          <summary className="cursor-pointer text-xs font-medium text-amber-600 dark:text-amber-400">Detalhes do desperdício (opcional)</summary>
-                          <div className="mt-2 grid grid-cols-2 gap-2">
+                          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                            <label className="text-xs">
+                              Tempo por unidade (HH:MM)
+                              <HoursInput
+                                value={item.printTimeHoursPerUnit}
+                                onChange={(hours) => updatePlateItem(item.key, { printTimeHoursPerUnit: hours })}
+                                className="tk-input-full"
+                              />
+                            </label>
                             {item.filaments.length === 1 && (
-                              <label className="text-xs">
-                                Filamento desperdiçado (g)
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  value={item.filaments[0].gramsWasted}
-                                  onChange={(e) => updatePlateItemFilament(item.key, 0, { gramsWasted: e.target.value })}
-                                  className="tk-input-full"
-                                />
-                              </label>
+                              <FilamentEditor
+                                filaments={item.filaments}
+                                filamentOptions={filaments}
+                                onChange={(i, patch) => updatePlateItemFilament(item.key, i, patch)}
+                              />
                             )}
+                          </div>
+
+                          {item.filaments.length > 1 && (
+                            <FilamentEditor
+                              filaments={item.filaments}
+                              filamentOptions={filaments}
+                              onChange={(i, patch) => updatePlateItemFilament(item.key, i, patch)}
+                            />
+                          )}
+
+                          <div className="mt-2 grid grid-cols-3 gap-2">
                             <label className="text-xs">
-                              Tempo desperdiçado (HH:MM)
-                              <HoursInput value={parseFloat(item.timeWastedHours) || 0} onChange={(hours) => updatePlateItem(item.key, { timeWastedHours: String(hours) })} className="tk-input-full" />
+                              Planejada
+                              <input
+                                type="number"
+                                step="1"
+                                min="0"
+                                value={item.quantityPlanned}
+                                onChange={(e) => updatePlateItem(item.key, plannedChangePatch(item, e.target.value))}
+                                className="tk-input-full"
+                              />
                             </label>
                             <label className="text-xs">
-                              Motivo (opcional)
-                              <select value={item.wasteReason} onChange={(e) => updatePlateItem(item.key, { wasteReason: e.target.value })} className="tk-input-full">
-                                <option value="">Nenhum</option>
-                                {WASTE_REASON_OPTIONS.map((reason) => (
-                                  <option key={reason} value={reason}>{WASTE_REASON_LABELS[reason]}</option>
-                                ))}
-                              </select>
+                              Sucesso
+                              <input
+                                type="number"
+                                step="1"
+                                min="0"
+                                value={item.quantitySuccess}
+                                onChange={(e) => updatePlateItem(item.key, successChangePatch(item, e.target.value))}
+                                className="tk-input-full"
+                              />
                             </label>
                             <label className="text-xs">
-                              Observações (opcional)
-                              <textarea value={item.notes} onChange={(e) => updatePlateItem(item.key, { notes: e.target.value })} className="tk-input-full" rows={1} />
+                              Falhas
+                              <input
+                                type="number"
+                                step="1"
+                                min="0"
+                                value={failed}
+                                onChange={(e) => updatePlateItem(item.key, failedChangePatch(item, e.target.value))}
+                                className="tk-input-full"
+                              />
                             </label>
                           </div>
-                        </details>
-                      )}
-                    </div>
-                  )
-                })}
+
+                          {/* Melhoria "Registrar produção" (rateio ao vivo):
+                              mesma função (allocatePlatePrintTime) e o mesmo
+                              Printer.costPerHour usados no submit -- prévia
+                              sem risco de divergir do custo realmente salvo.
+                              Espelha o "cost-split" de 3 pilulas do
+                              protótipo. */}
+                          {selectedPlatePrinter && planned > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <span className="flex flex-1 items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800/60">
+                                <span className="text-slate-500 dark:text-slate-400">Filamento total</span>
+                                <span className="font-semibold tabular-nums text-amber-600 dark:text-amber-400">R$ {itemFilamentCost.toFixed(2)}</span>
+                              </span>
+                              <span className="flex flex-1 items-center justify-between rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs dark:border-violet-800/60 dark:bg-violet-500/10">
+                                <span className="text-slate-500 dark:text-slate-400">Rateio impressora</span>
+                                <span className="font-semibold tabular-nums text-violet-600 dark:text-violet-400">R$ {machineCost.toFixed(2)}</span>
+                              </span>
+                              <span className="flex flex-1 items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs dark:border-emerald-800/60 dark:bg-emerald-500/10">
+                                <span className="text-slate-500 dark:text-slate-400">Total da peça</span>
+                                <span className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">R$ {(itemFilamentCost + machineCost).toFixed(2)}</span>
+                              </span>
+                            </div>
+                          )}
+
+                          {planned > 0 && failed > 0 && (
+                            <details className="mt-2" open={planned > 0 && failed > 0}>
+                              <summary className="cursor-pointer text-xs font-medium text-amber-600 dark:text-amber-400">Detalhes do desperdício (opcional)</summary>
+                              <div className="mt-2 grid grid-cols-2 gap-2">
+                                {item.filaments.length === 1 && (
+                                  <label className="text-xs">
+                                    Filamento desperdiçado (g)
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      value={item.filaments[0].gramsWasted}
+                                      onChange={(e) => updatePlateItemFilament(item.key, 0, { gramsWasted: e.target.value })}
+                                      className="tk-input-full"
+                                    />
+                                  </label>
+                                )}
+                                <label className="text-xs">
+                                  Tempo desperdiçado (HH:MM)
+                                  <HoursInput value={parseFloat(item.timeWastedHours) || 0} onChange={(hours) => updatePlateItem(item.key, { timeWastedHours: String(hours) })} className="tk-input-full" />
+                                </label>
+                                <label className="text-xs">
+                                  Motivo (opcional)
+                                  <select value={item.wasteReason} onChange={(e) => updatePlateItem(item.key, { wasteReason: e.target.value })} className="tk-input-full">
+                                    <option value="">Nenhum</option>
+                                    {WASTE_REASON_OPTIONS.map((reason) => (
+                                      <option key={reason} value={reason}>{WASTE_REASON_LABELS[reason]}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label className="text-xs">
+                                  Observações (opcional)
+                                  <textarea value={item.notes} onChange={(e) => updatePlateItem(item.key, { notes: e.target.value })} className="tk-input-full" rows={1} />
+                                </label>
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
-            )}
+            </div>
 
             {/* Melhoria "Registrar produção" (rateio ao vivo): resumo
-                agregado da Plate -- estimativa (allocatePlatePrintTime ×
+                agregado da Plate, em painel próprio grudado no topo (igual
+                ao protótipo) -- estimativa (allocatePlatePrintTime ×
                 Printer.costPerHour), o costSnapshot de verdade continua
                 100% calculado no servidor no submit. */}
-            {plateItems.length > 0 && selectedPlatePrinter && (
-              <div className="rounded-lg bg-violet-50 p-3 text-sm dark:bg-violet-500/10">
-                <p className="mb-1 font-medium text-slate-700 dark:text-slate-300">Rateio da Plate</p>
-                <dl className="space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+            <aside className="w-full shrink-0 md:sticky md:top-0 md:w-64">
+              <div className="tk-panel p-4">
+                <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Rateio da Plate</p>
+                <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">Como o custo de impressora está sendo dividido</p>
+
+                {plateItems.length === 0 ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Adicione peças para ver o rateio.</p>
+                ) : (
+                  <div className="space-y-2.5">
+                    {plateItems.map((item, index) => {
+                      const machinePct = plateTotalAllocatedHours > 0 ? ((plateAllocatedHours[index] ?? 0) / plateTotalAllocatedHours) * 100 : 0
+                      return (
+                        <div key={item.key}>
+                          <div className="flex justify-between gap-2 text-xs">
+                            <span className="truncate text-slate-500 dark:text-slate-400">{item.partName}</span>
+                            <span className="shrink-0 font-semibold text-violet-600 dark:text-violet-400">{machinePct.toFixed(0)}%</span>
+                          </div>
+                          <div className="mt-1 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700">
+                            <div className="h-full rounded-full bg-violet-500" style={{ width: `${machinePct}%` }} />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                <dl className="mt-3 space-y-0.5 border-t border-slate-100 pt-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
                   <div className="flex justify-between gap-2">
                     <dt>Tempo total de máquina</dt>
                     <dd className="tabular-nums">{plateTotalAllocatedHours.toFixed(2)}h</dd>
@@ -1166,17 +1225,17 @@ export function ProductionRunBatchForm({
                     <dd className="tabular-nums">R$ {gastoTotalCost.toFixed(2)}</dd>
                   </div>
                 </dl>
-                <div className="mt-1 flex justify-between border-t border-violet-200 pt-1 text-sm font-semibold text-slate-900 dark:border-violet-500/30 dark:text-slate-100">
+                <div className="mt-2 flex justify-between rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
                   <dt>Custo total da Plate</dt>
                   <dd className="tabular-nums">R$ {(plateTotalMachineCost + gastoTotalCost).toFixed(2)}</dd>
                 </div>
               </div>
-            )}
-          </>
+            </aside>
+          </div>
         )}
 
         {gastoRows.length > 0 && (
-          <div className="rounded-lg bg-slate-50 p-3 text-sm dark:bg-slate-800/60">
+          <div className="tk-panel p-4 text-sm">
             <p className="mb-1 font-medium text-slate-700 dark:text-slate-300">Gasto por peça</p>
             <dl className="space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
               {gastoRows.map((g, i) => (

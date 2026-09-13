@@ -40,11 +40,12 @@ export function Logo({ iconOnly = false, size = 40 }: { iconOnly?: boolean; size
 
   // Wordmark um pouco mais baixo que o ícone (proporção real da arte é
   // ainda mais achatada -- 245/624 do ícone -- mas isso lia fino demais
-  // ao lado do ícone num cabeçalho; 62% mantém legível sem destoar do
-  // resto da lockup).
-  const wordmarkHeight = Math.round(size * 0.62)
+  // ao lado do ícone num cabeçalho; 55% mantém legível sem destoar do
+  // resto da lockup). Pedido explícito do usuário: um pouco menor e mais
+  // perto do ícone do que estava (era 62% + gap-2).
+  const wordmarkHeight = Math.round(size * 0.55)
   return (
-    <span className="inline-flex items-center gap-2">
+    <span className="inline-flex items-center gap-1.5">
       {icon}
       {/* eslint-disable-next-line @next/next/no-img-element -- arquivo estático em public/, sem necessidade de otimização em runtime */}
       <img
