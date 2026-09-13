@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { LogoWatermark } from '@/components/LogoWatermark'
 
@@ -36,9 +35,12 @@ export default function LoginPage() {
         {/* Peça completa da logo (ícone + "TK3D" por extenso) em destaque --
             login é a única tela com espaço/motivo pra mostrar a marca por
             inteiro; a sidebar (components/Logo.tsx) usa só o ícone
-            recortado por questão de espaço. */}
+            recortado por questão de espaço. <img> direto, não next/image
+            -- ver comentário em components/Logo.tsx (bug "logo não
+            aparece em produção", falta de `sharp` em runtime). */}
         <div className="mb-6 flex flex-col items-center text-center">
-          <Image src="/brand/logo-full.png" alt="TK3D" width={1222} height={1210} priority className="h-24 w-auto" />
+          {/* eslint-disable-next-line @next/next/no-img-element -- arquivo estático em public/, sem necessidade de otimização em runtime */}
+          <img src="/brand/logo-full.png" alt="TK3D" width={1222} height={1210} className="h-24 w-auto" />
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Controle de Produção</p>
         </div>
         <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300" htmlFor="password">

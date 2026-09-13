@@ -1,8 +1,6 @@
-import Image from 'next/image'
-
 // Proporção real do recorte do ícone (public/brand/logo-icon.png,
 // 1190×624) -- usada pra calcular a largura a partir da altura (`size`)
-// sem distorcer, já que next/image exige width+height explícitos.
+// sem distorcer.
 const ICON_ASPECT = 1190 / 624
 
 /**
@@ -14,15 +12,24 @@ const ICON_ASPECT = 1190 / 624
  * recortes (ver docs do commit), não referenciada diretamente na UI.
  * `iconOnly` renderiza só o ícone (usado em espaços apertados); senão o
  * lockup completo com "TK3D" ao lado.
+ *
+ * Bug "logo não aparece em produção" (ícone quebrado): next/image precisa
+ * do pacote `sharp` pra otimizar em runtime -- ele é opcional (não está
+ * em package.json, só puxado como optionalDependency do próprio `next`)
+ * e o tracing do build `standalone` nem sempre inclui esse require
+ * condicional no node_modules copiado pro container final, então o
+ * endpoint /_next/image falhava (ícone quebrado). É um arquivo estático
+ * pronto em public/ -- não precisa de nenhuma otimização em runtime, só
+ * <img> direto (mesmo padrão já usado em PhotoGallery.tsx).
  */
 export function Logo({ iconOnly = false, size = 32 }: { iconOnly?: boolean; size?: number }) {
   const icon = (
-    <Image
+    // eslint-disable-next-line @next/next/no-img-element -- arquivo estático em public/, sem necessidade de otimização em runtime (ver comentário acima)
+    <img
       src="/brand/logo-icon.png"
       alt="TK3D"
       width={Math.round(size * ICON_ASPECT)}
       height={size}
-      priority
       className="shrink-0"
     />
   )
