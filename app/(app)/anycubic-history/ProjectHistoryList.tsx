@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { getAnycubicProjectHistory } from '@/actions/anycubicStatus'
 
 type Tasks = Awaited<ReturnType<typeof getAnycubicProjectHistory>>['tasks']
@@ -26,11 +26,29 @@ function formatUnixSeconds(seconds: number | null): string | null {
   return new Date(seconds * 1000).toLocaleString('pt-BR')
 }
 
+// Mesma fórmula de luminância percebida usada em LiveStatusPoller.tsx --
+// texto branco sobre badge de cor clara (ex.: filamento branco) fica
+// ilegível, então escolhe preto ou branco pelo brilho da cor de fundo.
+function readableTextColor(hex: string): string {
+  const match = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+  if (!match) return '#ffffff'
+  const [r, g, b] = match.slice(1).map((c) => parseInt(c, 16))
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return luminance > 0.6 ? '#0f172a' : '#ffffff'
+}
+
 export function ProjectHistoryList({ initialTasks, initialNextPage }: { initialTasks: Tasks; initialNextPage: number | null }) {
   const [tasks, setTasks] = useState(initialTasks ?? [])
   const [nextPage, setNextPage] = useState(initialNextPage)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [enlargedImage, setEnlargedImage] = useState<string | null>(null)
+  const imageDialogRef = useRef<HTMLDialogElement>(null)
+
+  function openImage(url: string) {
+    setEnlargedImage(url)
+    imageDialogRef.current?.showModal()
+  }
 
   async function loadMore() {
     if (!nextPage) return
@@ -58,8 +76,10 @@ export function ProjectHistoryList({ initialTasks, initialNextPage }: { initialT
         return (
           <div key={task.id} className="tk-panel flex gap-3 p-4">
             {task.thumbnailUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={task.thumbnailUrl} alt={task.gcodeName ?? 'Impressão'} className="h-16 w-16 shrink-0 rounded-lg object-cover" />
+              <button type="button" onClick={() => openImage(task.thumbnailUrl!)} className="shrink-0">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={task.thumbnailUrl} alt={task.gcodeName ?? 'Impressão'} className="h-16 w-16 rounded-lg object-cover" />
+              </button>
             ) : (
               <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-lg dark:bg-slate-800">🖨️</div>
             )}
@@ -77,6 +97,22 @@ export function ProjectHistoryList({ initialTasks, initialNextPage }: { initialT
                 {formatUnixSeconds(task.endTime) && <span>{formatUnixSeconds(task.endTime)}</span>}
               </div>
               {task.modelDimensions && <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{task.modelDimensions}</p>}
+              {task.materialBreakdown && task.materialBreakdown.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {task.materialBreakdown.map((material, i) => {
+                    const bg = material.colorHex ?? '#64748b'
+                    return (
+                      <span
+                        key={i}
+                        className="rounded border border-slate-300 px-1.5 py-0.5 text-xs font-medium dark:border-slate-600"
+                        style={{ backgroundColor: bg, color: readableTextColor(bg) }}
+                      >
+                        {material.materialType} {material.grams}g
+                      </span>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )
@@ -94,6 +130,24 @@ export function ProjectHistoryList({ initialTasks, initialNextPage }: { initialT
           {loading ? 'Carregando…' : 'Carregar mais'}
         </button>
       )}
+
+      <dialog
+        ref={imageDialogRef}
+        onClose={() => setEnlargedImage(null)}
+        className="max-w-2xl rounded-xl border border-slate-200 bg-white p-2 backdrop:bg-slate-950/70 dark:border-slate-800 dark:bg-slate-900"
+      >
+        {enlargedImage && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={enlargedImage} alt="Impressão (ampliado)" className="max-h-[80vh] w-full rounded-lg object-contain" />
+        )}
+        <button
+          type="button"
+          onClick={() => imageDialogRef.current?.close()}
+          className="mt-2 w-full rounded-lg border border-slate-300 py-1.5 text-sm text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          Fechar
+        </button>
+      </dialog>
     </div>
   )
 }
