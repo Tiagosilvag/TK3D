@@ -9,6 +9,7 @@ import { allocatePlatePrintTime } from '@/lib/costing'
 import { WASTE_REASON_LABELS } from '@/lib/format'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
+import { FilamentSelect } from '@/components/FilamentSelect'
 import type { WasteReason } from '@prisma/client'
 
 const WASTE_REASON_OPTIONS = Object.keys(WASTE_REASON_LABELS) as WasteReason[]
@@ -23,8 +24,12 @@ type PrinterOption = { id: string; name: string; costPerHour: number }
 // pricePerGram -- usado pelas novas colunas R$/g e Custo da tabela de
 // cores (spec §3 do pedido de reformulação), calculado uma vez no server
 // (lib/costing.ts#calculateFilamentPricePerGram) a partir de spoolPrice/
-// spoolWeightKg, sem precisar buscar o filamento inteiro aqui.
-type FilamentOption = { id: string; name: string; pricePerGram: number }
+// spoolWeightKg, sem precisar buscar o filamento inteiro aqui. Melhoria
+// "padronizar seleção de filamento com bolinha de cor": também carrega
+// colorHex agora, pra usar o mesmo FilamentSelect (components/
+// FilamentSelect.tsx) já usado em ProductForm.tsx -- <select> nativo não
+// tem como mostrar a bolinha de cor dentro de <option>.
+type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
@@ -188,12 +193,7 @@ function FilamentEditor({
       <>
         <label className="text-xs">
           Filamento
-          <select value={f.filamentId} onChange={(e) => onChange(0, { filamentId: e.target.value })} className="tk-input-full" disabled={disabled}>
-            <option value="" disabled>Selecione</option>
-            {filamentOptions.map((opt) => (
-              <option key={opt.id} value={opt.id}>{opt.name}</option>
-            ))}
-          </select>
+          <FilamentSelect options={filamentOptions} value={f.filamentId} onChange={(id) => onChange(0, { filamentId: id })} disabled={disabled} />
         </label>
         <label className="text-xs">
           Peso por unidade (g)
@@ -239,12 +239,7 @@ function FilamentEditor({
               return (
                 <tr key={i}>
                   <td className="py-1 pr-2">
-                    <select value={f.filamentId} onChange={(e) => onChange(i, { filamentId: e.target.value })} className="tk-input-full" disabled={disabled}>
-                      <option value="" disabled>Selecione</option>
-                      {filamentOptions.map((opt) => (
-                        <option key={opt.id} value={opt.id}>{opt.name}</option>
-                      ))}
-                    </select>
+                    <FilamentSelect options={filamentOptions} value={f.filamentId} onChange={(id) => onChange(i, { filamentId: id })} disabled={disabled} />
                   </td>
                   <td className="py-1 pr-2">
                     <input
