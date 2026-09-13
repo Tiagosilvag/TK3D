@@ -1,28 +1,30 @@
-// Proporção real do recorte do ícone (public/brand/logo-icon.png,
-// 1190×624) -- usada pra calcular a largura a partir da altura (`size`)
-// sem distorcer.
-const ICON_ASPECT = 1190 / 624
+// Proporções reais dos recortes (public/brand/), usadas pra calcular
+// largura a partir da altura sem distorcer -- next/image não é usado
+// aqui (ver comentário abaixo), mas o cálculo continua necessário pra
+// não esticar o <img>.
+const ICON_ASPECT = 1190 / 624 // logo-icon.png
+const WORDMARK_ASPECT = 1164 / 245 // logo-wordmark.png
 
 /**
- * TK3D mark: logo de verdade (fornecida pelo usuário, não mais desenhada
- * em SVG) -- o ícone é um recorte só do monograma "TK" (o bocal de
- * impressora + fio de filamento embutidos nas letras), extraído da peça
- * completa em public/brand/logo-icon.png; a peça completa (ícone + "TK3D"
- * por extenso empilhados) fica em logo-full.png, usada só como fonte pros
- * recortes (ver docs do commit), não referenciada diretamente na UI.
- * `iconOnly` renderiza só o ícone (usado em espaços apertados); senão o
- * lockup completo com "TK3D" ao lado.
+ * TK3D mark: logo de verdade (fornecida pelo usuário, não mais desenhada/
+ * escrita em CSS) -- o ícone é o monograma "TK" (bocal de impressora +
+ * fio de filamento embutidos nas letras) e o wordmark é o "TK3D" por
+ * extenso na mesma arte, os dois recortados a partir da peça completa em
+ * public/brand/logo-full.png (ver docs do commit). `iconOnly` renderiza
+ * só o ícone (usado em espaços apertados); senão o lockup completo com
+ * o wordmark ao lado -- nunca mais texto CSS, pra bater exatamente com a
+ * tipografia/degradê da arte fornecida.
  *
- * Bug "logo não aparece em produção" (ícone quebrado): next/image precisa
- * do pacote `sharp` pra otimizar em runtime -- ele é opcional (não está
- * em package.json, só puxado como optionalDependency do próprio `next`)
- * e o tracing do build `standalone` nem sempre inclui esse require
- * condicional no node_modules copiado pro container final, então o
- * endpoint /_next/image falhava (ícone quebrado). É um arquivo estático
- * pronto em public/ -- não precisa de nenhuma otimização em runtime, só
- * <img> direto (mesmo padrão já usado em PhotoGallery.tsx).
+ * Bug "logo não aparece em produção" (ícone quebrado): next/image
+ * precisa do pacote `sharp` pra otimizar em runtime -- ele é opcional
+ * (não está em package.json, só puxado como optionalDependency do
+ * próprio `next`) e o tracing do build `standalone` nem sempre inclui
+ * esse require condicional no node_modules copiado pro container final,
+ * então o endpoint /_next/image falhava. É um arquivo estático pronto
+ * em public/ -- não precisa de nenhuma otimização em runtime, só <img>
+ * direto (mesmo padrão já usado em PhotoGallery.tsx).
  */
-export function Logo({ iconOnly = false, size = 32 }: { iconOnly?: boolean; size?: number }) {
+export function Logo({ iconOnly = false, size = 40 }: { iconOnly?: boolean; size?: number }) {
   const icon = (
     // eslint-disable-next-line @next/next/no-img-element -- arquivo estático em public/, sem necessidade de otimização em runtime (ver comentário acima)
     <img
@@ -36,12 +38,22 @@ export function Logo({ iconOnly = false, size = 32 }: { iconOnly?: boolean; size
 
   if (iconOnly) return icon
 
+  // Wordmark um pouco mais baixo que o ícone (proporção real da arte é
+  // ainda mais achatada -- 245/624 do ícone -- mas isso lia fino demais
+  // ao lado do ícone num cabeçalho; 62% mantém legível sem destoar do
+  // resto da lockup).
+  const wordmarkHeight = Math.round(size * 0.62)
   return (
     <span className="inline-flex items-center gap-2">
       {icon}
-      <span className="font-display text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100">
-        TK<span className="text-violet-600 dark:text-violet-500">3D</span>
-      </span>
+      {/* eslint-disable-next-line @next/next/no-img-element -- arquivo estático em public/, sem necessidade de otimização em runtime */}
+      <img
+        src="/brand/logo-wordmark.png"
+        alt="TK3D"
+        width={Math.round(wordmarkHeight * WORDMARK_ASPECT)}
+        height={wordmarkHeight}
+        className="shrink-0"
+      />
     </span>
   )
 }
