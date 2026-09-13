@@ -986,10 +986,39 @@ export async function getConsignmentStockSummary() {
     include: { partner: true, product: true, saleReports: true },
   })
   return deliveries
-    .map((d) => ({
-      partnerName: d.partner.name,
-      productName: d.product.name,
-      remaining: d.quantityDelivered - d.saleReports.reduce((s, r) => s + r.quantitySold, 0),
-    }))
+    .map((d) => {
+      const unitPrice = d.unitPrice.toNumber()
+      const remaining = d.quantityDelivered - d.saleReports.reduce((s, r) => s + r.quantitySold, 0)
+      return {
+        partnerName: d.partner.name,
+        productName: d.product.name,
+        remaining,
+        // Dashboard "Peças em consignação": pedido "mostre o valor em
+        // consignado junto à quantidade" -- valor do que ainda está com o
+        // parceiro (não vendido), pelo preço cadastrado na entrega.
+        remainingValue: remaining * unitPrice,
+      }
+    })
     .filter((d) => d.remaining > 0)
+}
+
+// Dashboard: pedido "mostre o valor total de vendas somente o que já foi
+// realmente vendido" -- soma direto de ConsignmentSaleReport (venda de
+// verdade já registrada), nunca de entregas/estoque com o parceiro.
+// unitPrice segue a mesma convenção de getConsignmentRevenue (preço da
+// própria venda quando sobrescrito, senão o da entrega); valor BRUTO (antes
+// da comissão do parceiro), pra comparar com "Peças em consignação" na
+// mesma base (preço cheio), diferente do "Consignação" da Receita total
+// (que é líquido, depois de descontar comissão -- o que a loja de fato
+// embolsa).
+export async function getConsignmentSoldSummary(): Promise<{ totalUnitsSold: number; totalGrossValue: number }> {
+  const reports = await prisma.consignmentSaleReport.findMany({ include: { delivery: true } })
+  let totalUnitsSold = 0
+  let totalGrossValue = 0
+  for (const r of reports) {
+    const unitPrice = r.unitPrice?.toNumber() ?? r.delivery.unitPrice.toNumber()
+    totalUnitsSold += r.quantitySold
+    totalGrossValue += r.quantitySold * unitPrice
+  }
+  return { totalUnitsSold, totalGrossValue }
 }
