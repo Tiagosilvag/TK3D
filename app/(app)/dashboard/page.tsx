@@ -5,6 +5,7 @@ import {
   getRevenueByChannel,
   getTopProducts,
   getConsignmentStockSummary,
+  getConsignmentSoldSummary,
   getConsignmentRevenue,
   getProductionSummary,
   getProductionByProduct,
@@ -120,6 +121,7 @@ export default async function DashboardPage({
     revenue,
     topProducts,
     consignmentStock,
+    consignmentSold,
     consignmentRevenue,
     productionSummary,
     productionByProduct,
@@ -135,6 +137,7 @@ export default async function DashboardPage({
     getRevenueByChannel(),
     getTopProducts(5),
     getConsignmentStockSummary(),
+    getConsignmentSoldSummary(),
     getConsignmentRevenue(),
     getProductionSummary(productionFilters),
     getProductionByProduct(productionFilters),
@@ -174,6 +177,7 @@ export default async function DashboardPage({
   const marketplaceShare = totalRevenue > 0 ? (revenue.MARKETPLACE / totalRevenue) * 100 : 0
   const consignmentShare = totalRevenue > 0 ? 100 - diretaShare - marketplaceShare : 0
   const consignmentUnits = consignmentStock.reduce((sum, s) => sum + s.remaining, 0)
+  const consignmentValue = consignmentStock.reduce((sum, s) => sum + s.remainingValue, 0)
 
   const consignmentByPartner = [...consignmentStock]
     .sort((a, b) => a.partnerName.localeCompare(b.partnerName) || b.remaining - a.remaining)
@@ -265,10 +269,24 @@ export default async function DashboardPage({
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
           <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Peças em consignação</p>
-          <p className="mt-1 font-display text-3xl font-semibold tabular-nums tracking-tight text-slate-900 dark:text-slate-100">
+          <p className="mt-1 flex items-baseline gap-2 font-display text-3xl font-semibold tabular-nums tracking-tight text-slate-900 dark:text-slate-100">
             {integer.format(consignmentUnits)}
+            <span className="text-base font-medium text-slate-400 dark:text-slate-500">{formatCurrency(consignmentValue)}</span>
           </p>
           <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Unidades entregues a parceiros, ainda não vendidas</p>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Vendido em consignação</p>
+            <Link href="/consignment/reports" className="text-xs font-medium text-violet-600 underline-offset-2 hover:underline dark:text-violet-400">
+              Ver relatórios de venda &rarr;
+            </Link>
+          </div>
+          <p className="mt-1 flex items-baseline gap-2 font-display text-3xl font-semibold tabular-nums tracking-tight text-slate-900 dark:text-slate-100">
+            {integer.format(consignmentSold.totalUnitsSold)}
+            <span className="text-base font-medium text-slate-400 dark:text-slate-500">{formatCurrency(consignmentSold.totalGrossValue)}</span>
+          </p>
+          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Unidades já vendidas pelos parceiros (valor bruto, antes da comissão)</p>
         </div>
       </section>
 
