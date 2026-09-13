@@ -165,6 +165,20 @@ export function AppLayoutClient({
 
   const SETTINGS_BADGES: Record<string, number> = { '/supplies': suppliesOutOfStockCount, '/filaments': filamentsLowStockCount }
 
+  // Bug "duas barras de rolagem / área preta enorme embaixo" (só aparecia
+  // em telas compridas o bastante pra precisar rolar, ex. Configurações):
+  // ao rolar dentro de <main> ou <nav> até o fim do próprio conteúdo, o
+  // navegador por padrão "encadeia" o scroll restante pro ancestral
+  // seguinte (scroll chaining) -- aqui, o <body>, que nunca deveria rolar
+  // sozinho (o layout inteiro é h-screen). Um resto sub-pixel de altura
+  // (comum com fontes/emoji) bastava pra tornar o body minimamente
+  // rolável, revelando uma segunda barra de rolagem e, embaixo do
+  // container h-screen, o body vazio (fundo escuro quase preto no tema
+  // escuro). `overscroll-contain` para o scroll exatamente na borda de
+  // main/nav, nunca deixando ele vazar pro body. `min-h-0`/`min-w-0`
+  // (flex-item default é `auto`, não `0`) garante que main/nav consigam
+  // encolher até o espaço disponível de verdade em vez de crescer com o
+  // próprio conteúdo.
   return (
     <div className="tk-gradient-bg flex h-screen overflow-hidden">
       <aside className="flex w-60 shrink-0 flex-col border-r border-slate-300 bg-white shadow-[2px_0_10px_-2px_rgba(15,23,42,0.10)] dark:border-slate-800 dark:bg-slate-900 dark:shadow-none">
@@ -173,7 +187,7 @@ export function AppLayoutClient({
           <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Controle de Produção</p>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-4 font-display">
+        <nav className="min-h-0 flex-1 overscroll-contain space-y-1 overflow-y-auto px-2 py-4 font-display">
           {/* Protagonists */}
           <div className="space-y-1">
             {PROTAGONIST_LINKS.map((link) => (
@@ -214,7 +228,7 @@ export function AppLayoutClient({
           </div>
         </div>
       </aside>
-      <main className="flex-1 overflow-y-auto p-6">{children}</main>
+      <main className="min-h-0 min-w-0 flex-1 overscroll-contain overflow-y-auto p-6">{children}</main>
     </div>
   )
 }
