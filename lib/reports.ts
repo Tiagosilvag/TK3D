@@ -820,6 +820,18 @@ export interface ConsignmentHistoryEvent {
   quantity: number
 }
 
+// Melhoria "Parceiros de consignação": entrega individual com saldo > 0,
+// candidata a receber um novo relatório de venda (mesma granularidade de
+// ConsignmentSaleReport.deliveryId -- uma entrega específica, não o
+// agregado por produto/cor que `products` acima mostra).
+export interface ConsignmentSaleableDelivery {
+  deliveryId: string
+  productName: string
+  colorLabel: string | null
+  colorHex: string | null
+  remaining: number
+}
+
 export interface ConsignmentPartnerDetail {
   partnerId: string
   partnerName: string
@@ -829,6 +841,7 @@ export interface ConsignmentPartnerDetail {
   totalSold: number
   commissionOwed: number
   products: ConsignmentProductBreakdown[]
+  saleableDeliveries: ConsignmentSaleableDelivery[]
   history: ConsignmentHistoryEvent[]
 }
 
@@ -887,9 +900,24 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
   let totalSold = 0
   let commissionOwed = 0
 
+  const saleableDeliveries: ConsignmentSaleableDelivery[] = []
+
   for (const delivery of partner.deliveries) {
     const variantKey = delivery.colorComboKey
-    const colorLabel = variantKey ? (variantInfoByProductAndKey.get(`${delivery.productId}::${variantKey}`)?.label ?? null) : null
+    const variantInfo = variantKey ? variantInfoByProductAndKey.get(`${delivery.productId}::${variantKey}`) : undefined
+    const colorLabel = variantKey ? (variantInfo?.label ?? null) : null
+
+    const deliverySold = delivery.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
+    const deliveryRemaining = Math.max(0, delivery.quantityDelivered - deliverySold)
+    if (deliveryRemaining > 0) {
+      saleableDeliveries.push({
+        deliveryId: delivery.id,
+        productName: delivery.product.name,
+        colorLabel,
+        colorHex: variantInfo?.colorHex ?? null,
+        remaining: deliveryRemaining,
+      })
+    }
 
     const product = byProduct.get(delivery.productId) ?? { productName: delivery.product.name, delivered: 0, sold: 0, variants: new Map() }
     product.delivered += delivery.quantityDelivered
@@ -941,6 +969,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
     totalSold,
     commissionOwed,
     products: productsBreakdown,
+    saleableDeliveries,
     history,
   }
 }

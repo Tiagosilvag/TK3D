@@ -47,7 +47,11 @@ export default async function ConsignmentPartnerDetailPage({ params }: { params:
       </div>
 
       <div className="mt-6">
-        <PartnerStockSection products={detail.products} />
+        <PartnerStockSection
+          products={detail.products}
+          saleableDeliveries={detail.saleableDeliveries}
+          defaultCommissionPercent={detail.defaultCommissionPercent}
+        />
       </div>
 
       <div className="mt-6 tk-panel p-4">
