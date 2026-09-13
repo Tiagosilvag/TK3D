@@ -138,6 +138,12 @@ export function ConfirmAssemblyForm({
 }) {
   const router = useRouter()
   const [step, setStep] = useState<1 | 2 | 3>(1)
+  // Melhoria "aviso de sucesso": fechar a modal direto (fix anterior) tirava
+  // a tela debaixo do usuário rápido demais pra notar que a montagem
+  // realmente aconteceu -- mostra "Montagem confirmada!" por um instante
+  // ANTES de navegar pra /assembly (mesmo redirecionamento de antes, só
+  // com um respiro visual no meio).
+  const [confirmed, setConfirmed] = useState(false)
   const selectables = useMemo(() => toSelectables(parts, components), [parts, components])
   const accessoryColorSelectables = useMemo(() => toAccessoryColorSelectables(accessoryRequirements), [accessoryRequirements])
   const colorSelectables = useMemo(
@@ -223,12 +229,13 @@ export function ConfirmAssemblyForm({
       // números no fundo (ex.: "sem estoque" quando a última unidade acabou
       // de ser consumida) -- a modal continuava aberta na mesma tela,
       // exatamente como estava, sem NENHUM sinal de que a montagem tinha
-      // sido registrada. Mesma convenção do resto do app pra ação
-      // confirmada com sucesso (ver AdjustStockButton.tsx): fechar a modal
-      // (AssemblyDetailModal fecha sozinha ao voltar pra /assembly sem
-      // ?productId=) É a confirmação -- e a lista geral já chega com os
-      // números atualizados (revalidatePath dentro de confirmAssembly).
-      router.push('/assembly')
+      // sido registrada. Mostra "Montagem confirmada!" por 1,2s -- tempo
+      // suficiente pra notar -- e só então navega pra /assembly (mesmo
+      // redirecionamento de antes: AssemblyDetailModal fecha sozinha ao
+      // voltar sem ?productId=, e a lista geral já chega com os números
+      // atualizados via revalidatePath dentro de confirmAssembly).
+      setConfirmed(true)
+      setTimeout(() => router.push('/assembly'), 1200)
     } else {
       alert(result.error)
     }
@@ -236,6 +243,19 @@ export function ConfirmAssemblyForm({
 
   const partItems = selectables.slice(0, parts.length)
   const componentItems = selectables.slice(parts.length)
+
+  if (confirmed) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+        <span className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400">
+          <svg viewBox="0 0 20 20" fill="currentColor" className="h-7 w-7" aria-hidden>
+            <path fillRule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7.5 7.5a1 1 0 0 1-1.4 0l-3.5-3.5a1 1 0 1 1 1.4-1.4l2.8 2.8 6.8-6.8a1 1 0 0 1 1.4 0Z" clipRule="evenodd" />
+          </svg>
+        </span>
+        <p className="font-display text-base font-semibold text-emerald-600 dark:text-emerald-400">Montagem confirmada!</p>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
