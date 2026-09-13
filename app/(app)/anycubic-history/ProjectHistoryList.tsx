@@ -70,6 +70,7 @@ export function ProjectHistoryList({ initialTasks, initialNextPage }: { initialT
 
   return (
     <div className="space-y-3">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
       {tasks.map((task) => {
         const statusInfo = task.printStatus !== null ? STATUS_LABELS[task.printStatus] : undefined
         const totalGrams = task.materialBreakdown?.reduce((sum, m) => sum + m.grams, 0) ?? null
@@ -117,6 +118,7 @@ export function ProjectHistoryList({ initialTasks, initialNextPage }: { initialT
           </div>
         )
       })}
+      </div>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
