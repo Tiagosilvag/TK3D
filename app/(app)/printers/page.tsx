@@ -7,6 +7,10 @@ import { deletePrinter, reactivatePrinter, deletePrinterPermanently } from '@/ac
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { DeletePrinterButton } from '@/components/DeletePrinterButton'
 import { ActionsMenu } from '@/components/ActionsMenu'
+import { BambuConnectionForm } from '../settings/BambuConnectionForm'
+import { AnycubicConnectionForm } from '../settings/AnycubicConnectionForm'
+import { getBambuConnectionStatus } from '@/actions/bambuStatus'
+import { getAnycubicStatus } from '@/actions/anycubicStatus'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,10 +35,18 @@ export default async function PrintersPage({
 }) {
   const { editId } = await searchParams
 
-  const [printers, inactivePrinters, editingPrinterRecord] = await Promise.all([
+  const [printers, inactivePrinters, editingPrinterRecord, settings, bambuConnectionStatus, anycubicConnectionStatus] = await Promise.all([
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.printer.findMany({ where: { active: false }, orderBy: { name: 'asc' } }),
     editId ? prisma.printer.findUnique({ where: { id: editId } }) : null,
+    // Melhoria "Impressoras": as integrações Bambu/Anycubic (número de
+    // série/"key" configurados por impressora, ver bambuEnabled/
+    // anycubicEnabled acima) mudaram de Configurações pra cá -- é aqui que
+    // a impressora que vai usar cada integração é escolhida, faz mais
+    // sentido a conexão da conta ficar ao lado dela.
+    prisma.settings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } }),
+    getBambuConnectionStatus(),
+    getAnycubicStatus(),
   ])
 
   const editingPrinter = editingPrinterRecord
@@ -196,6 +208,11 @@ export default async function PrintersPage({
           </div>
         </details>
       )}
+
+      <div className="mt-8 space-y-4">
+        <BambuConnectionForm connectedEmail={settings.bambuCloudEmail} connectionStatus={bambuConnectionStatus} />
+        <AnycubicConnectionForm connectedEmail={settings.anycubicUserEmail} connectionStatus={anycubicConnectionStatus} />
+      </div>
     </div>
   )
 }

@@ -17,8 +17,8 @@ export default async function BambuHistoryPage() {
       {!result.success ? (
         <div className="tk-panel p-4 text-sm text-amber-600 dark:text-amber-400">
           {result.error ?? 'Falha ao buscar histórico'}.{' '}
-          <Link href="/settings" className="underline">
-            Ver Configurações
+          <Link href="/printers" className="underline">
+            Ver Impressoras
           </Link>
           .
         </div>
