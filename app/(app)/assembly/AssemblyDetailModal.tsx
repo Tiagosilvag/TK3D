@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type { AssemblyStatus } from '@/actions/assembly'
+import { isOutsideDialogClick } from '@/lib/dialog'
 import { ConfirmAssemblyForm } from './ConfirmAssemblyForm'
 import type { ComponentOption } from './ComponentCategoryCard'
 
@@ -46,7 +47,7 @@ export function AssemblyDetailModal({
     <dialog
       ref={dialogRef}
       onClose={close}
-      onClick={(e) => { if (e.target === dialogRef.current) close() }}
+      onClick={(e) => { if (isOutsideDialogClick(e)) close() }}
       className="w-full [--tk-dialog-cap:56rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/60 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
       {status && (

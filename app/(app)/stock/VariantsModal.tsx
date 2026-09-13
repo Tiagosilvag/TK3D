@@ -1,6 +1,7 @@
 'use client'
 import { Fragment, useEffect, useRef, useState } from 'react'
 import type { VariantAttr, VariantAttrTier } from '@/lib/reports'
+import { isOutsideDialogClick } from '@/lib/dialog'
 import type { StockRow } from './StockExplorer'
 import { EditVariantColorsForm } from './EditVariantColorsForm'
 
@@ -101,7 +102,7 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
     <dialog
       ref={dialogRef}
       onClose={onClose}
-      onClick={(e) => { if (e.target === dialogRef.current) onClose() }}
+      onClick={(e) => { if (isOutsideDialogClick(e)) onClose() }}
       className="w-full [--tk-dialog-cap:760px] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/60 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
       {product && (

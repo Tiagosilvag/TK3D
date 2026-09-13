@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { isOutsideDialogClick } from '@/lib/dialog'
 
 export interface FilamentSelectOption {
   id: string
@@ -81,7 +82,7 @@ export function FilamentSelect({
       {mounted && createPortal(
         <dialog
           ref={dialogRef}
-          onClick={(e) => { if (e.target === dialogRef.current) close() }}
+          onClick={(e) => { if (isOutsideDialogClick(e)) close() }}
           className="w-full [--tk-dialog-cap:24rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
         >
           <div className="flex max-h-[70vh] flex-col">
