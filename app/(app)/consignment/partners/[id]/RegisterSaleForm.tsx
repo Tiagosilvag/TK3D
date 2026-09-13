@@ -60,7 +60,10 @@ function buildRows(deliveries: ConsignmentSaleableDelivery[]): SaleRow[] {
 // um preço diferente do cadastrado na entrega -- cada linha pré-preenche
 // com ConsignmentSaleableDelivery.unitPrice (o valor da entrega) mas
 // permite sobrescrever só para aquela venda (ConsignmentSaleReport.unitPrice,
-// nulo quando igual ao da entrega -- ver comentário no schema).
+// nulo quando igual ao da entrega -- ver comentário no schema). Pedido
+// "adicionar um valor pra todas em massa": `applyBulkPrice` sobrescreve o
+// campo de TODAS as linhas de uma vez, evitando editar campo por campo
+// quando o parceiro vendeu tudo pelo mesmo valor combinado.
 export function RegisterSaleForm({
   deliveries,
   defaultCommissionPercent,
@@ -75,6 +78,7 @@ export function RegisterSaleForm({
   const [rows, setRows] = useState<SaleRow[]>(() => buildRows(deliveries))
   const [reportDate, setReportDate] = useState(today())
   const [notes, setNotes] = useState('')
+  const [bulkPrice, setBulkPrice] = useState('')
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -100,6 +104,17 @@ export function RegisterSaleForm({
 
   function unmarkAll() {
     setRows((prev) => prev.map((r) => ({ ...r, checked: false })))
+  }
+
+  // Pedido "opção de adicionar um valor para todas as unidades em massa":
+  // sobrescreve o preço unitário de TODAS as linhas de uma vez (marcadas ou
+  // não -- só reflete na venda de fato pras que ficarem marcadas na hora de
+  // enviar), em vez de precisar editar campo por campo quando o parceiro
+  // vendeu tudo pelo mesmo valor combinado.
+  function applyBulkPrice() {
+    const price = bulkPrice.trim()
+    if (!price) return
+    setRows((prev) => prev.map((r) => ({ ...r, unitPrice: price })))
   }
 
   async function action() {
@@ -183,6 +198,24 @@ export function RegisterSaleForm({
                 Desmarcar todas
               </button>
             </div>
+          </div>
+
+          <div className="flex items-center gap-2 rounded-lg bg-slate-50 p-2 dark:bg-slate-800/60">
+            <label className="flex-1 text-xs text-slate-500 dark:text-slate-400">
+              Aplicar preço unit. (R$) a todas
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={bulkPrice}
+                onChange={(e) => setBulkPrice(e.target.value)}
+                placeholder="Ex: 17,14"
+                className="tk-input-full"
+              />
+            </label>
+            <button type="button" onClick={applyBulkPrice} className="mt-4 shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700">
+              Aplicar
+            </button>
           </div>
 
           <div className="space-y-2">
