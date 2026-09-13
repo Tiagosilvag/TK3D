@@ -102,7 +102,7 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
       ref={dialogRef}
       onClose={onClose}
       onClick={(e) => { if (e.target === dialogRef.current) onClose() }}
-      className="w-full max-w-[760px] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/60 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      className="w-full [--tk-dialog-cap:760px] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/60 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
       {product && (
         <div className="flex max-h-[75vh] flex-col">

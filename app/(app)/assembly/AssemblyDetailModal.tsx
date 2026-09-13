@@ -47,7 +47,7 @@ export function AssemblyDetailModal({
       ref={dialogRef}
       onClose={close}
       onClick={(e) => { if (e.target === dialogRef.current) close() }}
-      className="w-full max-w-4xl rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/60 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      className="w-full [--tk-dialog-cap:56rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/60 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
       {status && (
         <div className="flex max-h-[85vh] flex-col">

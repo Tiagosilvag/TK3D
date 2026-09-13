@@ -178,7 +178,7 @@ export function DeliveryBatchForm({
     <dialog
       ref={dialogRef}
       onClose={() => { onOpenChange(false); resetAll() }}
-      className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      className="w-full [--tk-dialog-cap:28rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
       {view === 'pickProduct' && (
         <div className="grid gap-3 p-5">

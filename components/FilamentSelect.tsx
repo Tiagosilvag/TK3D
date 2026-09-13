@@ -82,7 +82,7 @@ export function FilamentSelect({
         <dialog
           ref={dialogRef}
           onClick={(e) => { if (e.target === dialogRef.current) close() }}
-          className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+          className="w-full [--tk-dialog-cap:24rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
         >
           <div className="flex max-h-[70vh] flex-col">
             <div className="border-b border-slate-200 p-3 dark:border-slate-800">

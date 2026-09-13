@@ -124,7 +124,7 @@ export function AccessoryForm({
     <dialog
       ref={dialogRef}
       onClose={() => { onOpenChange(false); resetFields() }}
-      className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      className="w-full [--tk-dialog-cap:32rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
       {view === 'manageTypes' ? (
         <div className="p-5">
