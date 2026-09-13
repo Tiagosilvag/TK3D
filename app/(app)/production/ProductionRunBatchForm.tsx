@@ -578,7 +578,7 @@ export function ProductionRunBatchForm({
     <dialog
       ref={dialogRef}
       onClose={() => { onOpenChange(false); resetAll() }}
-      className="w-full [--tk-dialog-cap:44rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      className="w-full [--tk-dialog-cap:56rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
       <form action={mode === 'individual' ? individualAction : plateAction} className="grid gap-3 p-5">
         <div className="flex items-center justify-between">
@@ -611,7 +611,7 @@ export function ProductionRunBatchForm({
             </label>
 
             {rows.length > 0 && (
-              <div className="max-h-[50vh] overflow-y-auto pr-1">
+              <div>
                 {isComposite && (
                   <div className="mb-2 flex items-center justify-between">
                     <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Peças deste produto</p>
@@ -872,7 +872,7 @@ export function ProductionRunBatchForm({
             </div>
 
             {plateItems.length > 0 && (
-              <div className="max-h-[40vh] space-y-3 overflow-y-auto pr-1">
+              <div className="space-y-3">
                 {plateItems.map((item) => {
                   const failed = failedFor(item)
                   const planned = parseInt(item.quantityPlanned, 10) || 0
