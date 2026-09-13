@@ -12,6 +12,13 @@ html {
 
 body {
   overflow-x: hidden;
+  /* Bug "duas barras de rolagem / área preta embaixo": o shell autenticado
+     (AppLayoutClient) é h-screen -- nunca deveria ser o <body> a rolar, só
+     <nav>/<main> internamente. overscroll-behavior-y:none aqui é a última
+     linha de defesa: mesmo que scroll chaining escape do overscroll-contain
+     de main/nav (ver comentário em AppLayoutClient.tsx), o body em si nunca
+     se move, então nunca revela o vazio abaixo do container h-screen. */
+  overscroll-behavior-y: none;
   @apply bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100;
 }
 

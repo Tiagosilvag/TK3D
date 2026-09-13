@@ -139,14 +139,21 @@ export async function startAnycubicListener(): Promise<void> {
   core = createAnycubicListenerCore({
     printers,
     subscribe: (printerKey, onMessage) => {
-      // machine_type não é usado pra roteamento aqui -- assina com "+" no
-      // lugar dele, já que só precisamos filtrar por key (o "+" aceita
-      // qualquer machine_type, sem precisar saber o valor exato).
-      const topic = `${MQTT_TOPIC_PREFIX}/printer/app/+/${printerKey}/#`
-      client!.subscribe(topic)
+      // O projeto de referência assina DOIS padrões de tópico por
+      // impressora, não um -- "printer/app/..." (visto inicialmente) e
+      // "+/public/..." (achado relendo o código de referência depois de
+      // testar contra a conta real e não chegar report nenhum). A key da
+      // impressora cai sempre no índice 6 em ambos os formatos, então dá
+      // pra rotear os dois com o mesmo filtro. machine_type vira "+" nos
+      // dois (não precisamos saber o valor exato, só filtrar por key).
+      const topics = [
+        `${MQTT_TOPIC_PREFIX}/printer/app/+/${printerKey}/#`,
+        `${MQTT_TOPIC_PREFIX}/+/public/+/${printerKey}/#`,
+      ]
+      for (const topic of topics) client!.subscribe(topic)
       client!.on('message', (receivedTopic, buffer) => {
         const parts = receivedTopic.split('/')
-        if (parts[3] !== 'printer' || parts[4] !== 'app' || parts[6] !== printerKey) return
+        if (parts[6] !== printerKey) return
         try {
           onMessage(JSON.parse(buffer.toString()))
         } catch {

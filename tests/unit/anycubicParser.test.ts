@@ -71,6 +71,80 @@ describe('anycubic parser', () => {
     expect(buildStatusPatch({ type: 'multiColorBox', action: 'x', state: 'y', data: {} })).toEqual({})
   })
 
+  it('buildStatusPatch extrai temperatura atual de dentro de uma mensagem type=print também (não só type=tempature)', () => {
+    const patch = buildStatusPatch({
+      type: 'print',
+      action: 'start',
+      state: 'printing',
+      data: { curr_hotbed_temp: 60, curr_nozzle_temp: 215 },
+    })
+    expect(patch.bedTemp).toBe(60)
+    expect(patch.nozzleTemp).toBe(215)
+  })
+
+  it('buildStatusPatch extrai temperatura alvo/velocidade de dentro de data.settings (mensagem action=start|update, state=updated)', () => {
+    const patch = buildStatusPatch({
+      type: 'print',
+      action: 'update',
+      state: 'updated',
+      data: {
+        curr_hotbed_temp: 59,
+        curr_nozzle_temp: 212,
+        settings: { fan_speed_pct: 88, print_speed_pct: 120, print_speed_mode: 2, target_hotbed_temp: 60, target_nozzle_temp: 215 },
+      },
+    })
+    expect(patch).toEqual({
+      bedTemp: 59,
+      nozzleTemp: 212,
+      fanSpeedPercent: 88,
+      printSpeedPercent: 120,
+      printSpeedMode: 2,
+      bedTargetTemp: 60,
+      nozzleTargetTemp: 215,
+    })
+    // 'updated' é só notificação de ajuste de configuração -- não é
+    // transição de estado de impressão, não deve mexer em printState.
+    expect(patch.printState).toBeUndefined()
+  })
+
+  it('buildStatusPatch não quebra quando data.settings está ausente numa mensagem type=print', () => {
+    const patch = buildStatusPatch({ type: 'print', action: 'start', state: 'printing', data: { progress: 10 } })
+    expect(patch.fanSpeedPercent).toBeUndefined()
+    expect(patch.progressPercent).toBe(10)
+  })
+
+  it('buildStatusPatch extrai a versão de firmware de uma mensagem type=ota (action=reportVersion, state=done)', () => {
+    const patch = buildStatusPatch({
+      type: 'ota',
+      action: 'reportVersion',
+      state: 'done',
+      data: { firmware_version: '1.2.3.4', device_unionid: 'x' },
+    })
+    expect(patch.firmwareVersion).toBe('1.2.3.4')
+  })
+
+  it('buildStatusPatch ignora mensagem type=ota de outro action/state (ex.: update/start, sem firmware_version ainda)', () => {
+    const patch = buildStatusPatch({ type: 'ota', action: 'update', state: 'start', data: {} })
+    expect(patch.firmwareVersion).toBeUndefined()
+  })
+
+  it('buildStatusPatch extrai a mensagem de erro quando a impressão falha (msg no nível raiz do payload, não em data)', () => {
+    const patch = buildStatusPatch({
+      type: 'print',
+      action: 'start',
+      state: 'failed',
+      data: {},
+      msg: 'Filament runout',
+    })
+    expect(patch.printState).toBe('CANCELLED')
+    expect(patch.printErrorMessage).toBe('Filament runout')
+  })
+
+  it('buildStatusPatch não seta printErrorMessage quando a impressão não falhou', () => {
+    const patch = buildStatusPatch({ type: 'print', action: 'start', state: 'printing', data: {} })
+    expect(patch.printErrorMessage).toBeUndefined()
+  })
+
   it('applyStatusPatch mescla só os campos presentes no patch, preservando o resto', () => {
     const prev = { ...INITIAL_ANYCUBIC_STATUS, nozzleTemp: 200, bedTemp: 55 }
     const next = applyStatusPatch(prev, { fanSpeedPercent: 90 })
