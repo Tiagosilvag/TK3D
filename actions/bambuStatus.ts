@@ -1,7 +1,7 @@
 'use server'
 import { prisma } from '@/lib/prisma'
 import { getLiveStatus, getConnectionStatus, restartBambuListener, getCurrentThumbnail } from '@/lib/bambu/listener'
-import { getAnycubicLiveStatus } from '@/lib/anycubic/listener'
+import { getAnycubicLiveStatus, getAnycubicProjectInfo } from '@/lib/anycubic/listener'
 import { decryptCredential } from '@/lib/crypto'
 import { fetchBoundDevices, fetchTaskHistory, type BambuDevice, type BambuCloudTaskFull } from '@/lib/bambu/auth'
 import { revalidatePath } from 'next/cache'
@@ -53,12 +53,15 @@ export async function getAllLiveStatuses() {
         thumbnailUrl: getCurrentThumbnail(printer.id),
       }
     }
+    const projectInfo = getAnycubicProjectInfo(printer.id)
     return {
       printerId: printer.id,
       name: printer.nickname ?? printer.name,
       brand: 'anycubic' as const,
       status: getAnycubicLiveStatus(printer.id),
-      thumbnailUrl: null,
+      thumbnailUrl: projectInfo?.thumbnailUrl ?? null,
+      modelDimensions: projectInfo?.modelDimensions ?? null,
+      materialBreakdown: projectInfo?.materialBreakdown ?? null,
     }
   })
 }

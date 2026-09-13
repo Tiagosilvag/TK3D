@@ -65,4 +65,44 @@ describe('createAnycubicListenerCore', () => {
     expect(onCapture).toHaveBeenCalledTimes(1)
     expect(onCapture).toHaveBeenCalledWith('p1', expect.objectContaining({ outcome: 'FINISHED' }))
   })
+
+  it('chama onJobStart uma vez quando o taskid muda (job novo)', () => {
+    const handlers: Record<string, (payload: unknown) => void> = {}
+    const onJobStart = vi.fn()
+    const core = createAnycubicListenerCore({
+      printers: [{ id: 'p1', anycubicEnabled: true, anycubicPrinterKey: 'KEY1' }],
+      subscribe: (key, handler) => {
+        handlers[key] = handler
+      },
+      onCapture: vi.fn(),
+      onJobStart,
+    })
+    core.start()
+    handlers['KEY1']({ type: 'print', action: 'start', state: 'printing', data: { taskid: 111 } })
+    expect(onJobStart).toHaveBeenCalledTimes(1)
+    expect(onJobStart).toHaveBeenCalledWith('p1', 111)
+    // Mesmo taskid em ticks seguintes -- não dispara de novo
+    handlers['KEY1']({ type: 'print', action: 'start', state: 'printing', data: { taskid: 111 } })
+    expect(onJobStart).toHaveBeenCalledTimes(1)
+    // Taskid novo -- dispara de novo
+    handlers['KEY1']({ type: 'print', action: 'start', state: 'printing', data: { taskid: 222 } })
+    expect(onJobStart).toHaveBeenCalledTimes(2)
+    expect(onJobStart).toHaveBeenLastCalledWith('p1', 222)
+  })
+
+  it('não chama onJobStart quando a mensagem não traz taskid', () => {
+    const handlers: Record<string, (payload: unknown) => void> = {}
+    const onJobStart = vi.fn()
+    const core = createAnycubicListenerCore({
+      printers: [{ id: 'p1', anycubicEnabled: true, anycubicPrinterKey: 'KEY1' }],
+      subscribe: (key, handler) => {
+        handlers[key] = handler
+      },
+      onCapture: vi.fn(),
+      onJobStart,
+    })
+    core.start()
+    handlers['KEY1']({ type: 'fan', action: 'auto', state: 'done', data: { fan_speed_pct: 50 } })
+    expect(onJobStart).not.toHaveBeenCalled()
+  })
 })

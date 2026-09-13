@@ -30,14 +30,6 @@ export type AnycubicStatus = {
   suppliesUsage: number | null
   firmwareVersion: string | null
   printErrorMessage: string | null
-  // "Informações do arquivo" que o próprio Anycubic Slicer mostra
-  // (dimensões do modelo, consumo por cor) não vêm do MQTT nem de nenhuma
-  // API de nuvem -- o app lê isso direto de dentro do arquivo .3mf/.gcode
-  // (ZIP com metadado embutido). Campos ficam aqui, sempre null por
-  // enquanto, prontos pro dia que um parser de arquivo for construído
-  // (precisa antes achar um endpoint de download do arquivo original).
-  modelDimensions: string | null
-  materialBreakdown: { color: string; grams: number }[] | null
 }
 
 export const INITIAL_ANYCUBIC_STATUS: AnycubicStatus = {
@@ -58,8 +50,6 @@ export const INITIAL_ANYCUBIC_STATUS: AnycubicStatus = {
   suppliesUsage: null,
   firmwareVersion: null,
   printErrorMessage: null,
-  modelDimensions: null,
-  materialBreakdown: null,
 }
 
 export type AnycubicMqttMessage = {
@@ -198,6 +188,18 @@ export function buildStatusPatch(msg: AnycubicMqttMessage): Partial<AnycubicStat
   }
 
   return patch
+}
+
+// O taskid identifica o job pra buscar depois em GET /v2/project/info
+// (thumbnail + consumo por cor + dimensões, ver lib/anycubic/auth.ts) --
+// mesmo campo que a própria Anycubic usa internamente pra correlacionar
+// mensagens MQTT de progresso ao projeto (visto no código de referência).
+// Função separada de buildStatusPatch porque o listener usa isso pra
+// decidir quando buscar a info do job (ver onJobStart), não é parte do
+// status ao vivo que a UI lê.
+export function extractAnycubicTaskId(msg: AnycubicMqttMessage): number | undefined {
+  if (msg.type !== 'print') return undefined
+  return numIfPresent(msg.data, 'taskid')
 }
 
 export function applyStatusPatch(prev: AnycubicStatus, patch: Partial<AnycubicStatus>): AnycubicStatus {

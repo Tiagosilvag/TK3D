@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseAnycubicPayload, buildStatusPatch, applyStatusPatch, INITIAL_ANYCUBIC_STATUS } from '@/lib/anycubic/parser'
+import { parseAnycubicPayload, buildStatusPatch, applyStatusPatch, extractAnycubicTaskId, INITIAL_ANYCUBIC_STATUS } from '@/lib/anycubic/parser'
 
 describe('anycubic parser', () => {
   it('parseAnycubicPayload aceita um payload válido com type/action/state/data', () => {
@@ -151,5 +151,19 @@ describe('anycubic parser', () => {
     expect(next.fanSpeedPercent).toBe(90)
     expect(next.nozzleTemp).toBe(200)
     expect(next.bedTemp).toBe(55)
+  })
+})
+
+describe('extractAnycubicTaskId', () => {
+  it('extrai o taskid de uma mensagem type=print', () => {
+    expect(extractAnycubicTaskId({ type: 'print', action: 'start', state: 'printing', data: { taskid: 12345 } })).toBe(12345)
+  })
+
+  it('devolve undefined pra mensagem sem taskid', () => {
+    expect(extractAnycubicTaskId({ type: 'print', action: 'start', state: 'printing', data: {} })).toBeUndefined()
+  })
+
+  it('devolve undefined pra mensagem que não é type=print (ex.: fan, tempature)', () => {
+    expect(extractAnycubicTaskId({ type: 'fan', action: 'auto', state: 'done', data: { taskid: 999 } })).toBeUndefined()
   })
 })

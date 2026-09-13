@@ -260,22 +260,22 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                 <details className="pt-1">
                   <summary className="tk-summary cursor-pointer text-xs">Informações do arquivo</summary>
                   <div className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
-                    {printer.status.modelDimensions && <p>Dimensões: {printer.status.modelDimensions}</p>}
+                    {printer.modelDimensions && <p>Dimensões: {printer.modelDimensions}</p>}
                     {printer.status.suppliesUsage !== null && <p>Consumo estimado: {printer.status.suppliesUsage}g</p>}
-                    {printer.status.materialBreakdown && printer.status.materialBreakdown.length > 0 && (
+                    {printer.materialBreakdown && printer.materialBreakdown.length > 0 && (
                       <div className="flex flex-wrap gap-1 pt-0.5">
-                        {printer.status.materialBreakdown.map((material, i) => (
+                        {printer.materialBreakdown.map((material, i) => (
                           <span
                             key={i}
-                            className="rounded border border-slate-200 px-1.5 py-0.5 dark:border-slate-700"
-                            style={{ backgroundColor: material.color }}
+                            className="rounded border border-slate-300 px-1.5 py-0.5 font-medium text-white dark:border-slate-600"
+                            style={{ backgroundColor: material.colorHex ?? '#64748b' }}
                           >
-                            {material.grams}g
+                            {material.materialType} {material.grams}g
                           </span>
                         ))}
                       </div>
                     )}
-                    {!printer.status.modelDimensions && printer.status.suppliesUsage === null && (
+                    {!printer.modelDimensions && printer.status.suppliesUsage === null && (
                       <p className="italic">Sem dados de arquivo disponíveis ainda</p>
                     )}
                   </div>

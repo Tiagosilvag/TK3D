@@ -5,12 +5,14 @@ import {
   parseAnycubicPayload,
   buildStatusPatch,
   applyStatusPatch,
+  extractAnycubicTaskId,
   INITIAL_ANYCUBIC_STATUS,
   type AnycubicStatus,
 } from '@/lib/anycubic/parser'
 import { createAnycubicJobTracker, type AnycubicCaptureDraft } from '@/lib/anycubic/jobTracker'
 import { encryptMqttToken, buildMqttUsername, buildMqttClientId } from '@/lib/anycubic/mqttCrypto'
 import { ANYCUBIC_MQTT_CA_CERT, ANYCUBIC_MQTT_CLIENT_CERT, ANYCUBIC_MQTT_CLIENT_KEY } from '@/lib/anycubic/certs'
+import { fetchProjectInfo, type AnycubicProjectInfo } from '@/lib/anycubic/auth'
 
 type PrinterRef = { id: string; anycubicEnabled: boolean; anycubicPrinterKey: string | null }
 
@@ -22,9 +24,15 @@ export function createAnycubicListenerCore(opts: {
   printers: PrinterRef[]
   subscribe: (printerKey: string, onMessage: (payload: unknown) => void) => void
   onCapture: (printerId: string, capture: AnycubicCaptureDraft) => void
+  // Dispara UMA vez quando o taskid muda (job novo) -- mesmo papel do
+  // onJobStart da Bambu, mas usando o taskid (id do job na Anycubic) em
+  // vez do nome do arquivo, já que é o taskid que GET /v2/project/info
+  // precisa (ver lib/anycubic/auth.ts#fetchProjectInfo).
+  onJobStart?: (printerId: string, taskId: number) => void
 }) {
   const liveStatus = new Map<string, AnycubicStatus>()
   const trackers = new Map<string, ReturnType<typeof createAnycubicJobTracker>>()
+  const lastTaskId = new Map<string, number>()
 
   function start() {
     for (const printer of opts.printers) {
@@ -34,6 +42,13 @@ export function createAnycubicListenerCore(opts: {
       opts.subscribe(printer.anycubicPrinterKey, (payload) => {
         const msg = parseAnycubicPayload(payload)
         if (!msg) return
+
+        const taskId = extractAnycubicTaskId(msg)
+        if (taskId !== undefined && taskId !== lastTaskId.get(printer.id)) {
+          lastTaskId.set(printer.id, taskId)
+          opts.onJobStart?.(printer.id, taskId)
+        }
+
         const patch = buildStatusPatch(msg)
         const prev = liveStatus.get(printer.id) ?? INITIAL_ANYCUBIC_STATUS
         const next = applyStatusPatch(prev, patch)
@@ -60,6 +75,12 @@ export type AnycubicConnectionStatus = 'connected' | 'expired' | 'not_configured
 let connectionStatus: AnycubicConnectionStatus = 'not_configured'
 let core: ReturnType<typeof createAnycubicListenerCore> | null = null
 let client: MqttClient | null = null
+// Info do job atual por impressora (thumbnail + consumo por cor +
+// dimensões) -- preenchida quando um job novo começa (onJobStart), via
+// GET /v2/project/info. Mesmo padrão do currentThumbnails da Bambu: cache
+// em memória separado do status ao vivo, porque vem de uma chamada HTTP
+// assíncrona, não do tick do MQTT.
+const currentProjectInfo = new Map<string, AnycubicProjectInfo>()
 
 const MQTT_HOST = 'mqtt-universe.anycubic.com'
 const MQTT_PORT = 8883
@@ -173,6 +194,15 @@ export async function startAnycubicListener(): Promise<void> {
           outcome: capture.outcome === 'FINISHED' ? 'FINISHED' : capture.outcome === 'CANCELLED' ? 'CANCELLED' : 'UNKNOWN',
         },
       })
+      currentProjectInfo.delete(printerId)
+    },
+    onJobStart: async (printerId, taskId) => {
+      try {
+        const info = await fetchProjectInfo(authToken, taskId)
+        currentProjectInfo.set(printerId, info)
+      } catch (err) {
+        console.error('[anycubic] falha ao buscar info do job atual:', err)
+      }
     },
   })
   core.start()
@@ -182,6 +212,10 @@ export function getAnycubicLiveStatus(printerId: string): AnycubicStatus | null 
   return core?.getLiveStatus(printerId) ?? null
 }
 
+export function getAnycubicProjectInfo(printerId: string): AnycubicProjectInfo | null {
+  return currentProjectInfo.get(printerId) ?? null
+}
+
 export async function restartAnycubicListener(): Promise<void> {
   if (client) {
     client.removeAllListeners()
@@ -189,6 +223,7 @@ export async function restartAnycubicListener(): Promise<void> {
     client = null
   }
   core = null
+  currentProjectInfo.clear()
   connectionStatus = 'not_configured'
   await startAnycubicListener()
 }
