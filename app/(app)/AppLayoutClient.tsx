@@ -47,6 +47,7 @@ const PRODUCTION_NAV_LINKS: NavLink[] = [
   // por ora -- ícone dedicado é ajuste cosmético que não bloqueia a task.
   { href: '/monitor', label: 'Monitoramento', icon: NavProductionIcon },
   { href: '/bambu-history', label: 'Histórico Bambu', icon: NavProductionIcon },
+  { href: '/anycubic-history', label: 'Histórico Anycubic', icon: NavProductionIcon },
 ]
 
 const CONSIGNMENT_NAV_LINKS: NavLink[] = [

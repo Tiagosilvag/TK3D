@@ -125,6 +125,30 @@ function extractModelDimensions(sliceParam: Record<string, unknown>): string | n
   return `${x} x ${y} x ${z} mm`
 }
 
+function strFromRecord(record: Record<string, unknown> | null, key: string): string | undefined {
+  const v = record?.[key]
+  return typeof v === 'string' ? v : undefined
+}
+
+// Thumbnail + consumo por cor + dimensões a partir de um registro de
+// projeto -- reaproveitado tanto pro job atual (fetchProjectInfo) quanto
+// pro histórico (fetchProjectHistory), já que os dois vêm no mesmo shape
+// de registro (img/slice_param no nível raiz).
+function extractThumbnailAndSliceInfo(record: Record<string, unknown>): AnycubicProjectInfo {
+  const sliceParam = parseSliceParam(record.slice_param)
+  // "img" é o campo confirmado no código de referência (from_list_json);
+  // "image_id" no nível raiz ou dentro de slice_param são tentativas
+  // alternativas, ainda não confirmadas contra uma resposta real.
+  const imgField = strFromRecord(record, 'img') ?? strFromRecord(record, 'image_id') ?? strFromRecord(sliceParam, 'image_id')
+  const thumbnailUrl = imgField ? (imgField.startsWith('http') ? imgField : `${PROJECT_IMAGE_BASE_URL}${imgField}`) : null
+
+  return {
+    thumbnailUrl,
+    materialBreakdown: sliceParam ? extractMaterialBreakdown(sliceParam) : null,
+    modelDimensions: sliceParam ? extractModelDimensions(sliceParam) : null,
+  }
+}
+
 // Busca a info completa do job (thumbnail + consumo por cor + dimensões)
 // pra enriquecer o card de Monitoramento -- disparada quando o taskid muda
 // (ver lib/anycubic/listener.ts#onJobStart), mesmo papel do
@@ -145,21 +169,55 @@ export async function fetchProjectInfo(authToken: string, taskId: number): Promi
   // Remover depois de confirmado.
   console.error('[anycubic debug] project/info raw response:', JSON.stringify(projectData))
 
-  const sliceParam = parseSliceParam(projectData.slice_param)
-  // "img" é o campo confirmado no código de referência (from_list_json);
-  // "image_id" no nível raiz ou dentro de slice_param são tentativas
-  // alternativas pra essa mesma resposta específica, ainda não confirmadas.
-  const imgField = strFromRecord(projectData, 'img') ?? strFromRecord(projectData, 'image_id') ?? strFromRecord(sliceParam, 'image_id')
-  const thumbnailUrl = imgField ? (imgField.startsWith('http') ? imgField : `${PROJECT_IMAGE_BASE_URL}${imgField}`) : null
-
-  return {
-    thumbnailUrl,
-    materialBreakdown: sliceParam ? extractMaterialBreakdown(sliceParam) : null,
-    modelDimensions: sliceParam ? extractModelDimensions(sliceParam) : null,
-  }
+  return extractThumbnailAndSliceInfo(projectData)
 }
 
-function strFromRecord(record: Record<string, unknown> | null, key: string): string | undefined {
-  const v = record?.[key]
-  return typeof v === 'string' ? v : undefined
+export type AnycubicHistoryTask = {
+  id: string
+  gcodeName: string | null
+  printerName: string | null
+  // Valor bruto de AnycubicPrintStatus (1=Printing, 2=Complete,
+  // 3=Cancelled, 4=Downloading, 5=Checking, 6=Preheating, 7=Slicing) --
+  // sem tradução aqui, a UI decide o rótulo.
+  printStatus: number | null
+  createTime: number | null
+  startTime: number | null
+  endTime: number | null
+  printTimeMinutes: number | null
+} & AnycubicProjectInfo
+
+const HISTORY_PAGE_SIZE = 20
+
+// Histórico oficial completo da conta Anycubic -- busca ao vivo direto da
+// nuvem a cada chamada, nunca salvo no banco, mesmo padrão do
+// fetchTaskHistory da Bambu. Endpoint real e ativo (GET
+// /work/project/getProjects), não é o "WIP" -- usado pela própria lib de
+// referência pra listar o histórico. create_time/start_time/end_time em
+// segundos Unix (confirmado pelo mesmo formato usado em user_email/
+// casdoor_user.create_time na resposta de login).
+export async function fetchProjectHistory(
+  authToken: string,
+  opts: { page?: number } = {},
+): Promise<{ tasks: AnycubicHistoryTask[]; hasMore: boolean }> {
+  const page = opts.page ?? 1
+  const res = await signedFetch(`/work/project/getProjects?page=${page}&limit=${HISTORY_PAGE_SIZE}`, { authToken })
+  if (!res.ok) throw new Error('Falha ao buscar histórico de impressões da Anycubic')
+  const data = (await res.json()) as { data?: unknown[] }
+  const records = Array.isArray(data.data) ? data.data : []
+
+  const tasks = records
+    .filter((r): r is Record<string, unknown> => typeof r === 'object' && r !== null)
+    .map((record) => ({
+      id: String(record.id ?? record.taskid ?? ''),
+      gcodeName: strFromRecord(record, 'gcode_name') ?? strFromRecord(record, 'model') ?? null,
+      printerName: strFromRecord(record, 'printer_name') ?? strFromRecord(record, 'machine_name') ?? null,
+      printStatus: toNumber(record.print_status) ?? null,
+      createTime: toNumber(record.create_time) ?? null,
+      startTime: toNumber(record.start_time) ?? null,
+      endTime: toNumber(record.end_time) ?? null,
+      printTimeMinutes: toNumber(record.print_time) ?? null,
+      ...extractThumbnailAndSliceInfo(record),
+    }))
+
+  return { tasks, hasMore: records.length >= HISTORY_PAGE_SIZE }
 }

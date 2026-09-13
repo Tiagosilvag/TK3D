@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { exchangeSlicerToken, fetchUserInfo, fetchMyPrinters, fetchProjectInfo } from '@/lib/anycubic/auth'
+import { exchangeSlicerToken, fetchUserInfo, fetchMyPrinters, fetchProjectInfo, fetchProjectHistory } from '@/lib/anycubic/auth'
 
 describe('anycubic auth client', () => {
   const originalFetch = global.fetch
@@ -139,5 +139,74 @@ describe('anycubic auth client', () => {
   it('fetchProjectInfo lança erro em resposta HTTP não-ok', async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }) as unknown as typeof fetch
     await expect(fetchProjectInfo('session-token-abc', 12345)).rejects.toThrow('Falha ao buscar informações do job')
+  })
+
+  it('fetchProjectHistory mapeia os registros da lista de projetos (nome, impressora, status, tempos)', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          {
+            id: 111,
+            gcode_name: 'peca.gcode',
+            printer_name: 'Kobra X',
+            print_status: 2,
+            create_time: 1700000000,
+            start_time: 1700000100,
+            end_time: 1700003700,
+            print_time: 60,
+            img: 'proj/111.png',
+            slice_param: { paint_infos: [{ material_type: 'PLA', color: '#dc2626', filament_used: 10 }] },
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch
+
+    const { tasks } = await fetchProjectHistory('session-token-abc')
+    expect(tasks).toEqual([
+      {
+        id: '111',
+        gcodeName: 'peca.gcode',
+        printerName: 'Kobra X',
+        printStatus: 2,
+        createTime: 1700000000,
+        startTime: 1700000100,
+        endTime: 1700003700,
+        printTimeMinutes: 60,
+        thumbnailUrl: 'https://workbentch.s3.us-east-2.amazonaws.com/proj/111.png',
+        materialBreakdown: [{ materialType: 'PLA', colorHex: '#dc2626', grams: 10 }],
+        modelDimensions: null,
+      },
+    ])
+
+    const [url] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(String(url)).toContain('/work/project/getProjects?page=1')
+  })
+
+  it('fetchProjectHistory usa a página pedida e sinaliza hasMore quando a página vem cheia', async () => {
+    const twentyRecords = Array.from({ length: 20 }, (_, i) => ({ id: i, gcode_name: `f${i}.gcode` }))
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: twentyRecords }) }) as unknown as typeof fetch
+
+    const result = await fetchProjectHistory('session-token-abc', { page: 2 })
+    expect(result.hasMore).toBe(true)
+    expect(result.tasks).toHaveLength(20)
+
+    const [url] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(String(url)).toContain('page=2')
+  })
+
+  it('fetchProjectHistory sinaliza hasMore=false quando a página vem incompleta', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: 1, gcode_name: 'unico.gcode' }] }),
+    }) as unknown as typeof fetch
+
+    const result = await fetchProjectHistory('session-token-abc')
+    expect(result.hasMore).toBe(false)
+  })
+
+  it('fetchProjectHistory lança erro em resposta HTTP não-ok', async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }) as unknown as typeof fetch
+    await expect(fetchProjectHistory('session-token-abc')).rejects.toThrow('Falha ao buscar histórico')
   })
 })
