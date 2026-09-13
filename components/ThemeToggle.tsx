@@ -58,8 +58,17 @@ export function ThemeToggle() {
         className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${isDark ? 'bg-violet-500' : 'bg-slate-300 dark:bg-slate-700'}`}
         aria-hidden
       >
+        {/* Bug "bolinha saindo do fundo": sem `left` explícito, a posição
+            base ficava implícita (static position do position:absolute) e
+            as duas translações (0.5 pro claro, 4 pro escuro) partiam desse
+            ponto ambíguo -- deixava a bolinha encostar/passar da borda
+            arredondada no tema escuro. `left-0.5` fixa a base em 2px da
+            borda esquerda (mesmo respiro vertical que já tinha com
+            top-0.5); tema escuro só translada os 16px que faltam pra
+            ficar a 2px da direita (36px de trilho − 16px de bolinha −
+            2px de respiro), simétrico com o lado esquerdo. */}
         <span
-          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${isDark ? 'translate-x-4' : 'translate-x-0.5'}`}
+          className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${isDark ? 'translate-x-4' : 'translate-x-0'}`}
         />
       </span>
     </button>

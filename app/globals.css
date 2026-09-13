@@ -71,11 +71,12 @@ body {
    renderizar em vez de só um fundo escuro intencional. Base em slate-900
    (mesmo tom da sidebar) em vez de slate-950 garante que esse vão nunca
    fica mais escuro que a própria sidebar ao lado. */
-/* Tons -100 (em vez de -50): pedido explícito do usuário pra o degradê no
-   tema claro ficar mais perceptível nas cores da aplicação -- -50 era claro
-   demais, quase imperceptível ao lado do branco dos painéis. */
+/* Tons -200 (era -100, antes -50): pedido explícito do usuário pra
+   escurecer mais o degradê do tema claro e deixar num roxo só (sem o
+   fuchsia nas pontas, que puxava pra rosa) -- via-violet-50 no meio em vez
+   de via-white, pra não lavar o tom de volta pro branco puro. */
 .tk-gradient-bg {
-  @apply bg-gradient-to-br from-violet-100 via-white to-fuchsia-100 dark:from-slate-900 dark:via-violet-900/40 dark:to-fuchsia-900/25;
+  @apply bg-gradient-to-br from-violet-200 via-violet-50 to-violet-200 dark:from-slate-900 dark:via-violet-900/40 dark:to-fuchsia-900/25;
 }
 
 /* Modais em <dialog> nativo (padrão do app -- ver components/
