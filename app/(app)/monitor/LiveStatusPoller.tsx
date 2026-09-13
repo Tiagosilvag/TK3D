@@ -129,6 +129,17 @@ function sumMaterialGrams(breakdown: { grams: number }[] | null): number | null 
   return Math.round(breakdown.reduce((sum, m) => sum + m.grams, 0) * 10) / 10
 }
 
+// Texto branco sobre um badge de cor clara (ex.: filamento branco) fica
+// ilegível -- escolhe preto ou branco pelo brilho relativo da cor de fundo
+// (luminância percebida, fórmula padrão W3C) em vez de sempre branco.
+function readableTextColor(hex: string): string {
+  const match = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+  if (!match) return '#ffffff'
+  const [r, g, b] = match.slice(1).map((c) => parseInt(c, 16))
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return luminance > 0.6 ? '#0f172a' : '#ffffff'
+}
+
 // Mesma conta que o próprio Anycubic Slicer faz pra mostrar "Término
 // estimado" na tela de detalhes da tarefa -- agora + minutos restantes,
 // sem precisar de nenhum dado novo do servidor.
@@ -151,6 +162,8 @@ const ANYCUBIC_STATE_LABELS: Record<string, string> = {
 
 export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveStatuses }) {
   const [printers, setPrinters] = useState(initialPrinters)
+  const [enlargedImage, setEnlargedImage] = useState<string | null>(null)
+  const imageDialogRef = useRef<HTMLDialogElement>(null)
 
   useEffect(() => {
     const interval = setInterval(async () => {
@@ -159,17 +172,29 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
     return () => clearInterval(interval)
   }, [])
 
+  function openImage(url: string) {
+    setEnlargedImage(url)
+    imageDialogRef.current?.showModal()
+  }
+
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       {printers.map((printer) => (
         <div key={printer.printerId} className="tk-panel flex gap-3 p-4">
           {printer.thumbnailUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={printer.thumbnailUrl}
-              alt="Modelo em impressão"
-              className="h-28 w-28 shrink-0 rounded-lg object-cover"
-            />
+            <button
+              type="button"
+              onClick={() => openImage(printer.thumbnailUrl!)}
+              className="shrink-0 cursor-zoom-in"
+              aria-label="Ampliar imagem do modelo"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={printer.thumbnailUrl}
+                alt="Modelo em impressão"
+                className="h-28 w-28 rounded-lg object-cover"
+              />
+            </button>
           )}
           <div className="min-w-0 flex-1">
             <h3 className="font-display text-base font-semibold text-slate-900 dark:text-slate-100">{printer.name}</h3>
@@ -275,15 +300,18 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                     )}
                     {printer.materialBreakdown && printer.materialBreakdown.length > 0 && (
                       <div className="flex flex-wrap gap-1 pt-0.5">
-                        {printer.materialBreakdown.map((material, i) => (
-                          <span
-                            key={i}
-                            className="rounded border border-slate-300 px-1.5 py-0.5 font-medium text-white dark:border-slate-600"
-                            style={{ backgroundColor: material.colorHex ?? '#64748b' }}
-                          >
-                            {material.materialType} {material.grams}g
-                          </span>
-                        ))}
+                        {printer.materialBreakdown.map((material, i) => {
+                          const bg = material.colorHex ?? '#64748b'
+                          return (
+                            <span
+                              key={i}
+                              className="rounded border border-slate-300 px-1.5 py-0.5 font-medium dark:border-slate-600"
+                              style={{ backgroundColor: bg, color: readableTextColor(bg) }}
+                            >
+                              {material.materialType} {material.grams}g
+                            </span>
+                          )
+                        })}
                       </div>
                     )}
                     {!printer.modelDimensions && sumMaterialGrams(printer.materialBreakdown) === null && (
@@ -314,6 +342,24 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
           </div>
         </div>
       ))}
+
+      <dialog
+        ref={imageDialogRef}
+        onClose={() => setEnlargedImage(null)}
+        className="max-w-2xl rounded-xl border border-slate-200 bg-white p-2 backdrop:bg-slate-950/70 dark:border-slate-800 dark:bg-slate-900"
+      >
+        {enlargedImage && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={enlargedImage} alt="Modelo em impressão (ampliado)" className="max-h-[80vh] w-full rounded-lg object-contain" />
+        )}
+        <button
+          type="button"
+          onClick={() => imageDialogRef.current?.close()}
+          className="mt-2 w-full rounded-lg border border-slate-300 py-1.5 text-sm text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          Fechar
+        </button>
+      </dialog>
     </div>
   )
 }
