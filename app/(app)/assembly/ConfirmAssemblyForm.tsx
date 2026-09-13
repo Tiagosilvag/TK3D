@@ -219,7 +219,16 @@ export function ConfirmAssemblyForm({
     formData.set('supplyUsagesJson', JSON.stringify(supplyRows.map((r) => ({ id: r.id, quantityPerUnit: parseFloat(r.quantityPerUnit) || 0 }))))
     const result = await confirmAssembly(formData)
     if (result.success) {
-      router.refresh()
+      // Bug "sem confirmação de sucesso": router.refresh() só atualizava os
+      // números no fundo (ex.: "sem estoque" quando a última unidade acabou
+      // de ser consumida) -- a modal continuava aberta na mesma tela,
+      // exatamente como estava, sem NENHUM sinal de que a montagem tinha
+      // sido registrada. Mesma convenção do resto do app pra ação
+      // confirmada com sucesso (ver AdjustStockButton.tsx): fechar a modal
+      // (AssemblyDetailModal fecha sozinha ao voltar pra /assembly sem
+      // ?productId=) É a confirmação -- e a lista geral já chega com os
+      // números atualizados (revalidatePath dentro de confirmAssembly).
+      router.push('/assembly')
     } else {
       alert(result.error)
     }
