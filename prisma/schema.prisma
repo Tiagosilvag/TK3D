@@ -884,6 +884,14 @@ model ConsignmentSaleReport {
   quantitySold      Int
   reportDate        DateTime
   commissionPercent Decimal             @db.Decimal(5, 4)
+  // Melhoria "Registrar venda": preço unitário desta venda específica,
+  // quando diferente do cadastrado na entrega (ConsignmentDelivery.unitPrice)
+  // -- às vezes o parceiro vende por um valor diferente daquele combinado na
+  // hora da entrega. Nulo (todo relatório anterior a este ajuste, e qualquer
+  // venda nova sem sobrescrever) continua usando delivery.unitPrice, nunca
+  // um valor inventado retroativamente -- todo cálculo de bruto/repasse lê
+  // `report.unitPrice ?? delivery.unitPrice`.
+  unitPrice         Decimal?            @db.Decimal(10, 2)
   notes             String?
   createdAt         DateTime            @default(now())
 }

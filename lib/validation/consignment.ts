@@ -54,6 +54,10 @@ export const consignmentSaleReportSchema = z.object({
   quantitySold: z.coerce.number().int('Quantidade deve ser um número inteiro').positive('Quantidade deve ser maior que zero'),
   reportDate: z.coerce.date(),
   commissionPercent: z.coerce.number().min(0, 'Comissão não pode ser negativa').max(1, 'Comissão não pode ser maior que 100%'),
+  // Melhoria "Registrar venda": preço unitário desta venda, quando diferente
+  // do cadastrado na entrega -- ausente/vazio usa delivery.unitPrice (ver
+  // ConsignmentSaleReport.unitPrice no schema).
+  unitPrice: z.coerce.number().positive('Preço deve ser maior que zero').optional().nullable(),
   notes: z.string().optional().nullable(),
 })
 
@@ -69,6 +73,9 @@ export const consignmentSaleReportBatchItemSchema = z.object({
   deliveryId: z.string().min(1, 'Selecione uma entrega'),
   quantitySold: z.coerce.number().int('Quantidade deve ser um número inteiro').positive('Quantidade deve ser maior que zero'),
   commissionPercent: z.coerce.number().min(0, 'Comissão não pode ser negativa').max(1, 'Comissão não pode ser maior que 100%'),
+  // Preço unitário desta linha, quando diferente do cadastrado na entrega
+  // (mesma convenção de consignmentSaleReportSchema.unitPrice acima).
+  unitPrice: z.coerce.number().positive('Preço deve ser maior que zero').optional().nullable(),
 })
 
 export const consignmentSaleReportBatchSchema = z.object({

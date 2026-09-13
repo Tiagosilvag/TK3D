@@ -39,6 +39,7 @@ export default async function ConsignmentSaleReportsPage({
         productName: d.product.name,
         remaining: d.quantityDelivered - sold,
         defaultCommissionPercent: d.partner.defaultCommissionPercent.toNumber(),
+        unitPrice: d.unitPrice.toNumber(),
       }
     })
     .filter((d) => d.remaining > 0)
@@ -62,7 +63,7 @@ export default async function ConsignmentSaleReportsPage({
         </thead>
         <tbody>
           {reports.map((r) => {
-            const unitPrice = r.delivery.unitPrice.toNumber()
+            const unitPrice = r.unitPrice?.toNumber() ?? r.delivery.unitPrice.toNumber()
             const commission = r.commissionPercent.toNumber()
             const gross = r.quantitySold * unitPrice
             const payout = gross * (1 - commission)

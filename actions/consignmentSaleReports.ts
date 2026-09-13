@@ -14,6 +14,7 @@ export async function createConsignmentSaleReport(formData: FormData): Promise<A
   const parsed = consignmentSaleReportSchema.safeParse({
     ...raw,
     notes: raw.notes || null,
+    unitPrice: raw.unitPrice || null,
   })
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
@@ -73,6 +74,7 @@ export async function createConsignmentSaleReportBatch(formData: FormData): Prom
           deliveryId: item.deliveryId,
           quantitySold: item.quantitySold,
           commissionPercent: item.commissionPercent,
+          unitPrice: item.unitPrice ?? null,
           reportDate: parsed.data.reportDate,
           notes: parsed.data.notes,
         },

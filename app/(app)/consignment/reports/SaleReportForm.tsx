@@ -12,27 +12,42 @@ type DeliveryOption = {
   productName: string
   remaining: number
   defaultCommissionPercent: number
+  unitPrice: number
 }
 
+// Pedido "opção de por o valor por unidade, às vezes o valor é diferente do
+// cadastrado na parceria": pré-preenche com o preço cadastrado na entrega,
+// mas permite sobrescrever só pra esta venda (ConsignmentSaleReport.unitPrice,
+// enviado como null quando igual ao valor da entrega -- nunca reescreve a
+// entrega em si).
 export function SaleReportForm({ deliveries }: { deliveries: DeliveryOption[] }) {
   const formRef = useRef<HTMLFormElement>(null)
   const [deliveryId, setDeliveryId] = useState('')
   const [commissionPercent, setCommissionPercent] = useState('')
+  const [unitPrice, setUnitPrice] = useState('')
 
   const selected = useMemo(() => deliveries.find((d) => d.id === deliveryId), [deliveries, deliveryId])
 
   function handleDeliveryChange(id: string) {
     setDeliveryId(id)
     const delivery = deliveries.find((d) => d.id === id)
-    if (delivery) setCommissionPercent(String(delivery.defaultCommissionPercent))
+    if (delivery) {
+      setCommissionPercent(String(delivery.defaultCommissionPercent))
+      setUnitPrice(String(delivery.unitPrice))
+    }
   }
 
   async function action(formData: FormData) {
+    if (selected) {
+      const price = parseFloat(unitPrice)
+      formData.set('unitPrice', price !== selected.unitPrice ? String(price) : '')
+    }
     const result = await createConsignmentSaleReport(formData)
     if (result.success) {
       formRef.current?.reset()
       setDeliveryId('')
       setCommissionPercent('')
+      setUnitPrice('')
     } else {
       alert(result.error)
     }
@@ -68,6 +83,18 @@ export function SaleReportForm({ deliveries }: { deliveries: DeliveryOption[] })
           step="1"
           min="1"
           max={selected?.remaining}
+          className="tk-input-full"
+          required
+        />
+      </label>
+      <label className="text-sm">
+        Preço unit. (R$)
+        <input
+          type="number"
+          step="0.01"
+          min="0.01"
+          value={unitPrice}
+          onChange={(e) => setUnitPrice(e.target.value)}
           className="tk-input-full"
           required
         />

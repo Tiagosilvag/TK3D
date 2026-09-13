@@ -82,7 +82,7 @@ export async function getRevenueByChannel(): Promise<Record<'DIRETA' | 'MARKETPL
 export async function getConsignmentRevenue(): Promise<number> {
   const reports = await prisma.consignmentSaleReport.findMany({ include: { delivery: true } })
   return reports.reduce((sum, r) => {
-    const unitPrice = r.delivery.unitPrice.toNumber()
+    const unitPrice = r.unitPrice?.toNumber() ?? r.delivery.unitPrice.toNumber()
     const commission = r.commissionPercent.toNumber()
     return sum + r.quantitySold * unitPrice * (1 - commission)
   }, 0)
@@ -830,6 +830,11 @@ export interface ConsignmentSaleableDelivery {
   colorLabel: string | null
   colorHex: string | null
   remaining: number
+  // Preço cadastrado na entrega -- pré-preenche o campo editável de preço
+  // unitário no modal "Registrar venda" (pedido "às vezes o valor é
+  // diferente do cadastrado na parceria"), sem obrigar a sobrescrever
+  // quando a venda foi pelo valor combinado de sempre.
+  unitPrice: number
 }
 
 export interface ConsignmentPartnerDetail {
@@ -916,6 +921,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
         colorLabel,
         colorHex: variantInfo?.colorHex ?? null,
         remaining: deliveryRemaining,
+        unitPrice: delivery.unitPrice.toNumber(),
       })
     }
 
@@ -931,7 +937,8 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
       product.sold += report.quantitySold
       variant.sold += report.quantitySold
       totalSold += report.quantitySold
-      commissionOwed += report.quantitySold * delivery.unitPrice.toNumber() * report.commissionPercent.toNumber()
+      const reportUnitPrice = report.unitPrice?.toNumber() ?? delivery.unitPrice.toNumber()
+      commissionOwed += report.quantitySold * reportUnitPrice * report.commissionPercent.toNumber()
       history.push({ date: report.reportDate, type: 'venda', productName: delivery.product.name, colorLabel, quantity: report.quantitySold })
     }
 
