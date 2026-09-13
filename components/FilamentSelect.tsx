@@ -30,9 +30,19 @@ export interface FilamentSelectOption {
 // confirmado ao vivo (mesmo bug documentado em ComponentCategoryCard.tsx,
 // que já passou por essa mesma correção). Fix de verdade: este painel
 // deixa de ser <dialog>/showModal() -- vira um painel comum controlado por
-// estado React (backdrop + painel, Esc/clique-fora fecham via listener),
-// portado pra <body> só pra escapar de overflow/clipping de ancestrais
-// (nunca mais um segundo <dialog> nativo dentro de outro).
+// estado React (backdrop + painel, Esc/clique-fora fecham via listener).
+//
+// Bug "nem abre pra selecionar" (3ª volta): a correção acima portava esse
+// painel pra <body> -- mas <body> não é descendente do <dialog> nativo da
+// modal de "Novo produto" (que continua aberta por baixo, via showModal()),
+// e um <dialog> modal pinta na "top layer" por CIMA de QUALQUER outro
+// conteúdo da página, independente de z-index (mesma causa raiz já corrigida
+// em ComboSelect.tsx/ComponentCategoryCard.tsx pra esse exato padrão) --
+// então o painel ficava escondido atrás do próprio modal E com clique
+// bloqueado por ele. Portar pro <dialog> ancestral (closest('dialog') a
+// partir do botão que abre o painel) em vez de <body> resolve -- painel
+// continua descendente do modal, na mesma top layer, clicável de verdade.
+// Cai de volta pro <body> se usado fora de um <dialog> (nenhum caso hoje).
 export function FilamentSelect({
   name,
   options,
@@ -52,6 +62,7 @@ export function FilamentSelect({
   const [search, setSearch] = useState('')
   const [mounted, setMounted] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => setMounted(true), [])
 
@@ -80,6 +91,7 @@ export function FilamentSelect({
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
         onClick={openPicker}
         className={`flex items-center justify-between gap-2 text-left ${className}`}
@@ -133,7 +145,7 @@ export function FilamentSelect({
             </div>
           </div>
         </div>,
-        document.body,
+        triggerRef.current?.closest('dialog') ?? document.body,
       )}
     </>
   )
