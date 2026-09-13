@@ -21,8 +21,11 @@ function formatMinutes(minutes: number | null): string | null {
   return hours > 0 ? `${hours}h${mins}min` : `${mins}min`
 }
 
+// "0" é o valor que a Anycubic manda pra end_time de uma impressão ainda em
+// andamento (ainda não terminou) -- tratado como "sem data" igual null,
+// senão vira epoch (1970-01-01 UTC = 31/12/1969 21h em GMT-3).
 function formatUnixSeconds(seconds: number | null): string | null {
-  if (seconds === null) return null
+  if (!seconds) return null
   return new Date(seconds * 1000).toLocaleString('pt-BR')
 }
 
