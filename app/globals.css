@@ -22,6 +22,40 @@ body {
   @apply bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100;
 }
 
+/* Barra de rolagem fina, na paleta do app em vez do padrão claro/cinza do
+   SO (chamativo demais sobre fundo escuro) -- vale pra qualquer scroll
+   interno (main/nav do shell, tabelas com overflow-x, paineis de seleção
+   com lista longa), não só o body. scrollbar-color/scrollbar-width cobre
+   Firefox e Chromium recente; ::-webkit-scrollbar cobre Chrome/Safari mais
+   antigos como fallback -- as duas API coexistem sem conflito. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(203 213 225) transparent; /* slate-300 */
+}
+.dark * {
+  scrollbar-color: rgb(51 65 85) transparent; /* slate-700 */
+}
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: rgb(203 213 225); /* slate-300 */
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(148 163 184); /* slate-400 */
+}
+.dark ::-webkit-scrollbar-thumb {
+  background-color: rgb(51 65 85); /* slate-700 */
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(71 85 105); /* slate-600 */
+}
+
 /* 6.0 (redesign roxo): fundo em degradê usado pelas duas telas de "casca"
    inteira (login e o shell autenticado em AppLayoutClient) -- classe
    compartilhada em vez de repetir a mesma string de gradiente nos dois
