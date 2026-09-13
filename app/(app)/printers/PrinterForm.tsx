@@ -155,7 +155,7 @@ export function PrinterForm({
     <dialog
       ref={dialogRef}
       onClose={() => { onOpenChange(false); resetFields() }}
-      className="w-full [--tk-dialog-cap:28rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      className="w-full [--tk-dialog-cap:44rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
       <form ref={formRef} action={action} className="grid grid-cols-2 gap-3 p-5">
         <div className="col-span-2 mb-1 flex items-center justify-between">
