@@ -223,12 +223,22 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                     Camada {printer.status.currentLayer}/{printer.status.totalLayers}
                   </p>
                 )}
+                {printer.status.printErrorMessage && (
+                  <p className="text-red-600 dark:text-red-400">Erro: {printer.status.printErrorMessage}</p>
+                )}
                 <details className="pt-1">
                   <summary className="tk-summary cursor-pointer text-xs">Detalhes</summary>
                   <div className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
-                    {printer.status.nozzleTemp !== null && <p>Bico: {printer.status.nozzleTemp}°C</p>}
-                    {printer.status.bedTemp !== null && <p>Mesa: {printer.status.bedTemp}°C</p>}
+                    {formatTemp(printer.status.nozzleTemp, printer.status.nozzleTargetTemp) && (
+                      <p>Bico: {formatTemp(printer.status.nozzleTemp, printer.status.nozzleTargetTemp)}</p>
+                    )}
+                    {formatTemp(printer.status.bedTemp, printer.status.bedTargetTemp) && (
+                      <p>Mesa: {formatTemp(printer.status.bedTemp, printer.status.bedTargetTemp)}</p>
+                    )}
                     {printer.status.fanSpeedPercent !== null && <p>Ventoinha: {printer.status.fanSpeedPercent}%</p>}
+                    {printer.status.printSpeedPercent !== null && <p>Velocidade: {printer.status.printSpeedPercent}%</p>}
+                    {printer.status.printSpeedMode !== null && <p>Modo de velocidade: {printer.status.printSpeedMode}</p>}
+                    {printer.status.firmwareVersion && <p>Firmware: {printer.status.firmwareVersion}</p>}
                   </div>
                 </details>
               </div>

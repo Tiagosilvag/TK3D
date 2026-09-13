@@ -18,8 +18,14 @@ export type AnycubicStatus = {
   printTimeSeconds: number | null
   nozzleTemp: number | null
   bedTemp: number | null
+  nozzleTargetTemp: number | null
+  bedTargetTemp: number | null
   fanSpeedPercent: number | null
+  printSpeedPercent: number | null
+  printSpeedMode: number | null
   suppliesUsage: number | null
+  firmwareVersion: string | null
+  printErrorMessage: string | null
 }
 
 export const INITIAL_ANYCUBIC_STATUS: AnycubicStatus = {
@@ -32,8 +38,14 @@ export const INITIAL_ANYCUBIC_STATUS: AnycubicStatus = {
   printTimeSeconds: null,
   nozzleTemp: null,
   bedTemp: null,
+  nozzleTargetTemp: null,
+  bedTargetTemp: null,
   fanSpeedPercent: null,
+  printSpeedPercent: null,
+  printSpeedMode: null,
   suppliesUsage: null,
+  firmwareVersion: null,
+  printErrorMessage: null,
 }
 
 export type AnycubicMqttMessage = {
@@ -41,6 +53,10 @@ export type AnycubicMqttMessage = {
   action: string
   state?: string
   data?: Record<string, unknown>
+  // Mensagem de erro de falha de impressão vem no nível raiz do payload
+  // (payload.msg), não dentro de data -- só a Anycubic mesmo, ver
+  // buildStatusPatch.
+  msg?: string
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -49,13 +65,14 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 export function parseAnycubicPayload(raw: unknown): AnycubicMqttMessage | null {
   if (!isPlainRecord(raw)) return null
-  const { type, action, state, data } = raw
+  const { type, action, state, data, msg } = raw
   if (typeof type !== 'string' || typeof action !== 'string') return null
   return {
     type,
     action,
     state: typeof state === 'string' ? state : undefined,
     data: isPlainRecord(data) ? data : undefined,
+    msg: typeof msg === 'string' ? msg : undefined,
   }
 }
 
@@ -112,9 +129,19 @@ export function buildStatusPatch(msg: AnycubicMqttMessage): Partial<AnycubicStat
     return patch
   }
 
+  if (msg.type === 'ota' && msg.action === 'reportVersion' && msg.state === 'done') {
+    const firmwareVersion = strIfPresent(msg.data, 'firmware_version')
+    if (firmwareVersion !== undefined) patch.firmwareVersion = firmwareVersion
+    return patch
+  }
+
   if (msg.type === 'print') {
     const printState = PRINT_STATE_BY_ACTION_STATE[`${msg.action}:${msg.state}`]
     if (printState) patch.printState = printState
+
+    if ((msg.action === 'start' || msg.action === 'stop') && msg.state === 'failed' && msg.msg) {
+      patch.printErrorMessage = msg.msg
+    }
 
     const layer = numIfPresent(msg.data, 'curr_layer')
     if (layer !== undefined) patch.currentLayer = layer
@@ -130,6 +157,28 @@ export function buildStatusPatch(msg: AnycubicMqttMessage): Partial<AnycubicStat
     if (remainTime !== undefined) patch.remainingMinutes = remainTime
     const supplies = numIfPresent(msg.data, 'supplies_usage')
     if (supplies !== undefined) patch.suppliesUsage = supplies
+
+    // Temperatura atual também vem embutida em mensagens type=print (não só
+    // no type=tempature dedicado) -- ex.: junto do início/andamento do job.
+    const bedTemp = numIfPresent(msg.data, 'curr_hotbed_temp')
+    if (bedTemp !== undefined) patch.bedTemp = bedTemp
+    const nozzleTemp = numIfPresent(msg.data, 'curr_nozzle_temp')
+    if (nozzleTemp !== undefined) patch.nozzleTemp = nozzleTemp
+
+    // Temperatura ALVO e velocidade só vêm aninhadas em data.settings, numa
+    // mensagem à parte (action=start|update, state=updated) que é só uma
+    // notificação de ajuste de configuração -- não muda o printState.
+    const settings = isPlainRecord(msg.data?.settings) ? (msg.data?.settings as Record<string, unknown>) : undefined
+    const fanSpeed = numIfPresent(settings, 'fan_speed_pct')
+    if (fanSpeed !== undefined) patch.fanSpeedPercent = fanSpeed
+    const printSpeedPercent = numIfPresent(settings, 'print_speed_pct')
+    if (printSpeedPercent !== undefined) patch.printSpeedPercent = printSpeedPercent
+    const printSpeedMode = numIfPresent(settings, 'print_speed_mode')
+    if (printSpeedMode !== undefined) patch.printSpeedMode = printSpeedMode
+    const bedTargetTemp = numIfPresent(settings, 'target_hotbed_temp')
+    if (bedTargetTemp !== undefined) patch.bedTargetTemp = bedTargetTemp
+    const nozzleTargetTemp = numIfPresent(settings, 'target_nozzle_temp')
+    if (nozzleTargetTemp !== undefined) patch.nozzleTargetTemp = nozzleTargetTemp
 
     return patch
   }
