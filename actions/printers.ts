@@ -32,8 +32,8 @@ export async function createPrinter(formData: FormData): Promise<ActionResult> {
   }
   // Integração Bambu Lab: nova impressora habilitada precisa entrar na
   // lista de tópicos assinados pelo listener sem esperar redeploy.
-  if (parsed.data.bambuEnabled) await restartBambuListener()
-  if (parsed.data.anycubicEnabled) await restartAnycubicListener()
+  if (parsed.data.bambuEnabled) await restartBambuListener('createPrinter')
+  if (parsed.data.anycubicEnabled) await restartAnycubicListener('createPrinter')
   revalidatePath('/printers')
   return { success: true }
 }
@@ -51,8 +51,8 @@ export async function updatePrinter(id: string, formData: FormData): Promise<Act
   // quanto trocar o número de série de uma já ativa) -- desabilitar não
   // precisa de restart, o printer some da lista assinada só na próxima
   // vez que o listener subir por outro motivo.
-  if (parsed.data.bambuEnabled) await restartBambuListener()
-  if (parsed.data.anycubicEnabled) await restartAnycubicListener()
+  if (parsed.data.bambuEnabled) await restartBambuListener(`updatePrinter:${id}`)
+  if (parsed.data.anycubicEnabled) await restartAnycubicListener(`updatePrinter:${id}`)
   revalidatePath('/printers')
   return { success: true }
 }

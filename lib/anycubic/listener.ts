@@ -228,7 +228,11 @@ export function getAnycubicCurrentTaskId(printerId: string): number | null {
   return core?.getCurrentTaskId(printerId) ?? null
 }
 
-export async function restartAnycubicListener(): Promise<void> {
+export async function restartAnycubicListener(reason: string = 'desconhecido'): Promise<void> {
+  // Diagnóstico (mesmo bug investigado no listener Bambu, 2026-09-14): loga
+  // quem chamou o restart, pra confirmar se os dois listeners estão sendo
+  // reiniciados repetidamente pela mesma causa.
+  console.error(`[anycubic] restartAnycubicListener chamado (motivo: ${reason})`)
   if (client) {
     client.removeAllListeners()
     client.end(true)

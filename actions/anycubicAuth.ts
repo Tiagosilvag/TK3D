@@ -24,7 +24,7 @@ export async function connectAnycubicAccount(formData: FormData): Promise<Action
       },
     })
 
-    await restartAnycubicListener()
+    await restartAnycubicListener('connectAnycubicAccount')
     revalidatePath('/settings')
     revalidatePath('/monitor')
     return { success: true }
@@ -38,7 +38,7 @@ export async function disconnectAnycubicAccount(): Promise<ActionResult> {
     where: { id: 1 },
     data: { anycubicAuthTokenEncrypted: null, anycubicUserEmail: null, anycubicUserId: null },
   })
-  await restartAnycubicListener()
+  await restartAnycubicListener('disconnectAnycubicAccount')
   revalidatePath('/settings')
   revalidatePath('/monitor')
   return { success: true }

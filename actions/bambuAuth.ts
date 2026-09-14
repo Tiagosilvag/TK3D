@@ -46,7 +46,7 @@ async function saveCredential(email: string, accessToken: string): Promise<void>
     update: { bambuCloudEmail: email, bambuCloudUserId: userId, bambuCloudCredentialEncrypted: encrypted },
     create: { id: 1, bambuCloudEmail: email, bambuCloudUserId: userId, bambuCloudCredentialEncrypted: encrypted } as never,
   })
-  await restartBambuListener()
+  await restartBambuListener('saveCredential (conectar conta)')
   revalidatePath('/settings')
 }
 
@@ -56,7 +56,7 @@ export async function disconnectBambuAccount(): Promise<ActionResult> {
     update: { bambuCloudEmail: null, bambuCloudUserId: null, bambuCloudCredentialEncrypted: null },
     create: { id: 1 } as never,
   })
-  await restartBambuListener()
+  await restartBambuListener('disconnectBambuAccount')
   revalidatePath('/settings')
   return { success: true }
 }

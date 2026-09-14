@@ -23,7 +23,7 @@ export async function getAnycubicBoundPrinters(): Promise<{ success: boolean; pr
 }
 
 export async function reconnectAnycubicListener(): Promise<{ success: boolean }> {
-  await restartAnycubicListener()
+  await restartAnycubicListener('reconnectAnycubicListener (botão manual)')
   return { success: true }
 }
 

@@ -222,7 +222,13 @@ export function getCurrentThumbnail(printerId: string): string | null {
 // salvar uma impressora (actions/printers.ts), pra pegar credencial/opt-in
 // novos sem exigir redeploy. Fecha a conexão MQTT antiga antes de abrir
 // outra, pra não vazar socket nem duplicar assinatura de tópico.
-export async function restartBambuListener(): Promise<void> {
+export async function restartBambuListener(reason: string = 'desconhecido'): Promise<void> {
+  // Diagnóstico (bug real, 2026-09-14): a conexão ficou reconectando
+  // dezenas de vezes em 12 minutos, presa em client=null boa parte do
+  // tempo -- só acontece se algo estiver chamando este restart repetidamente.
+  // Loga QUEM chamou (reason) em vez de adivinhar pela stack minificada do
+  // build de produção.
+  console.error(`[bambu] restartBambuListener chamado (motivo: ${reason})`)
   if (client) {
     client.removeAllListeners()
     client.end(true)
