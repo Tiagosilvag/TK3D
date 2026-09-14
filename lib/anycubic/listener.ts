@@ -254,7 +254,16 @@ export async function restartAnycubicListener(reason: string = 'desconhecido'): 
   console.error(`[anycubic] restartAnycubicListener chamado (motivo: ${reason}, pid=${process.pid})`)
   if (client) {
     client.removeAllListeners()
-    client.end(true)
+    // Hipótese testável (2026-09-14): end(true) força o fechamento sem
+    // mandar o pacote MQTT DISCONNECT pro broker -- a sessão antiga (mesmo
+    // client_id determinístico, ver mqtt.connect acima) pode ficar num
+    // estado ambíguo do lado do servidor, brigando com a reconexão
+    // seguinte (padrão visto: conexão estável por 73min, quebra em loop de
+    // ~5-6s bem na hora do restart manual). end(false) manda o DISCONNECT
+    // limpo antes de fechar -- force=true continua só no handler de erro
+    // "Connection refused:" abaixo, onde a conexão nunca chegou a ser
+    // aceita pelo broker (não existe sessão nenhuma pra desconectar).
+    client.end(false)
     client = null
   }
   core = null

@@ -240,7 +240,11 @@ export async function restartBambuListener(reason: string = 'desconhecido'): Pro
   console.error(`[bambu] restartBambuListener chamado (motivo: ${reason}, pid=${process.pid})`)
   if (client) {
     client.removeAllListeners()
-    client.end(true)
+    // Mesmo ajuste feito no listener Anycubic (ver comentário lá):
+    // end(true) força o fechamento sem mandar o DISCONNECT limpo pro
+    // broker -- troca pra end(false) aqui, force=true continua só no
+    // handler de erro "Connection refused:" abaixo.
+    client.end(false)
     client = null
   }
   core = null
