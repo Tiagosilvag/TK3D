@@ -202,35 +202,64 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
               !printer.status ? (
                 <p className="mt-2 text-sm text-slate-400">Sem dados ainda</p>
               ) : (
-                <div className="mt-2 space-y-1 text-sm text-slate-700 dark:text-slate-300">
-                  <p>{STATE_LABELS[printer.status.gcodeState] ?? printer.status.gcodeState}</p>
-                  {printer.status.percent !== null && <p>{printer.status.percent}%</p>}
-                  {printer.status.remainingMinutes !== null && <p>{printer.status.remainingMinutes} min restantes</p>}
+                <div className="mt-2 space-y-2 text-sm text-slate-700 dark:text-slate-300">
+                  <div>
+                    <div className="flex items-baseline justify-between">
+                      <span>{STATE_LABELS[printer.status.gcodeState] ?? printer.status.gcodeState}</span>
+                      {printer.status.percent !== null && (
+                        <span className="font-display font-semibold text-violet-600 dark:text-violet-400">{printer.status.percent}%</span>
+                      )}
+                    </div>
+                    {printer.status.percent !== null && (
+                      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-violet-600 to-blue-500"
+                          style={{ width: `${printer.status.percent}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+
                   {printer.status.gcodeFilePreparePercent !== null && printer.status.gcodeFilePreparePercent < 100 && (
                     <p className="text-slate-500 dark:text-slate-400">Preparando arquivo: {printer.status.gcodeFilePreparePercent}%</p>
                   )}
                   {printer.status.gcodeFile && <p className="truncate text-slate-500 dark:text-slate-400">{printer.status.gcodeFile}</p>}
-
-                  <PrintControls printerId={printer.printerId} printerName={printer.name} gcodeState={printer.status.gcodeState} />
 
                   {printer.status.hmsCodes.length > 0 && (
                     <p className="text-red-600 dark:text-red-400">Alerta HMS: {printer.status.hmsCodes.join(', ')}</p>
                   )}
                   {printer.status.printErrorCode && <p className="text-red-600 dark:text-red-400">Erro: {printer.status.printErrorCode}</p>}
 
-                  {printer.status.amsTrays.length > 0 && (
-                    <div className="pt-1">
-                      {printer.status.amsTrays.map((tray) => (
-                        <p key={tray.id} className="text-xs text-slate-500 dark:text-slate-400">
-                          Slot {tray.id}: {tray.type || '—'} · {tray.remainPercent}%{' '}
-                          {tray.tagUid && tray.tagUid !== '0000000000000000' ? '(rolo Bambu)' : '(rolo genérico)'}
-                        </p>
-                      ))}
-                    </div>
-                  )}
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                    {printer.status.layerNum !== null && printer.status.totalLayerNum !== null && (
+                      <p>
+                        Camada {printer.status.layerNum}/{printer.status.totalLayerNum}
+                      </p>
+                    )}
+                    {printer.status.remainingMinutes !== null && <p>{printer.status.remainingMinutes} min restantes</p>}
+                    {formatEta(printer.status.remainingMinutes) && <p>Término estimado: {formatEta(printer.status.remainingMinutes)}</p>}
+                  </div>
+
+                  <PrintControls printerId={printer.printerId} printerName={printer.name} gcodeState={printer.status.gcodeState} />
 
                   <details className="pt-1">
-                    <summary className="tk-summary cursor-pointer text-xs">Detalhes</summary>
+                    <summary className="tk-summary cursor-pointer text-xs">Informações do arquivo</summary>
+                    <div className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      {printer.status.amsTrays.length > 0 ? (
+                        printer.status.amsTrays.map((tray) => (
+                          <p key={tray.id}>
+                            Slot {tray.id}: {tray.type || '—'} · {tray.remainPercent}%{' '}
+                            {tray.tagUid && tray.tagUid !== '0000000000000000' ? '(rolo Bambu)' : '(rolo genérico)'}
+                          </p>
+                        ))
+                      ) : (
+                        <p className="italic">Sem dados de AMS disponíveis ainda</p>
+                      )}
+                    </div>
+                  </details>
+
+                  <details className="pt-1">
+                    <summary className="tk-summary cursor-pointer text-xs">Parâmetros</summary>
                     <div className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
                       {formatTemp(printer.status.nozzleTemp, printer.status.nozzleTargetTemp) && (
                         <p>Bico: {formatTemp(printer.status.nozzleTemp, printer.status.nozzleTargetTemp)}</p>

@@ -233,7 +233,13 @@ export function getConnectionStatus(): BambuConnectionStatus {
 // publish que este listener faz. Busca o serial na hora (sem cache) porque
 // é uma ação pontual do usuário, não um hot path.
 export async function publishBambuCommand(printerId: string, command: BambuCommand): Promise<void> {
-  if (!client || connectionStatus !== 'connected') {
+  // client.connected reflete o estado REAL do socket MQTT agora -- não a
+  // variável connectionStatus (que só muda nos eventos 'connect'/'error' e
+  // pode ficar presa em 'expired' depois de um erro transitório que não
+  // chegou a fechar a conexão de verdade, mesmo com dados chegando ao vivo
+  // normalmente -- bug real reportado pelo usuário: card mostrando progresso
+  // e thumbnail atualizando, mas pausar recusava com "não conectada").
+  if (!client || !client.connected) {
     throw new Error('Impressora não está conectada à nuvem Bambu no momento')
   }
   const printer = await prisma.printer.findUnique({ where: { id: printerId }, select: { bambuSerial: true } })
