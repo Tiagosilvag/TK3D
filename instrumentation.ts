@@ -3,6 +3,15 @@ export async function register() {
   // o listener MQTT precisa de módulos nativos do Node (crypto, sockets).
   if (process.env.NEXT_RUNTIME !== 'nodejs') return
 
+  // Diagnóstico (bug real, 2026-09-14): client de MQTT virando null sem
+  // nenhum restart/erro logado entre o antes e o depois -- hipótese é que
+  // o processo Node está reiniciando sozinho (crash + `restart:
+  // unless-stopped` do docker-compose) e a saída do boot (banner do
+  // Next.js) está sendo cortada pela redação "best-effort" do Coolify.
+  // process.pid muda a cada boot novo e não deveria ser redigido -- se
+  // aparecer um pid diferente entre dois logs próximos, confirma reboot.
+  console.error(`[boot] instrumentation.ts register() chamado -- pid=${process.pid}`)
+
   // Rede de segurança (visto em produção, 2026-09-12): a lib `mqtt` pode
   // disparar "Error: connack timeout" como exceção não tratada (fora do
   // pipeline normal de eventos do client) quando um reconnect insistente

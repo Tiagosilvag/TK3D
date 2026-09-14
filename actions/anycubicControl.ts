@@ -23,7 +23,9 @@ async function runCommand(printerId: string, orderId: number): Promise<ActionRes
     }
     const projectId = getAnycubicCurrentTaskId(printerId)
     if (!projectId) {
-      console.error(`[anycubic] comando recusado -- sem taskId em memória pro printer ${printerId} (listener sem job ativo registrado)`)
+      console.error(
+        `[anycubic] comando recusado -- sem taskId em memória pro printer ${printerId} (listener sem job ativo registrado, pid=${process.pid})`,
+      )
       return { success: false, error: 'Nenhuma impressão em andamento pra controlar' }
     }
     const authToken = decryptCredential(settings.anycubicAuthTokenEncrypted)

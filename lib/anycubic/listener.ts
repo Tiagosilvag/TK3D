@@ -150,6 +150,7 @@ export async function startAnycubicListener(): Promise<void> {
 
   client.on('connect', () => {
     connectionStatus = 'connected'
+    console.error(`[anycubic] MQTT conectado (pid=${process.pid})`)
   })
   client.on('error', (err) => {
     connectionStatus = 'expired'
@@ -232,7 +233,7 @@ export async function restartAnycubicListener(reason: string = 'desconhecido'): 
   // Diagnóstico (mesmo bug investigado no listener Bambu, 2026-09-14): loga
   // quem chamou o restart, pra confirmar se os dois listeners estão sendo
   // reiniciados repetidamente pela mesma causa.
-  console.error(`[anycubic] restartAnycubicListener chamado (motivo: ${reason})`)
+  console.error(`[anycubic] restartAnycubicListener chamado (motivo: ${reason}, pid=${process.pid})`)
   if (client) {
     client.removeAllListeners()
     client.end(true)

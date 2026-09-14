@@ -111,7 +111,7 @@ export async function startBambuListener(): Promise<void> {
 
   client.on('connect', () => {
     connectionStatus = 'connected'
-    console.error('[bambu] MQTT conectado')
+    console.error(`[bambu] MQTT conectado (pid=${process.pid})`)
     // Pedido "pushall" (ajuste "extrair mais dados", 2026-09-12): única
     // publicação que este listener faz -- o resto do módulo só assina/lê.
     // Sem isso, campos que só vêm num dump completo (ex.: versão de
@@ -228,7 +228,7 @@ export async function restartBambuListener(reason: string = 'desconhecido'): Pro
   // tempo -- só acontece se algo estiver chamando este restart repetidamente.
   // Loga QUEM chamou (reason) em vez de adivinhar pela stack minificada do
   // build de produção.
-  console.error(`[bambu] restartBambuListener chamado (motivo: ${reason})`)
+  console.error(`[bambu] restartBambuListener chamado (motivo: ${reason}, pid=${process.pid})`)
   if (client) {
     client.removeAllListeners()
     client.end(true)
@@ -256,7 +256,9 @@ export async function publishBambuCommand(printerId: string, command: BambuComma
   // normalmente -- bug real reportado pelo usuário: card mostrando progresso
   // e thumbnail atualizando, mas pausar recusava com "não conectada").
   if (!client || !client.connected) {
-    console.error(`[bambu] publishBambuCommand recusado -- client=${client ? 'existe' : 'null'} connected=${client?.connected}`)
+    console.error(
+      `[bambu] publishBambuCommand recusado -- client=${client ? 'existe' : 'null'} connected=${client?.connected} pid=${process.pid}`,
+    )
     throw new Error('Impressora não está conectada à nuvem Bambu no momento')
   }
   const printer = await prisma.printer.findUnique({ where: { id: printerId }, select: { bambuSerial: true } })
