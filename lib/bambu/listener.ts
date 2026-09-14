@@ -111,6 +111,7 @@ export async function startBambuListener(): Promise<void> {
 
   client.on('connect', () => {
     connectionStatus = 'connected'
+    console.error('[bambu] MQTT conectado')
     // Pedido "pushall" (ajuste "extrair mais dados", 2026-09-12): única
     // publicação que este listener faz -- o resto do módulo só assina/lê.
     // Sem isso, campos que só vêm num dump completo (ex.: versão de
@@ -132,6 +133,15 @@ export async function startBambuListener(): Promise<void> {
     // simetria/segurança, mesmo sem ter reproduzido o crash neste listener.
     if (err.message.startsWith('Connection refused:')) client?.end(true)
   })
+  // Diagnóstico (bug real reportado pelo usuário: "pausar" recusava com
+  // "não conectada" mesmo sem nenhum 'error' nos logs) -- até agora só
+  // logávamos erro explícito, nunca uma queda silenciosa da conexão
+  // (close/offline sem 'error' associado, comum em timeout de rede/idle).
+  // Sem isso não dava pra saber se client.connected realmente cai às vezes
+  // ou se o problema está em outro lugar.
+  client.on('close', () => console.error('[bambu] MQTT desconectado (close)'))
+  client.on('reconnect', () => console.error('[bambu] tentando reconectar ao MQTT...'))
+  client.on('offline', () => console.error('[bambu] MQTT offline'))
 
   core = createListenerCore({
     printers,
@@ -240,6 +250,7 @@ export async function publishBambuCommand(printerId: string, command: BambuComma
   // normalmente -- bug real reportado pelo usuário: card mostrando progresso
   // e thumbnail atualizando, mas pausar recusava com "não conectada").
   if (!client || !client.connected) {
+    console.error(`[bambu] publishBambuCommand recusado -- client=${client ? 'existe' : 'null'} connected=${client?.connected}`)
     throw new Error('Impressora não está conectada à nuvem Bambu no momento')
   }
   const printer = await prisma.printer.findUnique({ where: { id: printerId }, select: { bambuSerial: true } })
