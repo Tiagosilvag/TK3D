@@ -104,6 +104,15 @@ export async function startBambuListener(): Promise<void> {
     // Username do broker MQTT da nuvem é "u_{uid}", nunca o e-mail --
     // bug real encontrado testando com a conta do usuário (a conexão
     // nunca fechava, ficava presa em not_configured/expired).
+    //
+    // Investigação em andamento (2026-09-14): visto em produção com o
+    // client virando null (publishBambuCommand recusa "não conectada")
+    // sem nenhum erro/close logado no meio. Hipótese inicial de colisão de
+    // sessão com Bambu Studio/Handy abertos na mesma conta foi TESTADA E
+    // DESCARTADA no caso equivalente da Anycubic (ver
+    // lib/anycubic/listener.ts) -- usuário confirmou que múltiplos apps/
+    // dispositivos conectados normalmente não causam conflito. Causa raiz
+    // real ainda não identificada.
     username: `u_${settings.bambuCloudUserId}`,
     password: token,
     reconnectPeriod: 5000,

@@ -141,6 +141,16 @@ export async function startAnycubicListener(): Promise<void> {
     // broker recusa com "Connection refused: Not authorized" (bug real
     // encontrado em produção: a conta conectava certinho via HTTP, só o
     // MQTT que rejeitava).
+    //
+    // Investigação em andamento (2026-09-14): visto em produção reconectando
+    // a cada ~5-6s sem nunca estabilizar, causando "pausar/parar" falhar
+    // quase sempre (client fica null durante a troca). Hipótese inicial de
+    // que esse client_id fixo por conta colidia com o Anycubic Slicer Next
+    // aberto ao mesmo tempo foi TESTADA E DESCARTADA -- usuário confirmou
+    // que o loop continua mesmo com todos os apps oficiais fechados, e que
+    // abrir os apps em múltiplos dispositivos normalmente funciona sem
+    // conflito. Causa raiz real ainda não identificada -- ver logs
+    // 'close'/'reconnect'/'offline'/'disconnect' adicionados logo abaixo.
     clientId: buildMqttClientId(email),
     username: mqttUsername,
     password: mqttPassword,
@@ -154,7 +164,7 @@ export async function startAnycubicListener(): Promise<void> {
   })
   client.on('error', (err) => {
     connectionStatus = 'expired'
-    console.error('[anycubic] erro na conexão MQTT:', err.message)
+    console.error(`[anycubic] erro na conexão MQTT: "${err.message}" (name=${err.name}, stack=${err.stack?.split('\n')[0]})`)
     // CONNACK negativo (credencial errada/expirada, não autorizado etc.)
     // nunca se resolve tentando de novo -- deixar o reconnectPeriod bater
     // insistentemente nesse tipo de erro foi o que disparou uma race
@@ -165,6 +175,14 @@ export async function startAnycubicListener(): Promise<void> {
     // depois de corrigir a credencial.
     if (err.message.startsWith('Connection refused:')) client?.end(true)
   })
+  // Diagnóstico (bug real, 2026-09-14): conexão reconectando a cada ~5-6s
+  // sem parar, mesmo com nenhum outro app conectado na mesma conta --
+  // faltava exatamente esse log aqui (só tínhamos na Bambu) pra saber SE
+  // é um 'close' limpo (broker/rede fechando o socket) ou outra coisa.
+  client.on('close', () => console.error(`[anycubic] MQTT desconectado (close) (pid=${process.pid})`))
+  client.on('reconnect', () => console.error(`[anycubic] tentando reconectar ao MQTT... (pid=${process.pid})`))
+  client.on('offline', () => console.error(`[anycubic] MQTT offline (pid=${process.pid})`))
+  client.on('disconnect', (packet) => console.error('[anycubic] pacote DISCONNECT recebido do broker:', JSON.stringify(packet)))
 
   core = createAnycubicListenerCore({
     printers,
