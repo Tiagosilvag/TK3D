@@ -2,14 +2,47 @@
 import { useEffect, useRef, useState } from 'react'
 import { getAllLiveStatuses } from '@/actions/bambuStatus'
 import { pausePrintJob, resumePrintJob, stopPrintJob } from '@/actions/bambuControl'
+import { pauseAnycubicPrintJob, resumeAnycubicPrintJob, stopAnycubicPrintJob } from '@/actions/anycubicControl'
 
 type LiveStatuses = Awaited<ReturnType<typeof getAllLiveStatuses>>
+type ControlResult = { success: boolean; error?: string }
+type ControlFn = (printerId: string) => Promise<ControlResult>
 
-const PAUSABLE_STATES = new Set(['RUNNING'])
-const RESUMABLE_STATES = new Set(['PAUSE'])
-const STOPPABLE_STATES = new Set(['RUNNING', 'PAUSE', 'PREPARE'])
+const BAMBU_PAUSABLE_STATES = new Set(['RUNNING'])
+const BAMBU_RESUMABLE_STATES = new Set(['PAUSE'])
+const BAMBU_STOPPABLE_STATES = new Set(['RUNNING', 'PAUSE', 'PREPARE'])
 
-function PrintControls({ printerId, printerName, gcodeState }: { printerId: string; printerName: string; gcodeState: string }) {
+// order_id 2/3/4 (ver lib/anycubic/auth.ts#ANYCUBIC_ORDER_ID) só faz sentido
+// com um job em andamento -- mesmos estados "tem projeto ativo" usados pelo
+// jobTracker (lib/anycubic/jobTracker.ts#RUNNING_STATES/TERMINAL_STATES).
+const ANYCUBIC_PAUSABLE_STATES = new Set(['PRINTING'])
+const ANYCUBIC_RESUMABLE_STATES = new Set(['PAUSED'])
+const ANYCUBIC_STOPPABLE_STATES = new Set(['DOWNLOADING', 'CHECKING', 'PREHEATING', 'PRINTING', 'PAUSED'])
+
+// Genérico o bastante pra servir Bambu (MQTT publish) e Anycubic (HTTP
+// sendOrder) -- só o conjunto de estados e as funções de comando mudam por
+// marca, o resto (botões, diálogo de confirmação, pending/error) é idêntico.
+function PrintControls({
+  printerId,
+  printerName,
+  state,
+  pausableStates,
+  resumableStates,
+  stoppableStates,
+  pause,
+  resume,
+  stop,
+}: {
+  printerId: string
+  printerName: string
+  state: string
+  pausableStates: Set<string>
+  resumableStates: Set<string>
+  stoppableStates: Set<string>
+  pause: ControlFn
+  resume: ControlFn
+  stop: ControlFn
+}) {
   const [pending, setPending] = useState<'pause' | 'resume' | 'stop' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -23,7 +56,7 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
   // mounted until the user closes it themselves.
   const [dialogOpen, setDialogOpen] = useState(false)
 
-  async function run(kind: 'pause' | 'resume' | 'stop', fn: (id: string) => Promise<{ success: boolean; error?: string }>) {
+  async function run(kind: 'pause' | 'resume' | 'stop', fn: ControlFn) {
     setPending(kind)
     setError(null)
     const result = await fn(printerId)
@@ -32,9 +65,9 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
     else dialogRef.current?.close()
   }
 
-  const canPause = PAUSABLE_STATES.has(gcodeState)
-  const canResume = RESUMABLE_STATES.has(gcodeState)
-  const canStop = STOPPABLE_STATES.has(gcodeState)
+  const canPause = pausableStates.has(state)
+  const canResume = resumableStates.has(state)
+  const canStop = stoppableStates.has(state)
 
   if (!canPause && !canResume && !canStop && !dialogOpen) return null
 
@@ -44,7 +77,7 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
         <button
           type="button"
           disabled={pending !== null}
-          onClick={() => run('pause', pausePrintJob)}
+          onClick={() => run('pause', pause)}
           className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
         >
           {pending === 'pause' ? 'Pausando…' : 'Pausar'}
@@ -54,7 +87,7 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
         <button
           type="button"
           disabled={pending !== null}
-          onClick={() => run('resume', resumePrintJob)}
+          onClick={() => run('resume', resume)}
           className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
         >
           {pending === 'resume' ? 'Retomando…' : 'Retomar'}
@@ -87,7 +120,7 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
             <button
               type="button"
               disabled={pending !== null}
-              onClick={() => run('stop', stopPrintJob)}
+              onClick={() => run('stop', stop)}
               className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50 dark:bg-red-500 dark:text-slate-950 dark:hover:bg-red-400"
             >
               {pending === 'stop' ? 'Parando…' : 'Parar impressão'}
@@ -240,7 +273,17 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                     {formatEta(printer.status.remainingMinutes) && <p>Término estimado: {formatEta(printer.status.remainingMinutes)}</p>}
                   </div>
 
-                  <PrintControls printerId={printer.printerId} printerName={printer.name} gcodeState={printer.status.gcodeState} />
+                  <PrintControls
+                    printerId={printer.printerId}
+                    printerName={printer.name}
+                    state={printer.status.gcodeState}
+                    pausableStates={BAMBU_PAUSABLE_STATES}
+                    resumableStates={BAMBU_RESUMABLE_STATES}
+                    stoppableStates={BAMBU_STOPPABLE_STATES}
+                    pause={pausePrintJob}
+                    resume={resumePrintJob}
+                    stop={stopPrintJob}
+                  />
 
                   <details className="pt-1">
                     <summary className="tk-summary cursor-pointer text-xs">Informações do arquivo</summary>
@@ -319,6 +362,18 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                   {printer.status.remainingMinutes !== null && <p>{printer.status.remainingMinutes} min restantes</p>}
                   {formatEta(printer.status.remainingMinutes) && <p>Término estimado: {formatEta(printer.status.remainingMinutes)}</p>}
                 </div>
+
+                <PrintControls
+                  printerId={printer.printerId}
+                  printerName={printer.name}
+                  state={printer.status.printState}
+                  pausableStates={ANYCUBIC_PAUSABLE_STATES}
+                  resumableStates={ANYCUBIC_RESUMABLE_STATES}
+                  stoppableStates={ANYCUBIC_STOPPABLE_STATES}
+                  pause={pauseAnycubicPrintJob}
+                  resume={resumeAnycubicPrintJob}
+                  stop={stopAnycubicPrintJob}
+                />
 
                 <details className="pt-1">
                   <summary className="tk-summary cursor-pointer text-xs">Informações do arquivo</summary>

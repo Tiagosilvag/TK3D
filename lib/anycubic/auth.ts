@@ -48,18 +48,58 @@ export async function fetchUserInfo(authToken: string): Promise<{ id: string; em
   return { id: String(data.data.id), email: data.data.user_email }
 }
 
-export type AnycubicPrinterRef = { key: string; name: string }
+// `id` (numérico) e `key` (hash usado nos tópicos MQTT) são campos
+// DIFERENTES na resposta da Anycubic -- controle de impressão
+// (sendAnycubicOrder) exige o `id`, monitoramento MQTT exige a `key`.
+export type AnycubicPrinterRef = { id: number; key: string; name: string }
 
 // Lista as impressoras vinculadas à conta -- mesmo papel do
-// fetchBoundDevices da Bambu, pra escolher a "key" numa lista em vez de
-// caçar ela manualmente.
+// fetchBoundDevices da Bambu, pra escolher a "key"/id numa lista em vez de
+// caçar eles manualmente.
 export async function fetchMyPrinters(authToken: string): Promise<AnycubicPrinterRef[]> {
   const res = await signedFetch('/work/printer/getPrinters', { authToken })
   if (!res.ok) throw new Error('Falha ao buscar impressoras da conta Anycubic')
-  const data = (await res.json()) as { data?: { key?: string; name?: string }[] }
+  const data = (await res.json()) as { data?: { id?: number; key?: string; name?: string }[] }
   return (data.data ?? [])
-    .filter((p): p is { key: string; name?: string } => Boolean(p.key))
-    .map((p) => ({ key: p.key, name: p.name ?? p.key }))
+    .filter((p): p is { id: number; key: string; name?: string } => typeof p.id === 'number' && Boolean(p.key))
+    .map((p) => ({ id: p.id, key: p.key, name: p.name ?? p.key }))
+}
+
+// order_id visto no código de referência (hass-anycubic_cloud_v3,
+// enums.py#AnycubicOrderID) -- não documentado oficialmente.
+export const ANYCUBIC_ORDER_ID = {
+  PAUSE_PRINT: 2,
+  RESUME_PRINT: 3,
+  STOP_PRINT: 4,
+} as const
+
+// Controle de impressão (pausar/retomar/parar) da Anycubic é feito por
+// HTTP, não MQTT publish como a Bambu -- POST /work/operation/sendOrder
+// (achado lendo hass-anycubic_cloud_v3, functions.py#_send_order_pause_print
+// e data_models/orders.py#AnycubicProjectCtrlOrderRequest.order_request_data).
+// printerId é o id NUMÉRICO (não a key), projectId é o id do job/task atual
+// (mesmo valor usado em fetchProjectInfo).
+export async function sendAnycubicOrder(
+  authToken: string,
+  opts: { printerId: number; projectId: number; orderId: number },
+): Promise<void> {
+  const res = await signedFetch('/work/operation/sendOrder', {
+    method: 'POST',
+    authToken,
+    body: {
+      order_id: opts.orderId,
+      printer_id: opts.printerId,
+      project_id: opts.projectId,
+      data: null,
+      ams_info: null,
+      settings: null,
+    },
+  })
+  if (!res.ok) throw new Error('Falha ao enviar comando pra impressora Anycubic')
+  const data = (await res.json()) as { data?: { msgid?: string } | null; msg?: string }
+  if (data.data === null || data.data === undefined) {
+    throw new Error(data.msg ? `Anycubic recusou o comando: ${data.msg}` : 'Anycubic recusou o comando')
+  }
 }
 
 export type AnycubicMaterialUsage = { materialType: string; colorHex: string | null; grams: number }

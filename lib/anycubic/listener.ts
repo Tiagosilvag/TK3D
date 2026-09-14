@@ -64,7 +64,15 @@ export function createAnycubicListenerCore(opts: {
     return liveStatus.get(printerId) ?? null
   }
 
-  return { start, getLiveStatus }
+  // Ajuste "controle de impressão Anycubic": pausar/retomar/parar (HTTP,
+  // ver lib/anycubic/auth.ts#sendAnycubicOrder) exige o project_id do job
+  // atual -- mesmo taskid já rastreado aqui pra disparar onJobStart, só
+  // exposto pra fora também.
+  function getCurrentTaskId(printerId: string): number | null {
+    return lastTaskId.get(printerId) ?? null
+  }
+
+  return { start, getLiveStatus, getCurrentTaskId }
 }
 
 // --- Casca real (não coberta por teste automatizado -- depende da nuvem
@@ -214,6 +222,10 @@ export function getAnycubicLiveStatus(printerId: string): AnycubicStatus | null 
 
 export function getAnycubicProjectInfo(printerId: string): AnycubicProjectInfo | null {
   return currentProjectInfo.get(printerId) ?? null
+}
+
+export function getAnycubicCurrentTaskId(printerId: string): number | null {
+  return core?.getCurrentTaskId(printerId) ?? null
 }
 
 export async function restartAnycubicListener(): Promise<void> {
