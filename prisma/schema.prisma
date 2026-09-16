@@ -124,6 +124,12 @@ model Printer {
   // tópicos MQTT (não é um serial no sentido Bambu).
   anycubicEnabled        Boolean         @default(false)
   anycubicPrinterKey     String?
+  // Ajuste "controle de impressão Anycubic": id NUMÉRICO da impressora
+  // (campo "id" de GET /work/printer/getPrinters, distinto da "key" acima)
+  // -- exigido pelo endpoint POST /work/operation/sendOrder (pausar/
+  // retomar/parar), que não aceita a key. Também vem do picker, preenchido
+  // junto com anycubicPrinterKey.
+  anycubicPrinterId      Int?
   active                 Boolean         @default(true)
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt

@@ -167,6 +167,7 @@ export default async function ProductionPage({
     id: f.id,
     name: `${f.manufacturer} ${f.colorName} (${f.material}) — Rolo #${String(f.rollNumber).padStart(3, '0')} (${f.currentStockGrams.toNumber()}g restantes)`,
     pricePerGram: calculateFilamentPricePerGram({ spoolPrice: f.spoolPrice.toNumber(), spoolWeightKg: f.spoolWeightKg.toNumber() }),
+    colorHex: f.colorHex,
   }))
 
   return (

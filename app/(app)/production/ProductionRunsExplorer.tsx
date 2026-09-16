@@ -18,7 +18,7 @@ type Option = { id: string; name: string }
 // ProductionRunBatchForm mostrar o campo informativo e o rateio da Plate ao
 // vivo sem precisar buscar o Printer inteiro no client.
 type PrinterOption = { id: string; name: string; costPerHour: number }
-type FilamentOption = { id: string; name: string; pricePerGram: number }
+type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
 
 // Melhoria "Produção" (reformulação Plate): a lista principal volta a ser
 // uma linha por PEÇA/run, não mais agrupada por batchId -- desde que cada

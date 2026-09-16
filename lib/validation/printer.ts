@@ -21,6 +21,14 @@ export const printerSchema = z.object({
   bambuSerial: z.string().optional().nullable(),
   anycubicEnabled: checkbox(),
   anycubicPrinterKey: z.string().optional().nullable(),
+  // Vem do input hidden preenchido pelo picker (PrinterForm.tsx) -- string
+  // vazia quando nenhuma impressora foi escolhida da lista ainda, viram
+  // null (não 0/NaN) nesse caso, nunca digitado manualmente pelo usuário.
+  anycubicPrinterId: z
+    .string()
+    .optional()
+    .nullable()
+    .transform((v) => (v ? parseInt(v, 10) : null)),
 })
 
 export type PrinterInput = z.infer<typeof printerSchema>

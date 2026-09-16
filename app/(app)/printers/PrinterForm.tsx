@@ -31,6 +31,7 @@ export type EditingPrinter = {
   bambuSerial: string | null
   anycubicEnabled: boolean
   anycubicPrinterKey: string | null
+  anycubicPrinterId: number | null
 }
 
 // Melhorias "Impressoras": formulário virou modal (<dialog> nativo, mesmo
@@ -65,6 +66,7 @@ export function PrinterForm({
   const [bambuDevicesError, setBambuDevicesError] = useState<string | null>(null)
   const [loadingBambuDevices, setLoadingBambuDevices] = useState(false)
   const [anycubicPrinterKey, setAnycubicPrinterKey] = useState(editingPrinter?.anycubicPrinterKey ?? '')
+  const [anycubicPrinterId, setAnycubicPrinterId] = useState(editingPrinter?.anycubicPrinterId ?? null)
   const [anycubicPrinters, setAnycubicPrinters] = useState<AnycubicPrinterRef[] | null>(null)
   const [anycubicPrintersError, setAnycubicPrintersError] = useState<string | null>(null)
   const [loadingAnycubicPrinters, setLoadingAnycubicPrinters] = useState(false)
@@ -131,6 +133,7 @@ export function PrinterForm({
     setBambuDevices(null)
     setBambuDevicesError(null)
     setAnycubicPrinterKey(editingPrinter?.anycubicPrinterKey ?? '')
+    setAnycubicPrinterId(editingPrinter?.anycubicPrinterId ?? null)
     setAnycubicPrinters(null)
     setAnycubicPrintersError(null)
   }
@@ -314,6 +317,12 @@ export function PrinterForm({
             onChange={(e) => setAnycubicPrinterKey(e.target.value)}
           />
         </label>
+        {/* anycubicPrinterId (numérico) é exigido só pra pausar/retomar/
+            parar (ver actions/anycubicControl.ts) -- preenchido junto com a
+            key ao escolher da lista abaixo, sem campo de texto próprio
+            (digitar a key manualmente deixa esse id desatualizado até
+            escolher de novo pela lista). */}
+        <input type="hidden" name="anycubicPrinterId" value={anycubicPrinterId ?? ''} />
         <div className="col-span-2 -mt-2">
           <button
             type="button"
@@ -332,6 +341,7 @@ export function PrinterForm({
                     type="button"
                     onClick={() => {
                       setAnycubicPrinterKey(printer.key)
+                      setAnycubicPrinterId(printer.id)
                       setAnycubicPrinters(null)
                     }}
                     className="flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-slate-800/60"

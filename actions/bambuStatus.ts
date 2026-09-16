@@ -29,7 +29,7 @@ export async function getBambuBoundDevices(): Promise<{ success: boolean; device
 // Reconecta manualmente (ex.: sessão expirada) sem precisar de restart do
 // container -- ver lib/bambu/listener.ts#restartBambuListener.
 export async function reconnectBambuListener(): Promise<{ success: boolean }> {
-  await restartBambuListener()
+  await restartBambuListener('reconnectBambuListener (botão manual)')
   revalidatePath('/settings')
   revalidatePath('/monitor')
   return { success: true }

@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { exchangeSlicerToken, fetchUserInfo, fetchMyPrinters, fetchProjectInfo, fetchProjectHistory } from '@/lib/anycubic/auth'
+import {
+  exchangeSlicerToken,
+  fetchUserInfo,
+  fetchMyPrinters,
+  fetchProjectInfo,
+  fetchProjectHistory,
+  sendAnycubicOrder,
+  ANYCUBIC_ORDER_ID,
+} from '@/lib/anycubic/auth'
 
 describe('anycubic auth client', () => {
   const originalFetch = global.fetch
@@ -54,24 +62,38 @@ describe('anycubic auth client', () => {
     expect(init.headers['XX-Token']).toBe('session-token-abc')
   })
 
-  it('fetchMyPrinters lista as impressoras com key e nome', async () => {
+  it('fetchMyPrinters lista as impressoras com id, key e nome', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ data: [{ key: 'abc123', name: 'Kobra 3' }, { key: 'def456', name: 'Kobra 2' }] }),
+      json: async () => ({
+        data: [
+          { id: 111, key: 'abc123', name: 'Kobra 3' },
+          { id: 222, key: 'def456', name: 'Kobra 2' },
+        ],
+      }),
     }) as unknown as typeof fetch
 
     const printers = await fetchMyPrinters('session-token-abc')
-    expect(printers).toEqual([{ key: 'abc123', name: 'Kobra 3' }, { key: 'def456', name: 'Kobra 2' }])
+    expect(printers).toEqual([
+      { id: 111, key: 'abc123', name: 'Kobra 3' },
+      { id: 222, key: 'def456', name: 'Kobra 2' },
+    ])
   })
 
-  it('fetchMyPrinters ignora entradas sem key', async () => {
+  it('fetchMyPrinters ignora entradas sem key ou sem id (id numérico é exigido pra pausar/retomar/parar)', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ data: [{ name: 'Sem key' }, { key: 'def456', name: 'Kobra 2' }] }),
+      json: async () => ({
+        data: [
+          { id: 111, name: 'Sem key' },
+          { key: 'sem-id', name: 'Sem id' },
+          { id: 222, key: 'def456', name: 'Kobra 2' },
+        ],
+      }),
     }) as unknown as typeof fetch
 
     const printers = await fetchMyPrinters('session-token-abc')
-    expect(printers).toEqual([{ key: 'def456', name: 'Kobra 2' }])
+    expect(printers).toEqual([{ id: 222, key: 'def456', name: 'Kobra 2' }])
   })
 
   it('fetchProjectInfo monta a thumbnail a partir do image_id (bucket S3 público da Anycubic)', async () => {
@@ -231,5 +253,43 @@ describe('anycubic auth client', () => {
   it('fetchProjectHistory lança erro em resposta HTTP não-ok', async () => {
     global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }) as unknown as typeof fetch
     await expect(fetchProjectHistory('session-token-abc')).rejects.toThrow('Falha ao buscar histórico')
+  })
+
+  it('sendAnycubicOrder manda order_id/printer_id/project_id pro endpoint sendOrder (achado lendo hass-anycubic_cloud_v3)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: { msgid: 'abc' } }) })
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    await sendAnycubicOrder('session-token-abc', { printerId: 111, projectId: 999, orderId: ANYCUBIC_ORDER_ID.PAUSE_PRINT })
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(String(url)).toContain('/work/operation/sendOrder')
+    expect(init.method).toBe('POST')
+    const body = JSON.parse(init.body)
+    expect(body).toEqual({
+      order_id: 2,
+      printer_id: 111,
+      project_id: 999,
+      data: null,
+      ams_info: null,
+      settings: null,
+    })
+  })
+
+  it('sendAnycubicOrder lança erro quando a Anycubic recusa o comando (data null/ausente)', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: null, msg: 'printer offline' }),
+    }) as unknown as typeof fetch
+
+    await expect(
+      sendAnycubicOrder('session-token-abc', { printerId: 111, projectId: 999, orderId: ANYCUBIC_ORDER_ID.STOP_PRINT }),
+    ).rejects.toThrow('printer offline')
+  })
+
+  it('sendAnycubicOrder lança erro em resposta HTTP não-ok', async () => {
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }) as unknown as typeof fetch
+    await expect(
+      sendAnycubicOrder('session-token-abc', { printerId: 111, projectId: 999, orderId: ANYCUBIC_ORDER_ID.RESUME_PRINT }),
+    ).rejects.toThrow('Falha ao enviar comando')
   })
 })

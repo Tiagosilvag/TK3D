@@ -104,6 +104,15 @@ export async function startBambuListener(): Promise<void> {
     // Username do broker MQTT da nuvem é "u_{uid}", nunca o e-mail --
     // bug real encontrado testando com a conta do usuário (a conexão
     // nunca fechava, ficava presa em not_configured/expired).
+    //
+    // Investigação em andamento (2026-09-14): visto em produção com o
+    // client virando null (publishBambuCommand recusa "não conectada")
+    // sem nenhum erro/close logado no meio. Hipótese inicial de colisão de
+    // sessão com Bambu Studio/Handy abertos na mesma conta foi TESTADA E
+    // DESCARTADA no caso equivalente da Anycubic (ver
+    // lib/anycubic/listener.ts) -- usuário confirmou que múltiplos apps/
+    // dispositivos conectados normalmente não causam conflito. Causa raiz
+    // real ainda não identificada.
     username: `u_${settings.bambuCloudUserId}`,
     password: token,
     reconnectPeriod: 5000,
@@ -111,6 +120,7 @@ export async function startBambuListener(): Promise<void> {
 
   client.on('connect', () => {
     connectionStatus = 'connected'
+    console.error(`[bambu] MQTT conectado (pid=${process.pid})`)
     // Pedido "pushall" (ajuste "extrair mais dados", 2026-09-12): única
     // publicação que este listener faz -- o resto do módulo só assina/lê.
     // Sem isso, campos que só vêm num dump completo (ex.: versão de
@@ -132,6 +142,15 @@ export async function startBambuListener(): Promise<void> {
     // simetria/segurança, mesmo sem ter reproduzido o crash neste listener.
     if (err.message.startsWith('Connection refused:')) client?.end(true)
   })
+  // Diagnóstico (bug real reportado pelo usuário: "pausar" recusava com
+  // "não conectada" mesmo sem nenhum 'error' nos logs) -- até agora só
+  // logávamos erro explícito, nunca uma queda silenciosa da conexão
+  // (close/offline sem 'error' associado, comum em timeout de rede/idle).
+  // Sem isso não dava pra saber se client.connected realmente cai às vezes
+  // ou se o problema está em outro lugar.
+  client.on('close', () => console.error('[bambu] MQTT desconectado (close)'))
+  client.on('reconnect', () => console.error('[bambu] tentando reconectar ao MQTT...'))
+  client.on('offline', () => console.error('[bambu] MQTT offline'))
 
   core = createListenerCore({
     printers,
@@ -212,10 +231,20 @@ export function getCurrentThumbnail(printerId: string): string | null {
 // salvar uma impressora (actions/printers.ts), pra pegar credencial/opt-in
 // novos sem exigir redeploy. Fecha a conexão MQTT antiga antes de abrir
 // outra, pra não vazar socket nem duplicar assinatura de tópico.
-export async function restartBambuListener(): Promise<void> {
+export async function restartBambuListener(reason: string = 'desconhecido'): Promise<void> {
+  // Diagnóstico (bug real, 2026-09-14): a conexão ficou reconectando
+  // dezenas de vezes em 12 minutos, presa em client=null boa parte do
+  // tempo -- só acontece se algo estiver chamando este restart repetidamente.
+  // Loga QUEM chamou (reason) em vez de adivinhar pela stack minificada do
+  // build de produção.
+  console.error(`[bambu] restartBambuListener chamado (motivo: ${reason}, pid=${process.pid})`)
   if (client) {
     client.removeAllListeners()
-    client.end(true)
+    // Mesmo ajuste feito no listener Anycubic (ver comentário lá):
+    // end(true) força o fechamento sem mandar o DISCONNECT limpo pro
+    // broker -- troca pra end(false) aqui, force=true continua só no
+    // handler de erro "Connection refused:" abaixo.
+    client.end(false)
     client = null
   }
   core = null
@@ -233,7 +262,16 @@ export function getConnectionStatus(): BambuConnectionStatus {
 // publish que este listener faz. Busca o serial na hora (sem cache) porque
 // é uma ação pontual do usuário, não um hot path.
 export async function publishBambuCommand(printerId: string, command: BambuCommand): Promise<void> {
-  if (!client || connectionStatus !== 'connected') {
+  // client.connected reflete o estado REAL do socket MQTT agora -- não a
+  // variável connectionStatus (que só muda nos eventos 'connect'/'error' e
+  // pode ficar presa em 'expired' depois de um erro transitório que não
+  // chegou a fechar a conexão de verdade, mesmo com dados chegando ao vivo
+  // normalmente -- bug real reportado pelo usuário: card mostrando progresso
+  // e thumbnail atualizando, mas pausar recusava com "não conectada").
+  if (!client || !client.connected) {
+    console.error(
+      `[bambu] publishBambuCommand recusado -- client=${client ? 'existe' : 'null'} connected=${client?.connected} pid=${process.pid}`,
+    )
     throw new Error('Impressora não está conectada à nuvem Bambu no momento')
   }
   const printer = await prisma.printer.findUnique({ where: { id: printerId }, select: { bambuSerial: true } })

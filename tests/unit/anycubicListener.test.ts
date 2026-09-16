@@ -105,4 +105,19 @@ describe('createAnycubicListenerCore', () => {
     handlers['KEY1']({ type: 'fan', action: 'auto', state: 'done', data: { fan_speed_pct: 50 } })
     expect(onJobStart).not.toHaveBeenCalled()
   })
+
+  it('getCurrentTaskId expõe o taskid do job atual (ajuste "controle de impressão Anycubic": exigido pra pausar/retomar/parar)', () => {
+    const handlers: Record<string, (payload: unknown) => void> = {}
+    const core = createAnycubicListenerCore({
+      printers: [{ id: 'p1', anycubicEnabled: true, anycubicPrinterKey: 'KEY1' }],
+      subscribe: (key, handler) => {
+        handlers[key] = handler
+      },
+      onCapture: vi.fn(),
+    })
+    core.start()
+    expect(core.getCurrentTaskId('p1')).toBeNull()
+    handlers['KEY1']({ type: 'print', action: 'start', state: 'printing', data: { taskid: 333 } })
+    expect(core.getCurrentTaskId('p1')).toBe(333)
+  })
 })

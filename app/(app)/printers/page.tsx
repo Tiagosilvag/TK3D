@@ -63,6 +63,7 @@ export default async function PrintersPage({
         bambuSerial: editingPrinterRecord.bambuSerial,
         anycubicEnabled: editingPrinterRecord.anycubicEnabled,
         anycubicPrinterKey: editingPrinterRecord.anycubicPrinterKey,
+        anycubicPrinterId: editingPrinterRecord.anycubicPrinterId,
       }
     : undefined
 

@@ -2,14 +2,47 @@
 import { useEffect, useRef, useState } from 'react'
 import { getAllLiveStatuses } from '@/actions/bambuStatus'
 import { pausePrintJob, resumePrintJob, stopPrintJob } from '@/actions/bambuControl'
+import { pauseAnycubicPrintJob, resumeAnycubicPrintJob, stopAnycubicPrintJob } from '@/actions/anycubicControl'
 
 type LiveStatuses = Awaited<ReturnType<typeof getAllLiveStatuses>>
+type ControlResult = { success: boolean; error?: string }
+type ControlFn = (printerId: string) => Promise<ControlResult>
 
-const PAUSABLE_STATES = new Set(['RUNNING'])
-const RESUMABLE_STATES = new Set(['PAUSE'])
-const STOPPABLE_STATES = new Set(['RUNNING', 'PAUSE', 'PREPARE'])
+const BAMBU_PAUSABLE_STATES = new Set(['RUNNING'])
+const BAMBU_RESUMABLE_STATES = new Set(['PAUSE'])
+const BAMBU_STOPPABLE_STATES = new Set(['RUNNING', 'PAUSE', 'PREPARE'])
 
-function PrintControls({ printerId, printerName, gcodeState }: { printerId: string; printerName: string; gcodeState: string }) {
+// order_id 2/3/4 (ver lib/anycubic/auth.ts#ANYCUBIC_ORDER_ID) só faz sentido
+// com um job em andamento -- mesmos estados "tem projeto ativo" usados pelo
+// jobTracker (lib/anycubic/jobTracker.ts#RUNNING_STATES/TERMINAL_STATES).
+const ANYCUBIC_PAUSABLE_STATES = new Set(['PRINTING'])
+const ANYCUBIC_RESUMABLE_STATES = new Set(['PAUSED'])
+const ANYCUBIC_STOPPABLE_STATES = new Set(['DOWNLOADING', 'CHECKING', 'PREHEATING', 'PRINTING', 'PAUSED'])
+
+// Genérico o bastante pra servir Bambu (MQTT publish) e Anycubic (HTTP
+// sendOrder) -- só o conjunto de estados e as funções de comando mudam por
+// marca, o resto (botões, diálogo de confirmação, pending/error) é idêntico.
+function PrintControls({
+  printerId,
+  printerName,
+  state,
+  pausableStates,
+  resumableStates,
+  stoppableStates,
+  pause,
+  resume,
+  stop,
+}: {
+  printerId: string
+  printerName: string
+  state: string
+  pausableStates: Set<string>
+  resumableStates: Set<string>
+  stoppableStates: Set<string>
+  pause: ControlFn
+  resume: ControlFn
+  stop: ControlFn
+}) {
   const [pending, setPending] = useState<'pause' | 'resume' | 'stop' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -23,7 +56,7 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
   // mounted until the user closes it themselves.
   const [dialogOpen, setDialogOpen] = useState(false)
 
-  async function run(kind: 'pause' | 'resume' | 'stop', fn: (id: string) => Promise<{ success: boolean; error?: string }>) {
+  async function run(kind: 'pause' | 'resume' | 'stop', fn: ControlFn) {
     setPending(kind)
     setError(null)
     const result = await fn(printerId)
@@ -32,9 +65,9 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
     else dialogRef.current?.close()
   }
 
-  const canPause = PAUSABLE_STATES.has(gcodeState)
-  const canResume = RESUMABLE_STATES.has(gcodeState)
-  const canStop = STOPPABLE_STATES.has(gcodeState)
+  const canPause = pausableStates.has(state)
+  const canResume = resumableStates.has(state)
+  const canStop = stoppableStates.has(state)
 
   if (!canPause && !canResume && !canStop && !dialogOpen) return null
 
@@ -44,7 +77,7 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
         <button
           type="button"
           disabled={pending !== null}
-          onClick={() => run('pause', pausePrintJob)}
+          onClick={() => run('pause', pause)}
           className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
         >
           {pending === 'pause' ? 'Pausando…' : 'Pausar'}
@@ -54,7 +87,7 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
         <button
           type="button"
           disabled={pending !== null}
-          onClick={() => run('resume', resumePrintJob)}
+          onClick={() => run('resume', resume)}
           className="rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:hover:bg-slate-800"
         >
           {pending === 'resume' ? 'Retomando…' : 'Retomar'}
@@ -87,7 +120,7 @@ function PrintControls({ printerId, printerName, gcodeState }: { printerId: stri
             <button
               type="button"
               disabled={pending !== null}
-              onClick={() => run('stop', stopPrintJob)}
+              onClick={() => run('stop', stop)}
               className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50 dark:bg-red-500 dark:text-slate-950 dark:hover:bg-red-400"
             >
               {pending === 'stop' ? 'Parando…' : 'Parar impressão'}
@@ -202,35 +235,74 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
               !printer.status ? (
                 <p className="mt-2 text-sm text-slate-400">Sem dados ainda</p>
               ) : (
-                <div className="mt-2 space-y-1 text-sm text-slate-700 dark:text-slate-300">
-                  <p>{STATE_LABELS[printer.status.gcodeState] ?? printer.status.gcodeState}</p>
-                  {printer.status.percent !== null && <p>{printer.status.percent}%</p>}
-                  {printer.status.remainingMinutes !== null && <p>{printer.status.remainingMinutes} min restantes</p>}
+                <div className="mt-2 space-y-2 text-sm text-slate-700 dark:text-slate-300">
+                  <div>
+                    <div className="flex items-baseline justify-between">
+                      <span>{STATE_LABELS[printer.status.gcodeState] ?? printer.status.gcodeState}</span>
+                      {printer.status.percent !== null && (
+                        <span className="font-display font-semibold text-violet-600 dark:text-violet-400">{printer.status.percent}%</span>
+                      )}
+                    </div>
+                    {printer.status.percent !== null && (
+                      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-violet-600 to-blue-500"
+                          style={{ width: `${printer.status.percent}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+
                   {printer.status.gcodeFilePreparePercent !== null && printer.status.gcodeFilePreparePercent < 100 && (
                     <p className="text-slate-500 dark:text-slate-400">Preparando arquivo: {printer.status.gcodeFilePreparePercent}%</p>
                   )}
                   {printer.status.gcodeFile && <p className="truncate text-slate-500 dark:text-slate-400">{printer.status.gcodeFile}</p>}
-
-                  <PrintControls printerId={printer.printerId} printerName={printer.name} gcodeState={printer.status.gcodeState} />
 
                   {printer.status.hmsCodes.length > 0 && (
                     <p className="text-red-600 dark:text-red-400">Alerta HMS: {printer.status.hmsCodes.join(', ')}</p>
                   )}
                   {printer.status.printErrorCode && <p className="text-red-600 dark:text-red-400">Erro: {printer.status.printErrorCode}</p>}
 
-                  {printer.status.amsTrays.length > 0 && (
-                    <div className="pt-1">
-                      {printer.status.amsTrays.map((tray) => (
-                        <p key={tray.id} className="text-xs text-slate-500 dark:text-slate-400">
-                          Slot {tray.id}: {tray.type || '—'} · {tray.remainPercent}%{' '}
-                          {tray.tagUid && tray.tagUid !== '0000000000000000' ? '(rolo Bambu)' : '(rolo genérico)'}
-                        </p>
-                      ))}
-                    </div>
-                  )}
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                    {printer.status.layerNum !== null && printer.status.totalLayerNum !== null && (
+                      <p>
+                        Camada {printer.status.layerNum}/{printer.status.totalLayerNum}
+                      </p>
+                    )}
+                    {printer.status.remainingMinutes !== null && <p>{printer.status.remainingMinutes} min restantes</p>}
+                    {formatEta(printer.status.remainingMinutes) && <p>Término estimado: {formatEta(printer.status.remainingMinutes)}</p>}
+                  </div>
+
+                  <PrintControls
+                    printerId={printer.printerId}
+                    printerName={printer.name}
+                    state={printer.status.gcodeState}
+                    pausableStates={BAMBU_PAUSABLE_STATES}
+                    resumableStates={BAMBU_RESUMABLE_STATES}
+                    stoppableStates={BAMBU_STOPPABLE_STATES}
+                    pause={pausePrintJob}
+                    resume={resumePrintJob}
+                    stop={stopPrintJob}
+                  />
 
                   <details className="pt-1">
-                    <summary className="tk-summary cursor-pointer text-xs">Detalhes</summary>
+                    <summary className="tk-summary cursor-pointer text-xs">Informações do arquivo</summary>
+                    <div className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      {printer.status.amsTrays.length > 0 ? (
+                        printer.status.amsTrays.map((tray) => (
+                          <p key={tray.id}>
+                            Slot {tray.id}: {tray.type || '—'} · {tray.remainPercent}%{' '}
+                            {tray.tagUid && tray.tagUid !== '0000000000000000' ? '(rolo Bambu)' : '(rolo genérico)'}
+                          </p>
+                        ))
+                      ) : (
+                        <p className="italic">Sem dados de AMS disponíveis ainda</p>
+                      )}
+                    </div>
+                  </details>
+
+                  <details className="pt-1">
+                    <summary className="tk-summary cursor-pointer text-xs">Parâmetros</summary>
                     <div className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
                       {formatTemp(printer.status.nozzleTemp, printer.status.nozzleTargetTemp) && (
                         <p>Bico: {formatTemp(printer.status.nozzleTemp, printer.status.nozzleTargetTemp)}</p>
@@ -290,6 +362,18 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                   {printer.status.remainingMinutes !== null && <p>{printer.status.remainingMinutes} min restantes</p>}
                   {formatEta(printer.status.remainingMinutes) && <p>Término estimado: {formatEta(printer.status.remainingMinutes)}</p>}
                 </div>
+
+                <PrintControls
+                  printerId={printer.printerId}
+                  printerName={printer.name}
+                  state={printer.status.printState}
+                  pausableStates={ANYCUBIC_PAUSABLE_STATES}
+                  resumableStates={ANYCUBIC_RESUMABLE_STATES}
+                  stoppableStates={ANYCUBIC_STOPPABLE_STATES}
+                  pause={pauseAnycubicPrintJob}
+                  resume={resumeAnycubicPrintJob}
+                  stop={stopAnycubicPrintJob}
+                />
 
                 <details className="pt-1">
                   <summary className="tk-summary cursor-pointer text-xs">Informações do arquivo</summary>

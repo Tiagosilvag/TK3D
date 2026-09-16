@@ -50,6 +50,7 @@ export function FilamentSelect({
   onChange,
   placeholder = 'Selecione',
   className = 'tk-input-full',
+  disabled = false,
 }: {
   name?: string
   options: FilamentSelectOption[]
@@ -57,6 +58,7 @@ export function FilamentSelect({
   onChange: (id: string) => void
   placeholder?: string
   className?: string
+  disabled?: boolean
 }) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -94,7 +96,8 @@ export function FilamentSelect({
         ref={triggerRef}
         type="button"
         onClick={openPicker}
-        className={`flex items-center justify-between gap-2 text-left ${className}`}
+        disabled={disabled}
+        className={`flex items-center justify-between gap-2 text-left ${disabled ? 'opacity-60' : ''} ${className}`}
       >
         <span className="flex min-w-0 items-center gap-2">
           {selected?.colorHex && <span style={{ background: selected.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
