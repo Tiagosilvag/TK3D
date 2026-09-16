@@ -18,8 +18,10 @@ import {
   sumProductPartsCost,
   calculateCompositeProductCost,
   allocatePlatePrintTime,
+  recomputeProductionRunPrinterCost,
   type ProductionCostSnapshotInput,
   type ProductCostBreakdown,
+  type ProductionCostSnapshot,
   type ProductPartCostInput,
 } from '@/lib/costing'
 
@@ -859,6 +861,127 @@ describe('buildProductionCostSnapshot (spec §4/§5, task-5 brief)', () => {
   it('é uma função pura: mesma entrada sempre produz o mesmo snapshot (serializável em JSON, sem instâncias/timestamps escondidos)', () => {
     const a = buildProductionCostSnapshot(baseInput, settings)
     const b = buildProductionCostSnapshot(baseInput, settings)
+    expect(a).toEqual(b)
+    expect(JSON.parse(JSON.stringify(a))).toEqual(a)
+  })
+})
+
+// Melhoria "Editar impressora depois de criar": recomputeProductionRunPrinterCost
+// troca só os termos de impressora (printerCost/maintenanceCost/
+// electricityCost do unitCost + a parcela de impressora do wasteCost) pra
+// uma impressora NOVA, preservando o resto do snapshot congelado -- mesmo
+// fixture numérico do describe('buildProductionCostSnapshot') acima
+// (printTimeHours 2, printerDepreciationCostPerHour 0.36, printerMaintenance
+// CostPerHour 0.18, avgPowerConsumptionKwh 0.27 × energyCostPerKwh 1 ->
+// printerCost 0.72/maintenanceCost 0.36/electricityCost 0.54, subtotal 5.17,
+// finalCost 5.687, wasteCost 2.005), reescrito como literal pra não
+// depender do escopo interno daquele describe.
+describe('recomputeProductionRunPrinterCost (editar impressora depois de criar)', () => {
+  const snapshot: ProductionCostSnapshot = {
+    quantityPlanned: 10,
+    quantitySuccess: 8,
+    quantityFailed: 2,
+    unitCost: {
+      filamentCost: 2.4,
+      electricityCost: 0.54,
+      printerCost: 0.72,
+      maintenanceCost: 0.36,
+      laborCost: 0.5,
+      suppliesCost: 0.3,
+      packagingCost: 0.2,
+      accessoryCost: 0.15,
+      componentProductsCost: 0,
+      failureRateCost: 0.517,
+      subtotal: 5.17,
+      finalCost: 5.687,
+      suggestedPrice: 11.374,
+      marketplacePrice: 11.374 / 0.745 + 4,
+    },
+    wasteCost: 2.005,
+    total: 5.687 * 8 + 2.005,
+    consumedResources: {
+      filament: { filamentId: 'fil1', gramsUsed: 300, gramsWasted: 20 },
+      accessories: [],
+      supplies: [],
+      packaging: [],
+    },
+    printTimeHours: 2,
+    printerCostFlags: { includeDepreciation: true, includeMaintenance: true, includeEnergyCost: true },
+  }
+
+  // Impressora nova mais cara: depreciação 0.6/h, manutenção 0.3/h, energia
+  // 0.3kWh × 1.5 = 0.45/h (contra 0.36/0.18/0.27 da antiga).
+  const pricierPrinter = { depreciationCostPerHour: 0.6, maintenanceCostPerHour: 0.3, avgPowerConsumptionKwh: 0.3, energyCostPerKwh: 1.5 }
+
+  it('troca só os termos de impressora, preservando filamento/mão de obra/insumos/acessórios/embalagem', () => {
+    const result = recomputeProductionRunPrinterCost({ snapshot, timeWastedHours: 0.5, newPrinter: pricierPrinter })
+    expect(result.unitCost.printerCost).toBeCloseTo(1.2, 6)
+    expect(result.unitCost.maintenanceCost).toBeCloseTo(0.6, 6)
+    expect(result.unitCost.electricityCost).toBeCloseTo(0.9, 6)
+    expect(result.unitCost.filamentCost).toBe(2.4)
+    expect(result.unitCost.laborCost).toBe(0.5)
+    expect(result.unitCost.suppliesCost).toBe(0.3)
+    expect(result.unitCost.packagingCost).toBe(0.2)
+    expect(result.unitCost.accessoryCost).toBe(0.15)
+    expect(result.consumedResources).toEqual(snapshot.consumedResources)
+  })
+
+  it('subtotal/finalCost recalculados por delta, preservando a proporção de falha congelada (finalCost/subtotal) e o markup congelado (suggestedPrice/finalCost)', () => {
+    const result = recomputeProductionRunPrinterCost({ snapshot, timeWastedHours: 0.5, newPrinter: pricierPrinter })
+    // delta = (1.2-0.72)+(0.6-0.36)+(0.9-0.54) = 1.08 -> subtotal 5.17+1.08=6.25
+    expect(result.unitCost.subtotal).toBeCloseTo(6.25, 6)
+    // ratio finalCost/subtotal congelado = 5.687/5.17 = 1.10 (a taxa de falha de 10%)
+    expect(result.unitCost.finalCost).toBeCloseTo(6.875, 6)
+    // ratio suggestedPrice/finalCost congelado = 11.374/5.687 = 2 (o markup) -- exato
+    expect(result.unitCost.suggestedPrice).toBeCloseTo(13.75, 6)
+    expect(result.unitCost.marketplacePrice).toBeGreaterThan(result.unitCost.suggestedPrice)
+  })
+
+  it('wasteCost troca só a parcela dependente de impressora, preservando o desperdício de filamento', () => {
+    const result = recomputeProductionRunPrinterCost({ snapshot, timeWastedHours: 0.5, newPrinter: pricierPrinter })
+    // parte de impressora: antiga 0.5*(0.36+0.18+0.27)=0.405, nova 0.5*(0.6+0.3+0.45)=0.675
+    // wasteCost 2.005 - 0.405 + 0.675 = 2.275 (a parte de filamento, 1.6, nunca muda)
+    expect(result.wasteCost).toBeCloseTo(2.275, 6)
+  })
+
+  it('total = novo finalCost × quantitySuccess + novo wasteCost', () => {
+    const result = recomputeProductionRunPrinterCost({ snapshot, timeWastedHours: 0.5, newPrinter: pricierPrinter })
+    expect(result.total).toBeCloseTo(57.275, 3)
+    expect(result.total).toBeCloseTo(result.unitCost.finalCost * 8 + result.wasteCost, 6)
+  })
+
+  it('impressora mais barata reduz o total', () => {
+    const cheaperPrinter = { depreciationCostPerHour: 0.1, maintenanceCostPerHour: 0.05, avgPowerConsumptionKwh: 0.1, energyCostPerKwh: 1 }
+    const result = recomputeProductionRunPrinterCost({ snapshot, timeWastedHours: 0.5, newPrinter: cheaperPrinter })
+    expect(result.total).toBeLessThan(snapshot.total)
+  })
+
+  it('flag desligado (includeMaintenance=false): unitCost.maintenanceCost continua atualizado (transparência, nunca escondido), mas a diferença NÃO entra no delta de subtotal', () => {
+    const snapshotNoMaint: ProductionCostSnapshot = { ...snapshot, printerCostFlags: { ...snapshot.printerCostFlags!, includeMaintenance: false } }
+    const result = recomputeProductionRunPrinterCost({ snapshot: snapshotNoMaint, timeWastedHours: 0.5, newPrinter: pricierPrinter })
+    expect(result.unitCost.maintenanceCost).toBeCloseTo(0.6, 6)
+    // delta agora só depreciação (0.48) + energia (0.36), sem os 0.24 de manutenção
+    expect(result.unitCost.subtotal).toBeCloseTo(5.17 + 0.48 + 0.36, 6)
+  })
+
+  it('printTimeHours=0 não divide por zero -- taxas derivadas e termos novos ficam 0, sem NaN', () => {
+    const zeroSnapshot: ProductionCostSnapshot = {
+      ...snapshot,
+      printTimeHours: 0,
+      unitCost: { ...snapshot.unitCost, printerCost: 0, maintenanceCost: 0, electricityCost: 0 },
+    }
+    const result = recomputeProductionRunPrinterCost({ snapshot: zeroSnapshot, timeWastedHours: 0, newPrinter: pricierPrinter })
+    expect(result.unitCost.printerCost).toBe(0)
+    expect(result.unitCost.maintenanceCost).toBe(0)
+    expect(result.unitCost.electricityCost).toBe(0)
+    expect(Number.isNaN(result.unitCost.subtotal)).toBe(false)
+    expect(Number.isNaN(result.total)).toBe(false)
+  })
+
+  it('é uma função pura, serializável em JSON', () => {
+    const input = { snapshot, timeWastedHours: 0.5, newPrinter: pricierPrinter }
+    const a = recomputeProductionRunPrinterCost(input)
+    const b = recomputeProductionRunPrinterCost(input)
     expect(a).toEqual(b)
     expect(JSON.parse(JSON.stringify(a))).toEqual(a)
   })

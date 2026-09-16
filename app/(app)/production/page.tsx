@@ -102,12 +102,32 @@ export default async function ProductionPage({
     return `/production?${qs.toString()}`
   }
 
+  // Melhoria "Editar impressora depois de criar": só permite trocar quando a
+  // produção NÃO faz parte de uma Plate (impressora compartilhada por todas
+  // as peças da Plate, trocar isolado deixaria inconsistente) E o
+  // costSnapshot já guarda printTimeHours/printerCostFlags congelados
+  // (ausente = produção anterior a este recurso, updateProductionRunPrinter
+  // bloqueia do mesmo jeito no servidor -- este flag só evita mostrar um
+  // controle que vai falhar).
+  const editingRunSnapshot = editingRunRecord?.costSnapshot as unknown as ProductionCostSnapshot | null | undefined
   const editingRun = editingRunRecord
     ? {
         id: editingRunRecord.id,
         productName: editingRunRecord.product.name,
         productPartName: editingRunRecord.productPart?.name ?? null,
+        printerId: editingRunRecord.printer.id,
         printerName: editingRunRecord.printer.name,
+        canEditPrinter:
+          !editingRunRecord.plateId &&
+          editingRunRecord.status !== 'CANCELADA' &&
+          !!editingRunSnapshot &&
+          editingRunSnapshot.printTimeHours !== undefined &&
+          !!editingRunSnapshot.printerCostFlags,
+        printerLockedReason: editingRunRecord.plateId
+          ? 'Faz parte de uma Plate -- a impressora é compartilhada por todas as peças dela.'
+          : !editingRunSnapshot || editingRunSnapshot.printTimeHours === undefined || !editingRunSnapshot.printerCostFlags
+            ? 'Produção anterior a este recurso -- não guardou o tempo de impressão necessário pra recalcular o custo.'
+            : null,
         filamentName: `${editingRunRecord.filament.manufacturer} ${editingRunRecord.filament.colorName} — Rolo #${String(editingRunRecord.filament.rollNumber).padStart(3, '0')}`,
         isMultiFilament: editingRunRecord.filamentUsages.length > 0,
         date: editingRunRecord.date.toISOString().slice(0, 10),
@@ -226,7 +246,11 @@ export default async function ProductionPage({
         )}
       </form>
 
-      {editingRun && <div className="mt-6"><EditProductionRunForm editingRun={editingRun} /></div>}
+      {editingRun && (
+        <div className="mt-6">
+          <EditProductionRunForm editingRun={editingRun} printers={printers.map((p) => ({ id: p.id, name: p.name }))} />
+        </div>
+      )}
 
       <ProductionRunsExplorer
         runs={runs}

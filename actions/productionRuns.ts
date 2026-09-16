@@ -14,6 +14,7 @@ import {
   calculateFilamentPricePerKg,
   calculateWasteCost,
   allocatePlatePrintTime,
+  recomputeProductionRunPrinterCost,
   type ProductionCostSnapshot,
 } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
@@ -706,6 +707,60 @@ export async function updateProductionRun(id: string, formData: FormData): Promi
 
   revalidatePath('/production')
   revalidatePath('/filaments')
+  return { success: true }
+}
+
+// Melhoria "Editar impressora depois de criar": corrige a impressora de uma
+// produção já registrada, recalculando só a parte do costSnapshot congelado
+// que depende dela (lib/costing.ts#recomputeProductionRunPrinterCost) --
+// nenhum estoque físico envolvido (impressora não é insumo consumível como
+// filamento/acessório, diferente de updateProductionRun acima).
+//
+// Escopo (confirmado com o usuário): só produção INDIVIDUAL (plateId nulo)
+// -- uma Plate é por definição "várias peças impressas JUNTAS na mesma
+// impressora", trocar isoladamente deixaria essa run inconsistente com as
+// peças-irmãs. E só produção que já guarda printTimeHours/printerCostFlags
+// no snapshot (a partir desta mudança) -- produção anterior não tem esse
+// dado congelado, então é bloqueada em vez de recalculada por aproximação
+// (nunca inventa dado retroativo, mesmo princípio de costSnapshot: null em
+// linhas pré-Task-7 mostrando "—" em vez de um valor chutado).
+export async function updateProductionRunPrinter(id: string, newPrinterId: string): Promise<ActionResult> {
+  const run = await prisma.productionRun.findUniqueOrThrow({ where: { id } })
+  if (run.status === 'CANCELADA') {
+    return { success: false, error: 'Uma produção cancelada não pode ser editada.' }
+  }
+  if (run.plateId) {
+    return { success: false, error: 'Esta produção faz parte de uma Plate -- não é possível trocar a impressora dela isoladamente aqui.' }
+  }
+  const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+  if (!snapshot || snapshot.printTimeHours === undefined || !snapshot.printerCostFlags) {
+    return { success: false, error: 'Esta produção é anterior a este recurso e não guardou o tempo de impressão -- não é possível trocar a impressora dela com precisão.' }
+  }
+  if (newPrinterId === run.printerId) {
+    return { success: true }
+  }
+
+  const newPrinter = await prisma.printer.findUniqueOrThrow({ where: { id: newPrinterId } })
+  const newSnapshot = recomputeProductionRunPrinterCost({
+    snapshot,
+    timeWastedHours: run.timeWastedHours.toNumber(),
+    newPrinter: {
+      depreciationCostPerHour: calculatePrinterDepreciationCostPerHour({
+        purchasePrice: newPrinter.purchasePrice.toNumber(),
+        depreciationHours: newPrinter.depreciationHours.toNumber(),
+      }),
+      maintenanceCostPerHour: newPrinter.maintenanceCostPerHour.toNumber(),
+      avgPowerConsumptionKwh: newPrinter.avgPowerConsumptionKwh.toNumber(),
+      energyCostPerKwh: newPrinter.energyCostPerKwh.toNumber(),
+    },
+  })
+
+  await prisma.productionRun.update({
+    where: { id },
+    data: { printerId: newPrinterId, costSnapshot: newSnapshot as unknown as Prisma.InputJsonValue },
+  })
+
+  revalidatePath('/production')
   return { success: true }
 }
 

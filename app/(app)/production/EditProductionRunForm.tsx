@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { updateProductionRun } from '@/actions/productionRuns'
+import { updateProductionRun, updateProductionRunPrinter } from '@/actions/productionRuns'
 import { WASTE_REASON_LABELS } from '@/lib/format'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
@@ -14,7 +14,17 @@ export interface EditingRun {
   id: string
   productName: string
   productPartName: string | null
+  printerId: string
   printerName: string
+  // Melhoria "Editar impressora depois de criar": calculado no server
+  // (page.tsx) -- falso quando a produção faz parte de uma Plate (impressora
+  // compartilhada por todas as peças) ou é anterior a este recurso (não
+  // guardou o tempo de impressão congelado, não dá pra recalcular com
+  // precisão).
+  canEditPrinter: boolean
+  // Motivo exibido quando !canEditPrinter -- null quando canEditPrinter é
+  // true (nada a explicar).
+  printerLockedReason: string | null
   filamentName: string
   // Ajuste "peça multi-filamento": updateProductionRun recusa editar
   // desperdício de uma produção com várias cores reais (o formulário
@@ -36,12 +46,26 @@ export interface EditingRun {
 // ProductionRunBatchForm) -- correção pós-fato de uma produção já
 // registrada continua exatamente como era: quantidade/filamento somente
 // leitura, só desperdício/observações editáveis, acessada via `?editId=`.
-export function EditProductionRunForm({ editingRun }: { editingRun: EditingRun }) {
+export function EditProductionRunForm({ editingRun, printers }: { editingRun: EditingRun; printers: { id: string; name: string }[] }) {
   const router = useRouter()
   const [timeWastedHours, setTimeWastedHours] = useState(String(editingRun.timeWastedHours))
+  const [printerId, setPrinterId] = useState(editingRun.printerId)
 
   async function action(formData: FormData) {
     const result = await updateProductionRun(editingRun.id, formData)
+    if (!result.success) {
+      alert(result.error)
+      return
+    }
+    router.push('/production')
+  }
+
+  // Melhoria "Editar impressora depois de criar": correção independente do
+  // form principal (desperdício/observações) -- são dois ajustes
+  // conceitualmente separados, cada um com seu próprio resultado de
+  // sucesso/erro, sem acoplar as duas validações num só submit.
+  async function changePrinterAction() {
+    const result = await updateProductionRunPrinter(editingRun.id, printerId)
     if (!result.success) {
       alert(result.error)
       return
@@ -66,7 +90,27 @@ export function EditProductionRunForm({ editingRun }: { editingRun: EditingRun }
       )}
       <div className="text-sm">
         <span className="block text-slate-500 dark:text-slate-400">Impressora</span>
-        <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.printerName}</span>
+        {editingRun.canEditPrinter ? (
+          <div className="mt-1 flex items-center gap-1.5">
+            <select value={printerId} onChange={(e) => setPrinterId(e.target.value)} className="tk-input-full">
+              {printers.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            {printerId !== editingRun.printerId && (
+              <button type="button" onClick={() => void changePrinterAction()} className="shrink-0 rounded-lg bg-violet-600 px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90 dark:bg-violet-500">
+                Trocar
+              </button>
+            )}
+          </div>
+        ) : (
+          <>
+            <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.printerName}</span>
+            {editingRun.printerLockedReason && (
+              <span className="mt-0.5 block text-xs text-slate-400 dark:text-slate-500">{editingRun.printerLockedReason}</span>
+            )}
+          </>
+        )}
       </div>
       <div className="text-sm">
         <span className="block text-slate-500 dark:text-slate-400">Filamento</span>

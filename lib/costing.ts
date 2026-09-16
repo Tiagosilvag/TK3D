@@ -599,6 +599,17 @@ export interface ProductionCostSnapshot {
   // failed ones.
   total: number
   consumedResources: ProductionResourceConsumption
+  // Melhoria "Editar impressora depois de criar": congela o tempo de
+  // impressão (já ALOCADO via allocatePlatePrintTime pra peça de Plate) e os
+  // 3 flags de composição de custo que decidem se cada termo de impressora
+  // entra em subtotal/finalCost -- sem isso não dá pra recalcular
+  // printerCost/maintenanceCost/electricityCost pra uma impressora NOVA com
+  // precisão (só por aproximação). Opcionais porque produção anterior a essa
+  // mudança nunca teve esses campos gravados -- updateProductionRunPrinter
+  // (actions/productionRuns.ts) bloqueia a troca de impressora quando
+  // ausentes, nunca inventa o valor.
+  printTimeHours?: number
+  printerCostFlags?: { includeDepreciation: boolean; includeMaintenance: boolean; includeEnergyCost: boolean }
 }
 
 export function buildProductionCostSnapshot(
@@ -685,6 +696,106 @@ export function buildProductionCostSnapshot(
     wasteCost,
     total,
     consumedResources,
+    printTimeHours: input.printTimeHours,
+    printerCostFlags: {
+      includeDepreciation: input.includeDepreciation,
+      includeMaintenance: input.includeMaintenance,
+      includeEnergyCost: input.includeEnergyCost,
+    },
+  }
+}
+
+// Melhoria "Editar impressora depois de criar": recalcula só a parte do
+// costSnapshot congelado que depende da impressora (printerCost/
+// maintenanceCost/electricityCost do unitCost + a parcela de impressora do
+// wasteCost) pra uma impressora NOVA, preservando tudo o mais (filamento,
+// mão de obra, insumos/acessórios/embalagem, consumedResources) exatamente
+// como estava. Só chamável quando o snapshot já tem printTimeHours/
+// printerCostFlags congelados (ver ProductionCostSnapshot) -- o chamador
+// (actions/productionRuns.ts#updateProductionRunPrinter) garante isso antes.
+//
+// Taxas/hora da impressora ANTIGA nunca precisam ser buscadas de novo no
+// banco -- são derivadas de volta a partir do que já está congelado
+// (unitCost.printerCost / printTimeHours etc.), então o resultado nunca
+// diverge mesmo que a impressora antiga tenha sido editada ou desativada
+// desde então.
+//
+// subtotal/finalCost são ajustados por DELTA (soma a diferença dos 3 termos,
+// cada um gated pelo printerCostFlags congelado) em vez de recalculados do
+// zero -- reaplicar a proporção oldFinalCost/oldSubtotal captura
+// implicitamente a taxa de falha (includeFailureRate) que gerou aquele
+// finalCost sem precisar rebuscar Settings nem saber se a flag estava
+// ligada. suggestedPrice é escalado na mesma proporção sobre finalCost --
+// só mantido internamente consistente, nenhuma tela de ProductionRun exibe
+// esse campo hoje. marketplacePrice idem, mesma aproximação.
+export interface PrinterCostRecomputeInput {
+  snapshot: ProductionCostSnapshot
+  // run.timeWastedHours -- coluna real, sempre disponível mesmo pra
+  // produção anterior a este recurso (diferente de printTimeHours).
+  timeWastedHours: number
+  newPrinter: {
+    depreciationCostPerHour: number
+    maintenanceCostPerHour: number
+    avgPowerConsumptionKwh: number
+    energyCostPerKwh: number
+  }
+}
+
+export function recomputeProductionRunPrinterCost(input: PrinterCostRecomputeInput): ProductionCostSnapshot {
+  const { snapshot, timeWastedHours, newPrinter } = input
+  const printTimeHours = snapshot.printTimeHours ?? 0
+  const flags = snapshot.printerCostFlags ?? { includeDepreciation: false, includeMaintenance: false, includeEnergyCost: false }
+  const oldUnitCost = snapshot.unitCost
+
+  // Taxas/hora antigas, derivadas de volta a partir do congelado -- 0 quando
+  // printTimeHours é 0 (nada a derivar, os termos novos também dão 0).
+  const oldDepreciationRate = printTimeHours > 0 ? oldUnitCost.printerCost / printTimeHours : 0
+  const oldMaintenanceRate = printTimeHours > 0 ? oldUnitCost.maintenanceCost / printTimeHours : 0
+  const oldElectricityRate = printTimeHours > 0 ? oldUnitCost.electricityCost / printTimeHours : 0
+
+  const newPrinterCost = newPrinter.depreciationCostPerHour * printTimeHours
+  const newMaintenanceCost = newPrinter.maintenanceCostPerHour * printTimeHours
+  const newElectricityCost = newPrinter.avgPowerConsumptionKwh * newPrinter.energyCostPerKwh * printTimeHours
+
+  const oldIncluded =
+    oldUnitCost.printerCost * on(flags.includeDepreciation) +
+    oldUnitCost.maintenanceCost * on(flags.includeMaintenance) +
+    oldUnitCost.electricityCost * on(flags.includeEnergyCost)
+  const newIncluded =
+    newPrinterCost * on(flags.includeDepreciation) +
+    newMaintenanceCost * on(flags.includeMaintenance) +
+    newElectricityCost * on(flags.includeEnergyCost)
+  const delta = newIncluded - oldIncluded
+
+  const newSubtotal = oldUnitCost.subtotal + delta
+  const finalCostRatio = oldUnitCost.subtotal !== 0 ? oldUnitCost.finalCost / oldUnitCost.subtotal : 1
+  const newFinalCost = newSubtotal * finalCostRatio
+  const suggestedPriceRatio = oldUnitCost.finalCost !== 0 ? oldUnitCost.suggestedPrice / oldUnitCost.finalCost : 1
+  const newSuggestedPrice = newFinalCost * suggestedPriceRatio
+  const marketplacePriceRatio = oldUnitCost.suggestedPrice !== 0 ? oldUnitCost.marketplacePrice / oldUnitCost.suggestedPrice : 1
+  const newMarketplacePrice = newSuggestedPrice * marketplacePriceRatio
+
+  const oldTimeWasteCost = timeWastedHours * (oldDepreciationRate + oldMaintenanceRate + oldElectricityRate)
+  const newTimeWasteCost =
+    timeWastedHours * (newPrinter.depreciationCostPerHour + newPrinter.maintenanceCostPerHour + newPrinter.avgPowerConsumptionKwh * newPrinter.energyCostPerKwh)
+  const newWasteCost = snapshot.wasteCost - oldTimeWasteCost + newTimeWasteCost
+
+  const newTotal = newFinalCost * snapshot.quantitySuccess + newWasteCost
+
+  return {
+    ...snapshot,
+    unitCost: {
+      ...oldUnitCost,
+      printerCost: newPrinterCost,
+      maintenanceCost: newMaintenanceCost,
+      electricityCost: newElectricityCost,
+      subtotal: newSubtotal,
+      finalCost: newFinalCost,
+      suggestedPrice: newSuggestedPrice,
+      marketplacePrice: newMarketplacePrice,
+    },
+    wasteCost: newWasteCost,
+    total: newTotal,
   }
 }
 

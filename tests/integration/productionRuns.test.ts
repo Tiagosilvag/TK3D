@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createProductionRun, deleteProductionRun, cancelProductionRun } from '@/actions/productionRuns'
+import { createProductionRun, deleteProductionRun, cancelProductionRun, createPlate, updateProductionRunPrinter } from '@/actions/productionRuns'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -10,6 +10,7 @@ async function cleanup() {
   // (schema onDelete: Cascade on both sides) -- so those join/history rows
   // never need an explicit deleteMany here.
   await prisma.productionRun.deleteMany()
+  await prisma.plate.deleteMany()
   await prisma.product.deleteMany()
   await prisma.accessory.deleteMany()
   await prisma.supply.deleteMany()
@@ -563,5 +564,124 @@ describe('productionRuns actions', () => {
     const cancel = await cancelProductionRun(run.id, 'Teste sem acessórios')
     expect(cancel.success).toBe(true)
     expect((await prisma.filament.findUniqueOrThrow({ where: { id: filament.id } })).currentStockGrams.toNumber()).toBe(1000)
+  })
+})
+
+// Melhoria "Editar impressora depois de criar": updateProductionRunPrinter
+// corrige a impressora de uma produção individual já registrada,
+// recalculando só a parte do costSnapshot que depende dela -- nenhum
+// estoque físico envolvido (impressora não é insumo consumível).
+describe('updateProductionRunPrinter (editar impressora depois de criar)', () => {
+  async function createSecondPrinter() {
+    return prisma.printer.create({ data: { name: 'P2 (mais cara)', purchasePrice: 12000, depreciationHours: 10000, avgPowerConsumptionKwh: 0.5, maintenanceCostPerHour: 0.3, energyCostPerKwh: 1.5 } })
+  }
+
+  it('corrige a impressora de uma produção individual, recalculando costSnapshot.total pra impressora nova', async () => {
+    const { printer, filament, product } = await createSupportRecords()
+    const printer2 = await createSecondPrinter()
+
+    const result = await createProductionRun(fd({
+      productId: product.id,
+      printerId: printer.id,
+      filamentId: filament.id,
+      ...baseRun,
+    }))
+    expect(result.success).toBe(true)
+    const run = await prisma.productionRun.findFirstOrThrow({ where: { productId: product.id } })
+    const oldSnapshot = run.costSnapshot as any
+    expect(oldSnapshot.printTimeHours).toBe(2)
+    expect(oldSnapshot.printerCostFlags).toBeTruthy()
+
+    const swap = await updateProductionRunPrinter(run.id, printer2.id)
+    expect(swap.success).toBe(true)
+
+    const updated = await prisma.productionRun.findUniqueOrThrow({ where: { id: run.id } })
+    expect(updated.printerId).toBe(printer2.id)
+    const newSnapshot = updated.costSnapshot as any
+    // P2 é claramente mais cara (12000/10000=1.2/h depreciação vs 0.36/h,
+    // manutenção 0.3 vs 0, energia 0.5*1.5=0.75 vs 0.27) -- o total sobe.
+    expect(newSnapshot.total).toBeGreaterThan(oldSnapshot.total)
+    // Filamento/mão de obra/insumos/acessórios/embalagem intocados.
+    expect(newSnapshot.unitCost.filamentCost).toBe(oldSnapshot.unitCost.filamentCost)
+    expect(newSnapshot.unitCost.laborCost).toBe(oldSnapshot.unitCost.laborCost)
+    expect(newSnapshot.consumedResources).toEqual(oldSnapshot.consumedResources)
+    // Nenhum estoque de filamento/acessório/insumo mexido pela troca.
+    expect((await prisma.filament.findUniqueOrThrow({ where: { id: filament.id } })).currentStockGrams.toNumber()).toBe(1000 - 255)
+  })
+
+  it('bloqueia troca de impressora pra produção de Plate (impressora compartilhada por todas as peças)', async () => {
+    const printerA = await prisma.printer.create({ data: { name: 'PA', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+    const printer2 = await createSecondPrinter()
+    const filamentA = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const productA = await prisma.product.create({ data: { name: 'Produto Plate', category: 'Chaveiro', printerId: printerA.id, filamentId: filamentA.id, weightGrams: 10, printTimeHours: 0.3, laborTimeHours: 0 } })
+
+    const result = await createPlate(fd({
+      date: '2026-09-11',
+      printerId: printerA.id,
+      notes: '',
+      itemsJson: JSON.stringify([
+        { productId: productA.id, productPartId: null, quantityPlanned: 1, quantitySuccess: 1, filaments: [{ filamentId: filamentA.id, weightGramsPerUnit: 10, gramsWasted: 0 }], timeWastedHours: 0 },
+      ]),
+    }))
+    expect(result.success).toBe(true)
+    const plateRun = await prisma.productionRun.findFirstOrThrow({ where: { productId: productA.id } })
+
+    const swap = await updateProductionRunPrinter(plateRun.id, printer2.id)
+    expect(swap.success).toBe(false)
+    expect(swap.error).toMatch(/Plate/)
+    expect((await prisma.productionRun.findUniqueOrThrow({ where: { id: plateRun.id } })).printerId).toBe(printerA.id)
+  })
+
+  it('bloqueia troca de impressora pra produção anterior a este recurso (sem printTimeHours/printerCostFlags congelados)', async () => {
+    const { printer, filament, product } = await createSupportRecords()
+    const printer2 = await createSecondPrinter()
+    // Simula um registro anterior a este recurso: costSnapshot existe (pós
+    // Task-7) mas sem os campos novos printTimeHours/printerCostFlags.
+    const legacyRun = await prisma.productionRun.create({
+      data: {
+        batchId: 'legacy-printer-swap',
+        productId: product.id,
+        printerId: printer.id,
+        filamentId: filament.id,
+        date: new Date('2026-01-01'),
+        quantityPlanned: 10,
+        quantitySuccess: 8,
+        quantityFailed: 2,
+        gramsUsed: 240,
+        gramsWasted: 15,
+        timeWastedHours: 0.5,
+        costSnapshot: { quantityPlanned: 10, quantitySuccess: 8, quantityFailed: 2, unitCost: {}, wasteCost: 0, total: 10, consumedResources: {} } as any,
+      },
+    })
+
+    const swap = await updateProductionRunPrinter(legacyRun.id, printer2.id)
+    expect(swap.success).toBe(false)
+    expect(swap.error).toMatch(/anterior/)
+    expect((await prisma.productionRun.findUniqueOrThrow({ where: { id: legacyRun.id } })).printerId).toBe(printer.id)
+  })
+
+  it('bloqueia troca de impressora pra produção cancelada', async () => {
+    const { printer, filament, product } = await createSupportRecords()
+    const printer2 = await createSecondPrinter()
+
+    await createProductionRun(fd({ productId: product.id, printerId: printer.id, filamentId: filament.id, ...baseRun }))
+    const run = await prisma.productionRun.findFirstOrThrow({ where: { productId: product.id } })
+    await cancelProductionRun(run.id, 'Cancelada pra teste')
+
+    const swap = await updateProductionRunPrinter(run.id, printer2.id)
+    expect(swap.success).toBe(false)
+    expect(swap.error).toMatch(/cancelada/)
+  })
+
+  it('é um no-op bem-sucedido quando a impressora escolhida é a mesma já gravada', async () => {
+    const { printer, filament, product } = await createSupportRecords()
+    await createProductionRun(fd({ productId: product.id, printerId: printer.id, filamentId: filament.id, ...baseRun }))
+    const run = await prisma.productionRun.findFirstOrThrow({ where: { productId: product.id } })
+    const before = run.costSnapshot
+
+    const swap = await updateProductionRunPrinter(run.id, printer.id)
+    expect(swap.success).toBe(true)
+    const after = await prisma.productionRun.findUniqueOrThrow({ where: { id: run.id } })
+    expect(after.costSnapshot).toEqual(before)
   })
 })
