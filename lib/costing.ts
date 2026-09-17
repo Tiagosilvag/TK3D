@@ -297,6 +297,44 @@ export function calculatePlatformPrice(suggestedPrice: number, taxPercent: numbe
   return suggestedPrice / (1 - feePercent - taxPercent) + feeFixed
 }
 
+// Melhoria "Shopee: taxa por faixa de preço": a Shopee cobra taxa%/taxa fixa
+// diferentes conforme a faixa de PREÇO DA VENDA (MarketplacePlatform.feeTiers,
+// null pra plataforma sem faixas -- ex.: Mercado Livre continua com taxa
+// única via feePercent/feeFixed, sem usar nada abaixo). Array ordenado por
+// maxPrice crescente, maxPrice null só na última faixa (sem teto).
+export interface PlatformFeeTier {
+  maxPrice: number | null
+  feePercent: number
+  feeFixed: number
+}
+
+export function resolveTieredPlatformFee(tiers: PlatformFeeTier[], price: number): { feePercent: number; feeFixed: number } {
+  const tier = tiers.find((t) => t.maxPrice === null || price <= t.maxPrice) ?? tiers[tiers.length - 1]
+  return { feePercent: tier.feePercent, feeFixed: tier.feeFixed }
+}
+
+// calculatePlatformPrice "engorda" suggestedPrice até um preço de venda que,
+// depois do corte de taxa%+imposto e do fixo, ainda sobra suggestedPrice pro
+// vendedor -- mas aqui a taxa certa a usar DEPENDE do preço de venda
+// resultante (que é justamente o que estamos calculando). Resolve por ponto
+// fixo: chuta com a 1ª faixa, calcula o preço, resolve a faixa de novo pro
+// preço calculado, repete até estabilizar -- poucas faixas (sempre <10),
+// converge em 1-2 voltas na prática; teto de iterações só como segurança
+// contra um caso patológico de faixas mal configuradas oscilando pra sempre.
+export function calculateTieredPlatformPrice(suggestedPrice: number, taxPercent: number, tiers: PlatformFeeTier[]): number {
+  let price = calculatePlatformPrice(suggestedPrice, taxPercent, tiers[0].feePercent, tiers[0].feeFixed)
+  for (let i = 0; i < 5; i++) {
+    const fee = resolveTieredPlatformFee(tiers, price)
+    const nextPrice = calculatePlatformPrice(suggestedPrice, taxPercent, fee.feePercent, fee.feeFixed)
+    if (Math.abs(nextPrice - price) < 0.005) {
+      price = nextPrice
+      break
+    }
+    price = nextPrice
+  }
+  return price
+}
+
 export function combineProductCost(terms: ProductCostTerms, flags: ProductCostFlags, settings: Settings): ProductCostBreakdown {
   const subtotal =
     terms.filamentCost * on(flags.includeFilamentCost) +

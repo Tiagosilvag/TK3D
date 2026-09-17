@@ -19,6 +19,8 @@ import {
   calculateCompositeProductCost,
   allocatePlatePrintTime,
   recomputeProductionRunPrinterCost,
+  resolveTieredPlatformFee,
+  calculateTieredPlatformPrice,
   type ProductionCostSnapshotInput,
   type ProductCostBreakdown,
   type ProductionCostSnapshot,
@@ -1102,6 +1104,80 @@ describe('simulateProductPrice (task-6 brief — Simulação de preço)', () => 
     })
     // suggestedPrice 18 -> marketplacePrice = 18 / (1 - 0.20 - 0.055) + 4
     expect(result.marketplacePrice).toBeCloseTo(18 / 0.745 + 4, 4)
+  })
+})
+
+// Melhoria "Shopee: taxa por faixa de preço": tabela real da Shopee (taxa
+// "cheia", sem o subsídio Pix -- ver comentário em lib/costing.ts). Usada
+// nos dois describes abaixo.
+const shopeeTiers = [
+  { maxPrice: 79.99, feePercent: 0.20, feeFixed: 4 },
+  { maxPrice: 99.99, feePercent: 0.14, feeFixed: 16 },
+  { maxPrice: 199.99, feePercent: 0.14, feeFixed: 20 },
+  { maxPrice: 499.99, feePercent: 0.14, feeFixed: 26 },
+  { maxPrice: null, feePercent: 0.14, feeFixed: 26 },
+]
+
+describe('resolveTieredPlatformFee', () => {
+  it('acha a 1ª faixa (até R$79,99, 20%+R$4) pra preços dentro dela, incluindo o limite exato', () => {
+    expect(resolveTieredPlatformFee(shopeeTiers, 50)).toEqual({ feePercent: 0.20, feeFixed: 4 })
+    expect(resolveTieredPlatformFee(shopeeTiers, 79.99)).toEqual({ feePercent: 0.20, feeFixed: 4 })
+  })
+
+  it('logo acima do limite (R$80) já cai na 2ª faixa (14%+R$16)', () => {
+    expect(resolveTieredPlatformFee(shopeeTiers, 80)).toEqual({ feePercent: 0.14, feeFixed: 16 })
+    expect(resolveTieredPlatformFee(shopeeTiers, 99.99)).toEqual({ feePercent: 0.14, feeFixed: 16 })
+  })
+
+  it('R$100 a R$199,99 usa a 3ª faixa (14%+R$20)', () => {
+    expect(resolveTieredPlatformFee(shopeeTiers, 100)).toEqual({ feePercent: 0.14, feeFixed: 20 })
+    expect(resolveTieredPlatformFee(shopeeTiers, 199.99)).toEqual({ feePercent: 0.14, feeFixed: 20 })
+  })
+
+  it('acima de R$500 cai na última faixa (maxPrice null, sem teto)', () => {
+    expect(resolveTieredPlatformFee(shopeeTiers, 500)).toEqual({ feePercent: 0.14, feeFixed: 26 })
+    expect(resolveTieredPlatformFee(shopeeTiers, 10000)).toEqual({ feePercent: 0.14, feeFixed: 26 })
+  })
+})
+
+describe('calculateTieredPlatformPrice', () => {
+  it('suggestedPrice baixo o bastante pra terminar na 1ª faixa (sem tax)', () => {
+    // chute com a 1ª faixa: 30/(1-0.20)+4 = 41.5 -- já cai em <=79.99,
+    // converge de primeira sem precisar recalcular com outra faixa.
+    const price = calculateTieredPlatformPrice(30, 0, shopeeTiers)
+    expect(price).toBeCloseTo(41.5, 4)
+    expect(resolveTieredPlatformFee(shopeeTiers, price)).toEqual({ feePercent: 0.20, feeFixed: 4 })
+  })
+
+  it('suggestedPrice que só cai na 2ª faixa DEPOIS de recalcular (chute inicial com a 1ª estoura R$80)', () => {
+    // chute com a 1ª faixa: 70/0.8+4 = 91.5 (>79.99) -- precisa recalcular
+    // com a 2ª faixa: 70/0.86+16 ≈ 97.395, que já cai dentro de 80-99.99.
+    const price = calculateTieredPlatformPrice(70, 0, shopeeTiers)
+    expect(price).toBeCloseTo(70 / 0.86 + 16, 4)
+    expect(resolveTieredPlatformFee(shopeeTiers, price)).toEqual({ feePercent: 0.14, feeFixed: 16 })
+  })
+
+  it('suggestedPrice que cai na 3ª faixa', () => {
+    const price = calculateTieredPlatformPrice(150, 0, shopeeTiers)
+    expect(price).toBeCloseTo(150 / 0.86 + 20, 4)
+    expect(resolveTieredPlatformFee(shopeeTiers, price)).toEqual({ feePercent: 0.14, feeFixed: 20 })
+  })
+
+  it('suggestedPrice na fronteira 4ª/5ª faixa converge mesmo oscilando entre duas faixas com taxa/fixo idênticos', () => {
+    // chute com a 1ª faixa dá >499.99 (cai na 5ª), recalcular com a 5ª dá
+    // <=499.99 (cai na 4ª) -- mas 4ª e 5ª têm a MESMA taxa/fixo (14%+R$26),
+    // então o resultado não muda de verdade entre as duas, converge estável.
+    const price = calculateTieredPlatformPrice(400, 0, shopeeTiers)
+    expect(price).toBeCloseTo(400 / 0.86 + 26, 4)
+  })
+
+  it('taxPercent entra no mesmo denominador de sempre (calculatePlatformPrice), sem mudar a lógica de faixa', () => {
+    const price = calculateTieredPlatformPrice(30, 0.055, shopeeTiers)
+    expect(price).toBeCloseTo(30 / (1 - 0.20 - 0.055) + 4, 4)
+  })
+
+  it('é uma função pura: mesma entrada sempre produz o mesmo resultado', () => {
+    expect(calculateTieredPlatformPrice(150, 0.055, shopeeTiers)).toBe(calculateTieredPlatformPrice(150, 0.055, shopeeTiers))
   })
 })
 

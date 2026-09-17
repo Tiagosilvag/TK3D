@@ -4,6 +4,7 @@ import { updateSettings } from '@/actions/settings'
 import { updateMarketplacePlatformFees } from '@/actions/marketplacePlatforms'
 import { SubmitButton } from '@/components/SubmitButton'
 import type { MarketplacePlatformKind } from '@prisma/client'
+import type { PlatformFeeTier } from '@/lib/costing'
 
 type RoundingMode = 'NONE' | 'R90' | 'R99' | 'R00' | 'CUSTOM'
 
@@ -49,10 +50,16 @@ type PlatformValues = {
   feePercent: number
   feeFixed: number
   avgFreight: number
+  // Melhoria "Shopee: taxa por faixa de preço" -- null pra plataforma sem
+  // faixas (Mercado Livre continua com feePercent/feeFixed única, acima).
+  feeTiers: PlatformFeeTier[] | null
 }
 
 const PLATFORM_LABELS: Record<MarketplacePlatformKind, string> = { MERCADO_LIVRE: 'Mercado Livre', SHOPEE: 'Shopee' }
 const PLATFORM_ORDER: MarketplacePlatformKind[] = ['MERCADO_LIVRE', 'SHOPEE']
+// Faixas de taxa da Shopee são sempre estas 5, fixas na UI (ver plano) --
+// nenhum editor de adicionar/remover, só os valores de cada faixa mudam.
+const SHOPEE_TIER_COUNT = 5
 
 // Campos que o usuário digita como porcentagem "de verdade" (0 a 100, ex.
 // "10" pra 10%) -- convertidos pra fração (0 a 1) só no momento do submit,
@@ -198,8 +205,28 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
     const platformResults = await Promise.all(
       PLATFORM_ORDER.map((kind) => {
         const pfd = new FormData()
-        pfd.set('feePercent', String(Number(formData.get(`platform_${kind}_feePercent`)) / 100))
-        pfd.set('feeFixed', String(formData.get(`platform_${kind}_feeFixed`)))
+        if (kind === 'SHOPEE') {
+          // Melhoria "Shopee: taxa por faixa de preço": monta as 5 faixas a
+          // partir dos inputs individuais -- feePercent/feeFixed "achatados"
+          // (colunas NOT NULL) recebem a 1ª faixa como espelho, nunca lidos
+          // de verdade depois que feeTiers existe (ver getPlatformSalePrice).
+          const tiers: { maxPrice: number | null; feePercent: number; feeFixed: number }[] = []
+          for (let i = 1; i <= SHOPEE_TIER_COUNT; i++) {
+            const isLast = i === SHOPEE_TIER_COUNT
+            const maxPriceRaw = formData.get(`platform_SHOPEE_tier${i}_maxPrice`)
+            tiers.push({
+              maxPrice: isLast ? null : Number(maxPriceRaw),
+              feePercent: Number(formData.get(`platform_SHOPEE_tier${i}_feePercent`)) / 100,
+              feeFixed: Number(formData.get(`platform_SHOPEE_tier${i}_feeFixed`)),
+            })
+          }
+          pfd.set('feePercent', String(tiers[0].feePercent))
+          pfd.set('feeFixed', String(tiers[0].feeFixed))
+          pfd.set('feeTiersJson', JSON.stringify(tiers))
+        } else {
+          pfd.set('feePercent', String(Number(formData.get(`platform_${kind}_feePercent`)) / 100))
+          pfd.set('feeFixed', String(formData.get(`platform_${kind}_feeFixed`)))
+        }
         pfd.set('avgFreight', String(formData.get(`platform_${kind}_avgFreight`)))
         return updateMarketplacePlatformFees(kind, pfd)
       }),
@@ -261,6 +288,54 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
             {PLATFORM_ORDER.map((kind) => {
               const p = platformByKind.get(kind)
               if (!p) return null
+              // Melhoria "Shopee: taxa por faixa de preço": só a Shopee tem
+              // feeTiers -- vira uma tabelinha de 5 faixas fixas em vez do
+              // par único Taxa/Taxa fixa. Mercado Livre continua com o
+              // layout de sempre, sem faixas.
+              if (kind === 'SHOPEE') {
+                const tiers = p.feeTiers ?? []
+                return (
+                  <div key={kind} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+                    <div className="flex flex-wrap items-end justify-between gap-2">
+                      <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{PLATFORM_LABELS[kind]}</p>
+                      <div className="w-40">
+                        <Field label="Frete médio">
+                          <AffixInput name={`platform_${kind}_avgFreight`} defaultValue={p.avgFreight} prefix="R$" />
+                        </Field>
+                      </div>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+                      Taxa por faixa de preço da venda (taxa cheia, sem o subsídio Pix -- varia por transação, tratado como margem extra eventual).
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      {Array.from({ length: SHOPEE_TIER_COUNT }, (_, idx) => {
+                        const i = idx + 1
+                        const isLast = i === SHOPEE_TIER_COUNT
+                        const tier = tiers[idx]
+                        return (
+                          <div key={i} className="grid grid-cols-3 items-end gap-2">
+                            <Field label={isLast ? 'Acima de' : 'Até R$'}>
+                              {isLast ? (
+                                <p className="mt-1 rounded-lg border border-transparent px-2.5 py-1.5 text-sm text-slate-500 dark:text-slate-400">
+                                  R$ {tiers[idx - 1]?.maxPrice?.toFixed(2) ?? '—'}
+                                </p>
+                              ) : (
+                                <AffixInput name={`platform_SHOPEE_tier${i}_maxPrice`} defaultValue={tier?.maxPrice ?? 0} prefix="R$" />
+                              )}
+                            </Field>
+                            <Field label="Taxa">
+                              <AffixInput name={`platform_SHOPEE_tier${i}_feePercent`} defaultValue={toPercentDisplay(tier?.feePercent ?? 0)} suffix="%" max="100" />
+                            </Field>
+                            <Field label="Taxa fixa">
+                              <AffixInput name={`platform_SHOPEE_tier${i}_feeFixed`} defaultValue={tier?.feeFixed ?? 0} prefix="R$" />
+                            </Field>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              }
               return (
                 <div key={kind} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-slate-200 p-3 sm:grid-cols-3 dark:border-slate-700">
                   <p className="text-sm font-medium text-slate-700 dark:text-slate-300 sm:self-center">{PLATFORM_LABELS[kind]}</p>

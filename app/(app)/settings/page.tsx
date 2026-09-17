@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { SettingsForm } from './SettingsForm'
+import type { PlatformFeeTier } from '@/lib/costing'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,6 +53,7 @@ export default async function SettingsPage() {
           feePercent: p.feePercent.toNumber(),
           feeFixed: p.feeFixed.toNumber(),
           avgFreight: p.avgFreight.toNumber(),
+          feeTiers: p.feeTiers as unknown as PlatformFeeTier[] | null,
         }))}
       />
     </div>

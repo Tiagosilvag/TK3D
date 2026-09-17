@@ -754,6 +754,16 @@ model MarketplacePlatform {
   feePercent Decimal                 @db.Decimal(5, 4)
   feeFixed   Decimal                 @db.Decimal(10, 2)
   avgFreight Decimal                 @db.Decimal(10, 2)
+  // Melhoria "Shopee: taxa por faixa de preço": a Shopee cobra taxa%/taxa
+  // fixa diferentes conforme a faixa de preço da venda (ex.: 20%+R$4 até
+  // R$79,99, 14%+R$16 de R$80 a R$99,99, ...) -- feePercent/feeFixed acima
+  // continuam existindo (NOT NULL) só como espelho da 1ª faixa, nunca lidos
+  // de verdade quando feeTiers existe (ver lib/costing.ts#resolveTieredPlatformFee).
+  // Opcional -- ausente (Mercado Livre) = comportamento de sempre, taxa
+  // única via feePercent/feeFixed. Formato: array ordenado por maxPrice
+  // crescente, { maxPrice: number | null; feePercent: number; feeFixed:
+  // number }[], maxPrice null só na última faixa (sem teto).
+  feeTiers   Json?
   updatedAt  DateTime                @updatedAt
 }
 
