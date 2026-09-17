@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { decimalHoursToHHMM, hhmmToDecimalHours } from '@/lib/hours'
 
 // 3.8: entrada de duração em HH:MM (ex.: "01:30") em vez de fração decimal
@@ -18,6 +18,16 @@ import { decimalHoursToHHMM, hhmmToDecimalHours } from '@/lib/hours'
 // passam de 59; horas ficam limitadas a 4 dígitos (mesmo teto de
 // lib/hours.ts#hhmmToDecimalHours), então o texto exibido SEMPRE é um
 // HH:MM válido -- nunca precisa descartar silenciosamente no blur.
+//
+// Bug "definir a hora vai pra 59 minutos": esse esquema só funciona
+// digitando do zero -- ele relê TODOS os dígitos do texto atual a cada
+// tecla e trata os 2 últimos como minutos, não sabe distinguir "dígito
+// novo" de "dígito que já estava lá". Como o campo quase sempre chega
+// PRÉ-PREENCHIDO (valor padrão da ficha técnica), clicar e digitar sem
+// apagar antes misturava dígitos antigos+novos e os minutos calculados
+// batiam no teto de 59 sem relação com o que foi digitado. Corrigido
+// selecionando todo o texto ao focar (`onFocus` abaixo) -- toda digitação
+// vira uma reescrita do zero, do jeito que esta máscara já esperava.
 function maskHoursText(raw: string): string {
   const digits = raw.replace(/\D/g, '').slice(0, 6)
   if (digits.length <= 2) return digits
@@ -44,9 +54,23 @@ export function HoursInput({
   className?: string
 }) {
   const [text, setText] = useState(() => decimalHoursToHHMM(value))
+  // Bug "definir a hora vai pra 59 minutos" (causa raiz real, não só a
+  // seleção de mouse acima): "1"/"2" dígitos ainda não têm ":" (ver
+  // maskHoursText), então hhmmToDecimalHours devolve 0 pra esse estado
+  // INTERMEDIÁRIO de digitação -- esse 0 sobe pro componente pai via
+  // onChange, o pai re-renderiza passando `value=0` de volta, e o
+  // useEffect abaixo reescrevia `text` pra "00:00" NO MEIO da digitação,
+  // apagando o dígito que a pessoa acabou de teclar antes do próximo
+  // tecla chegar. Só resincroniza `text` quando `value` muda por um
+  // motivo EXTERNO a este componente (ex.: trocar de produto muda o
+  // padrão) -- nunca como eco do nosso próprio onChange.
+  const lastEmitted = useRef(value)
 
   useEffect(() => {
-    setText(decimalHoursToHHMM(value))
+    if (value !== lastEmitted.current) {
+      setText(decimalHoursToHHMM(value))
+      lastEmitted.current = value
+    }
   }, [value])
 
   return (
@@ -56,10 +80,29 @@ export function HoursInput({
         inputMode="numeric"
         placeholder="00:00"
         value={text}
+        onFocus={(e) => e.currentTarget.select()}
+        // Clicar de novo num campo que JÁ está focado não dispara `focus`
+        // outra vez (o evento só ocorre na transição de fora pra dentro) --
+        // sem isso, reabrir a seleção só funcionava no primeiro clique.
+        // Intercepta esse caso aqui: bloqueia o posicionamento de cursor
+        // padrão do mousedown e seleciona tudo na mão.
+        onMouseDown={(e) => {
+          if (document.activeElement === e.currentTarget) {
+            e.preventDefault()
+            e.currentTarget.select()
+          }
+        }}
+        // Clique de mouse no primeiro foco (diferente de foco por Tab)
+        // reposiciona o cursor no `mouseup` DEPOIS do `onFocus` já ter
+        // selecionado tudo, desfazendo a seleção -- `preventDefault` no
+        // mouseup impede esse reposicionamento nos dois casos acima.
+        onMouseUp={(e) => e.preventDefault()}
         onChange={(e) => {
           const masked = maskHoursText(e.target.value)
           setText(masked)
-          onChange(hhmmToDecimalHours(masked))
+          const decimal = hhmmToDecimalHours(masked)
+          lastEmitted.current = decimal
+          onChange(decimal)
         }}
         required={required}
         className={className}
