@@ -853,7 +853,17 @@ export async function deleteProductionRun(id: string): Promise<ActionResult> {
           }
         }
       }
-    })
+      // Bug "Transaction already closed" em produção: reverseExcessAssemblyForRun
+      // chama getOwnStockSummary() (lib/reports.ts) -- uma leitura pesada,
+      // agregando TODO o histórico de ProductionRun/ProductAssembly/Sale/
+      // ConsignmentDelivery, não só deste produto -- de dentro desta
+      // transação interativa. O timeout padrão do Prisma (5000ms) é curto
+      // demais pra essa consulta contra o banco real em produção conforme o
+      // histórico cresce (confirmado ao vivo: 5332ms passados). Timeout
+      // maior aqui, não uma reescrita de getOwnStockSummary (que é
+      // deliberadamente "estoque derivado, não contador redundante" --
+      // CLAUDE.md).
+    }, { timeout: 20000 })
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Erro ao excluir produção' }
   }
@@ -924,7 +934,11 @@ export async function cancelProductionRun(id: string, reason: string): Promise<A
         // Packaging is not stock-tracked (see createProductionRun's note above),
         // so there is nothing to restore for consumedResources.packaging.
       }
-    })
+      // Ver comentário equivalente em deleteProductionRun acima --
+      // reverseExcessAssemblyForRun chama getOwnStockSummary() (leitura
+      // pesada, todo o histórico) de dentro desta transação, o timeout
+      // padrão de 5000ms é curto demais em produção.
+    }, { timeout: 20000 })
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Erro ao cancelar produção' }
   }
