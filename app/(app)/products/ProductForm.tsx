@@ -338,8 +338,20 @@ export function ProductForm({
                   Qtd. por unidade *
                   <input type="number" step="1" min="1" value={row.quantityPerUnit} onChange={(e) => updatePartRow(i, { quantityPerUnit: e.target.value })} className="tk-input-full" required />
                 </label>
+                {/* Bug "clicar em Remover peça já exclui": ação client-side
+                    (sem confirmação nenhuma) apagava a peça inteira -- com
+                    filamentos, peso e impressora já configurados nela -- num
+                    clique sem querer, sem desfazer. `ConfirmDeleteForm` não
+                    serve aqui (espera uma server action async com
+                    ActionResult); um window.confirm() simples basta pro
+                    mesmo risco, mesmo padrão minimalista já usado em
+                    outras telas do app. */}
                 {parts.length > 1 && (
-                  <button type="button" onClick={() => removePartRow(i)} className="tk-link-danger col-span-full text-left text-xs">
+                  <button
+                    type="button"
+                    onClick={() => { if (window.confirm('Remover esta peça? Os filamentos configurados nela também serão removidos.')) removePartRow(i) }}
+                    className="tk-link-danger col-span-full text-left text-xs"
+                  >
                     Remover peça
                   </button>
                 )}
@@ -379,7 +391,11 @@ export function ProductForm({
                           />
                         </label>
                         {row.filaments.length > 1 && (
-                          <button type="button" onClick={() => removePartFilamentRow(i, fi)} className="tk-link-danger self-end text-xs">
+                          <button
+                            type="button"
+                            onClick={() => { if (window.confirm('Remover esta cor?')) removePartFilamentRow(i, fi) }}
+                            className="tk-link-danger self-end text-xs"
+                          >
                             Remover cor
                           </button>
                         )}
