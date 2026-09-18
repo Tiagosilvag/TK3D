@@ -167,9 +167,9 @@ export function AccessoriesExplorer({
           <tr className="tk-table-head-row">
             <th className="py-3">Nome</th>
             <th>Tipo</th>
-            <th>Estoque</th>
-            <th>Custo médio</th>
-            <th>Valor em estoque</th>
+            <th className="text-center">Estoque</th>
+            <th className="text-center">Custo médio</th>
+            <th className="text-center">Valor em estoque</th>
             <th>Status</th>
             <th></th>
           </tr>
@@ -188,7 +188,7 @@ export function AccessoriesExplorer({
               </td>
               <td className="text-slate-500 dark:text-slate-400">{r.typeName}</td>
               <td>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-center gap-2">
                   <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
                     <div
                       className={`h-full rounded-full ${barColorClass(r.status.label)}`}
@@ -200,8 +200,8 @@ export function AccessoriesExplorer({
                   </span>
                 </div>
               </td>
-              <td className="text-slate-500 dark:text-slate-400">{formatCurrency(r.avgUnitCost)}</td>
-              <td className="text-slate-500 dark:text-slate-400">{formatCurrency(r.valueInStock)}</td>
+              <td className="text-center text-slate-500 dark:text-slate-400">{formatCurrency(r.avgUnitCost)}</td>
+              <td className="text-center text-slate-500 dark:text-slate-400">{formatCurrency(r.valueInStock)}</td>
               <td><StatusBadge badge={getStockStatusBadge(r.status)} /></td>
               <td>
                 <ActionsMenu>

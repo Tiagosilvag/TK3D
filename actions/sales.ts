@@ -2,7 +2,7 @@
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { saleSchema, saleBatchSchema } from '@/lib/validation/sale'
-import { getProductCostBreakdown } from './products'
+import { getProductCostBreakdown, getGiftProductCostBreakdown } from './products'
 import { buildSaleCostSnapshot, type SaleCostSnapshot } from '@/lib/costing'
 import { resolveSalePlatformFee } from './marketplacePlatforms'
 import { revalidatePath } from 'next/cache'
@@ -136,18 +136,38 @@ export async function createSaleBatch(formData: FormData): Promise<ActionResult>
     buyerOrPlatform: raw.buyerOrPlatform || null,
     notes: raw.notes || null,
     items,
+    giftProductId: raw.giftProductId || undefined,
+    giftQuantity: raw.giftQuantity || undefined,
   })
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
-  const { items: parsedItems, ...header } = parsed.data
+  const { items: parsedItems, giftProductId, giftQuantity, ...header } = parsed.data
   const batchId = randomUUID()
   await prisma.$transaction(async (tx) => {
     for (const item of parsedItems) {
       await createSaleRow(tx, batchId, header, item)
     }
+    // Brinde (spec "Brinde reciclado no sistema" §2): anexo opcional por
+    // LOTE, não por item -- custo congelado na criação (mesma filosofia de
+    // Sale.costSnapshot), nunca recalculado depois.
+    if (giftProductId && giftQuantity) {
+      const giftBreakdown = await getGiftProductCostBreakdown(giftProductId)
+      await tx.saleGiftUsage.create({
+        data: { batchId, productId: giftProductId, quantity: giftQuantity, unitCost: giftBreakdown.finalCost },
+      })
+    }
   })
   revalidatePath('/sales')
   revalidatePath('/packaging')
+  return { success: true }
+}
+
+// Remove um brinde já anexado a uma venda -- editar quantidade fica fora
+// de escopo (sem round-trip de "editar lote" hoje, mesmo padrão "delete é
+// sempre possível, editar nem sempre" de deleteConsignmentDelivery).
+export async function removeSaleGiftUsage(id: string): Promise<ActionResult> {
+  await prisma.saleGiftUsage.delete({ where: { id } })
+  revalidatePath('/sales')
   return { success: true }
 }
 

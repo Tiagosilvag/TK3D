@@ -4,14 +4,15 @@ import {
   calculateFilamentPricePerGram,
   resolvePlatformPrice,
   type PlatformFeeTier,
+  type ProductCostBreakdown,
 } from '@/lib/costing'
-import { getProductCostBreakdown } from '@/actions/products'
+import { getProductCostBreakdown, getGiftProductCostBreakdown } from '@/actions/products'
 import { ProductsExplorer, type ProductCardData } from './ProductsExplorer'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ProductsPage() {
-  const [products, printers, filaments, settings, platforms] = await Promise.all([
+  const [products, printers, filaments, accessories, settings, platforms] = await Promise.all([
     prisma.product.findMany({
       where: { active: true },
       orderBy: { name: 'asc' },
@@ -22,11 +23,15 @@ export default async function ProductsPage() {
     }),
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { manufacturer: 'asc' } }),
+    prisma.accessory.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
     prisma.marketplacePlatform.findMany(),
   ])
 
-  const breakdowns = await Promise.all(products.map((p) => getProductCostBreakdown(p.id)))
+  // Brinde: trilha de custeio própria (getGiftProductCostBreakdown), nunca
+  // getProductCostBreakdown (que leria o placeholder printer/filamento/
+  // peso=0/tempo=0, sem sentido pra Brinde).
+  const breakdowns = await Promise.all(products.map((p) => (p.isGift ? getGiftProductCostBreakdown(p.id) : getProductCostBreakdown(p.id))))
 
   const mercadoLivre = platforms.find((p) => p.platform === 'MERCADO_LIVRE')
   const shopee = platforms.find((p) => p.platform === 'SHOPEE')
@@ -42,6 +47,24 @@ export default async function ProductsPage() {
     const colorsCount = p.isComposite
       ? new Set(p.parts.flatMap((part) => part.filamentComponents.map((f) => f.filamentId))).size
       : 1
+    // Brinde: nunca vendido sozinho -- sem preço sugerido/de plataforma,
+    // card mostra só "Custo" (ver ProductsExplorer.tsx).
+    if (p.isGift) {
+      return {
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        partsCount: p.isComposite ? p.parts.length : 1,
+        colorsCount,
+        coverPhotoId: p.photos[0]?.id ?? null,
+        costPrice: breakdown.finalCost,
+        suggestedPrice: 0,
+        mercadoLivrePrice: null,
+        shopeePrice: null,
+        isGift: true,
+      }
+    }
+    const normalBreakdown = breakdown as ProductCostBreakdown
     return {
       id: p.id,
       name: p.name,
@@ -49,11 +72,11 @@ export default async function ProductsPage() {
       partsCount: p.isComposite ? p.parts.length : 1,
       colorsCount,
       coverPhotoId: p.photos[0]?.id ?? null,
-      costPrice: breakdown.finalCost,
-      suggestedPrice: breakdown.suggestedPrice,
+      costPrice: normalBreakdown.finalCost,
+      suggestedPrice: normalBreakdown.suggestedPrice,
       mercadoLivrePrice: mercadoLivre
         ? resolvePlatformPrice(
-            breakdown.suggestedPrice,
+            normalBreakdown.suggestedPrice,
             taxPercent,
             mercadoLivre.feePercent.toNumber(),
             mercadoLivre.feeFixed.toNumber(),
@@ -68,13 +91,14 @@ export default async function ProductsPage() {
       // getPlatformSalePrice já usa pro prefill em Vendas.
       shopeePrice: shopee
         ? resolvePlatformPrice(
-            breakdown.suggestedPrice,
+            normalBreakdown.suggestedPrice,
             taxPercent,
             shopee.feePercent.toNumber(),
             shopee.feeFixed.toNumber(),
             shopee.feeTiers as unknown as PlatformFeeTier[] | null,
           )
         : null,
+      isGift: false,
     }
   })
 
@@ -95,12 +119,16 @@ export default async function ProductsPage() {
     colorHex: f.colorHex,
   }))
 
+  const accessoryOptions = accessories.map((a) => ({ id: a.id, name: a.name, colorName: a.colorName, avgUnitCost: a.avgUnitCost.toNumber() }))
+
   return (
     <div className="tk-page">
       <ProductsExplorer
         products={cards}
         printers={printerOptions}
         filaments={filamentOptions}
+        accessories={accessoryOptions}
+        defaultEnergyCostPerKwh={settings.energyCostPerKwh.toNumber()}
         laborCostPerHour={settings.laborCostPerHour.toNumber()}
       />
     </div>

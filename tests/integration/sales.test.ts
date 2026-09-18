@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { randomUUID } from 'crypto'
 import { PrismaClient } from '@prisma/client'
-import { createSale, createSaleBatch, getSaleProfit } from '@/actions/sales'
-import { getProductCostBreakdown } from '@/actions/products'
+import { createSale, createSaleBatch, getSaleProfit, removeSaleGiftUsage } from '@/actions/sales'
+import { getProductCostBreakdown, createProduct as createProductAction } from '@/actions/products'
 import { getProductVariantStockOptions } from '@/lib/reports'
 import { createConsignmentDeliveryBatch } from '@/actions/consignmentDeliveries'
 import type { SaleCostSnapshot } from '@/lib/costing'
@@ -15,6 +15,9 @@ async function cleanup() {
   // the discipline in productionRuns.test.ts. productAccessoryUsage/
   // accessory/supply added for the Sale cost snapshot tests below, which
   // give a product an accessory usage to mutate its price after a sale.
+  // Brinde: SaleGiftUsage não cascadeia com Sale (FK só com Product,
+  // Restrict) -- precisa ir antes de product.deleteMany() abaixo.
+  await prisma.saleGiftUsage.deleteMany()
   await prisma.sale.deleteMany()
   // StockConsumption (embalagem consumida por consumePackagingForSale) tem
   // FK real pra Product -- precisa ir antes do product.deleteMany() abaixo.
@@ -396,5 +399,90 @@ describe('createSaleBatch (Vendas: múltiplos produtos numa venda)', () => {
     expect(sales[0].batchId).toBeTruthy()
     expect(sales[1].batchId).toBeTruthy()
     expect(sales[0].batchId).not.toBe(sales[1].batchId)
+  })
+})
+
+// Brinde (spec "Brinde reciclado no sistema" §2): anexo opcional por LOTE
+// (não por linha de Sale) -- custo congelado na criação, entra no custo
+// total sem afetar o valor cobrado do cliente.
+describe('Brinde anexado a uma venda (createSaleBatch + removeSaleGiftUsage)', () => {
+  async function createGiftProduct(name: string, unitCost: number) {
+    await createProductAction(fd({
+      name,
+      category: 'Chaveiro',
+      isGift: 'true',
+      giftMaterialsJson: JSON.stringify([{ description: 'Material', unitCost }]),
+      giftEquipmentJson: '[]',
+      giftAccessoriesJson: '[]',
+    }))
+    return prisma.product.findFirstOrThrow({ where: { name } })
+  }
+
+  it('cria 1 SaleGiftUsage com o batchId do lote e unitCost congelado', async () => {
+    const { product } = await createSupportRecords()
+    // resolveGiftPlaceholder precisa de impressora/filamento -- já existem
+    // via createSupportRecords, reaproveitados.
+    const gift = await createGiftProduct('Chaveiro Purga Reciclada', 0.93)
+
+    const result = await createSaleBatch(fd({
+      channel: 'DIRETA',
+      saleDate: '2026-09-16',
+      itemsJson: JSON.stringify([{ productId: product.id, quantity: 1, unitPrice: 10 }]),
+      giftProductId: gift.id,
+      giftQuantity: '2',
+    }))
+    expect(result.success).toBe(true)
+
+    const sale = await prisma.sale.findFirstOrThrow({ where: { productId: product.id } })
+    const giftUsage = await prisma.saleGiftUsage.findFirstOrThrow({ where: { batchId: sale.batchId } })
+    expect(giftUsage.productId).toBe(gift.id)
+    expect(giftUsage.quantity).toBe(2)
+    expect(giftUsage.unitCost.toNumber()).toBeCloseTo(0.93, 6)
+  })
+
+  it('sem giftProductId/giftQuantity: nenhum SaleGiftUsage é criado (comportamento padrão, sem brinde)', async () => {
+    const { product } = await createSupportRecords()
+    await createSaleBatch(fd({
+      channel: 'DIRETA',
+      saleDate: '2026-09-16',
+      itemsJson: JSON.stringify([{ productId: product.id, quantity: 1, unitPrice: 10 }]),
+    }))
+    expect(await prisma.saleGiftUsage.count()).toBe(0)
+  })
+
+  it('removeSaleGiftUsage remove o brinde sem afetar as linhas de Sale do lote', async () => {
+    const { product } = await createSupportRecords()
+    const gift = await createGiftProduct('Chaveiro Brinde X', 1)
+    await createSaleBatch(fd({
+      channel: 'DIRETA',
+      saleDate: '2026-09-16',
+      itemsJson: JSON.stringify([{ productId: product.id, quantity: 1, unitPrice: 10 }]),
+      giftProductId: gift.id,
+      giftQuantity: '1',
+    }))
+    const giftUsage = await prisma.saleGiftUsage.findFirstOrThrow()
+
+    const result = await removeSaleGiftUsage(giftUsage.id)
+    expect(result.success).toBe(true)
+    expect(await prisma.saleGiftUsage.count()).toBe(0)
+    expect(await prisma.sale.count()).toBe(1)
+  })
+
+  it('@@unique([batchId]) trava em no máximo 1 brinde por venda -- 2 chamadas com o mesmo giftProductId em lotes diferentes não conflitam', async () => {
+    const { product } = await createSupportRecords()
+    const gift = await createGiftProduct('Chaveiro Brinde Y', 1)
+
+    await createSaleBatch(fd({
+      channel: 'DIRETA', saleDate: '2026-09-16',
+      itemsJson: JSON.stringify([{ productId: product.id, quantity: 1, unitPrice: 10 }]),
+      giftProductId: gift.id, giftQuantity: '1',
+    }))
+    await createSaleBatch(fd({
+      channel: 'DIRETA', saleDate: '2026-09-17',
+      itemsJson: JSON.stringify([{ productId: product.id, quantity: 1, unitPrice: 10 }]),
+      giftProductId: gift.id, giftQuantity: '1',
+    }))
+
+    expect(await prisma.saleGiftUsage.count()).toBe(2)
   })
 })

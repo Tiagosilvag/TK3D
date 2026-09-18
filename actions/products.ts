@@ -2,17 +2,19 @@
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { productSchema, type ProductPartInput } from '@/lib/validation/product'
+import { productSchema, type ProductPartInput, type GiftMaterialInput, type GiftEquipmentInput, type GiftAccessoryInput } from '@/lib/validation/product'
 import {
   calculateProductCost,
   calculateCompositeProductCost,
   calculatePrinterDepreciationCostPerHour,
   calculateFilamentPricePerKg,
+  calculateGiftProductCost,
   sumUsageCost,
   applyRounding,
   type ProductCostBreakdown,
   type ProductPartCostInput,
   type ProductionCostSnapshot,
+  type GiftProductCostBreakdown,
 } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 
@@ -22,21 +24,47 @@ function isForeignKeyRestrictError(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && (err.code === 'P2003' || err.code === 'P2014')
 }
 
+function parseJsonArray(raw: FormDataEntryValue | undefined): unknown[] {
+  try {
+    const value = JSON.parse(String(raw ?? '[]'))
+    return Array.isArray(value) ? value : []
+  } catch {
+    return []
+  }
+}
+
 function parse(formData: FormData) {
   const raw = Object.fromEntries(formData)
-  let parts: unknown = []
-  try {
-    parts = JSON.parse(String(raw.partsJson ?? '[]'))
-  } catch {
-    parts = []
-  }
   return productSchema.safeParse({
     ...raw,
     printerId: raw.printerId || null,
     filamentId: raw.filamentId || null,
-    parts,
+    parts: parseJsonArray(raw.partsJson),
+    giftMaterials: parseJsonArray(raw.giftMaterialsJson),
+    giftEquipment: parseJsonArray(raw.giftEquipmentJson),
+    giftAccessories: parseJsonArray(raw.giftAccessoriesJson),
   })
 }
+
+// Brinde: printerId/filamentId/weightGrams/printTimeHours no Product
+// continuam NOT NULL (ver comentário no schema) -- Brinde não passa pelo
+// fluxo de Produção, então esses 4 campos recebem um placeholder NUNCA
+// lido por getGiftProductCostBreakdown/nenhuma tela de Brinde: a 1ª
+// impressora e o 1º filamento ativos cadastrados no sistema. Erro claro
+// se nenhum dos dois existir ainda -- limitação aceita de reaproveitar
+// colunas NOT NULL em vez de torná-las nullable (tocaria toda leitura
+// não-nula existente, ver o mesmo comentário no schema).
+async function resolveGiftPlaceholder(tx: Prisma.TransactionClient): Promise<{ printerId: string; filamentId: string } | null> {
+  const [printer, filament] = await Promise.all([
+    tx.printer.findFirst({ where: { active: true }, orderBy: { createdAt: 'asc' } }),
+    tx.filament.findFirst({ orderBy: { createdAt: 'asc' } }),
+  ])
+  if (!printer || !filament) return null
+  return { printerId: printer.id, filamentId: filament.id }
+}
+
+const GIFT_PLACEHOLDER_MISSING_MESSAGE = 'Cadastre ao menos uma impressora e um filamento antes de criar um Brinde.'
+class GiftPlaceholderMissingError extends Error {}
 
 // 2.1 Produto composto: printerId/filamentId/weightGrams/printTimeHours no
 // Product continuam NOT NULL (ver comentário no schema) -- pra um composto
@@ -52,6 +80,45 @@ function deriveCompositeAggregate(parts: ProductPartInput[]) {
   const weightGrams = parts.reduce((sum, p) => sum + p.filaments.reduce((s, f) => s + f.weightGrams, 0) * p.quantityPerUnit, 0)
   const printTimeHours = parts.reduce((sum, p) => sum + p.printTimeHours * p.quantityPerUnit, 0)
   return { printerId: first.printerId, filamentId: first.filaments[0].filamentId, weightGrams, printTimeHours }
+}
+
+// Brinde: materiais/equipamento/acessórios são todos entered inline no
+// mesmo form de criação/edição (mockup mostra tudo numa submissão só, sem
+// round-trip extra) -- delete-then-recreate pras 3 listas, seguro porque
+// nenhuma tem FK externa referenciando uma linha específica (diferente de
+// ProductPart, que ProductionRun.productPartId trava com RESTRICT).
+async function writeGiftComposition(
+  tx: Prisma.TransactionClient,
+  productId: string,
+  materials: GiftMaterialInput[],
+  equipment: GiftEquipmentInput[],
+  accessories: GiftAccessoryInput[],
+) {
+  await tx.productGiftMaterial.deleteMany({ where: { productId } })
+  if (materials.length > 0) {
+    await tx.productGiftMaterial.createMany({
+      data: materials.map((m) => ({ productId, description: m.description, unitCost: m.unitCost })),
+    })
+  }
+  await tx.productGiftEquipmentUsage.deleteMany({ where: { productId } })
+  if (equipment.length > 0) {
+    await tx.productGiftEquipmentUsage.createMany({
+      data: equipment.map((e) => ({
+        productId,
+        name: e.name,
+        purchasePrice: e.purchasePrice,
+        usefulLifeUses: e.usefulLifeUses,
+        powerWatts: e.powerWatts,
+        minutesPerUnit: e.minutesPerUnit,
+      })),
+    })
+  }
+  await tx.productAccessoryUsage.deleteMany({ where: { productId } })
+  if (accessories.length > 0) {
+    await tx.productAccessoryUsage.createMany({
+      data: accessories.map((a) => ({ productId, accessoryId: a.accessoryId, quantity: a.quantity })),
+    })
+  }
 }
 
 export async function createProduct(formData: FormData): Promise<ActionResult> {
@@ -74,7 +141,30 @@ export async function createProduct(formData: FormData): Promise<ActionResult> {
     notes: data.notes,
   }
 
-  if (data.isComposite) {
+  if (data.isGift) {
+    try {
+      await prisma.$transaction(async (tx) => {
+        const placeholder = await resolveGiftPlaceholder(tx)
+        if (!placeholder) throw new GiftPlaceholderMissingError()
+        const product = await tx.product.create({
+          data: {
+            ...baseData,
+            isComposite: false,
+            isGift: true,
+            giftEnergyCostPerKwh: data.giftEnergyCostPerKwh ?? null,
+            printerId: placeholder.printerId,
+            filamentId: placeholder.filamentId,
+            weightGrams: 0,
+            printTimeHours: 0,
+          },
+        })
+        await writeGiftComposition(tx, product.id, data.giftMaterials ?? [], data.giftEquipment ?? [], data.giftAccessories ?? [])
+      })
+    } catch (err) {
+      if (err instanceof GiftPlaceholderMissingError) return { success: false, error: GIFT_PLACEHOLDER_MISSING_MESSAGE }
+      throw err
+    }
+  } else if (data.isComposite) {
     const parts = data.parts!
     const derived = deriveCompositeAggregate(parts)
     await prisma.$transaction(async (tx) => {
@@ -128,11 +218,28 @@ export async function updateProduct(id: string, formData: FormData): Promise<Act
   }
 
   try {
-    if (data.isComposite) {
+    if (data.isGift) {
+      await prisma.$transaction(async (tx) => {
+        // Alternando de composto pra Brinde: peças deixam de fazer sentido
+        // -- mesma trava RESTRICT de "composto pra simples" abaixo se
+        // alguma tiver produção vinculada.
+        await tx.productPart.deleteMany({ where: { productId: id } })
+        await tx.product.update({
+          where: { id },
+          data: { ...baseData, isComposite: false, isGift: true, giftEnergyCostPerKwh: data.giftEnergyCostPerKwh ?? null },
+        })
+        await writeGiftComposition(tx, id, data.giftMaterials ?? [], data.giftEquipment ?? [], data.giftAccessories ?? [])
+      })
+    } else if (data.isComposite) {
+      // Alternando de Brinde pra composto: composição de Brinde deixa de
+      // fazer sentido -- sem FK externa nessas 3 tabelas (ver
+      // writeGiftComposition), remoção nunca trava.
+      await prisma.productGiftMaterial.deleteMany({ where: { productId: id } })
+      await prisma.productGiftEquipmentUsage.deleteMany({ where: { productId: id } })
       const parts = data.parts!
       const derived = deriveCompositeAggregate(parts)
       await prisma.$transaction(async (tx) => {
-        await tx.product.update({ where: { id }, data: { ...baseData, ...derived } })
+        await tx.product.update({ where: { id }, data: { ...baseData, isGift: false, ...derived } })
 
         // Reconcilia a lista de peças: atualiza as que já tinham id, cria
         // as novas, remove as que sumiram da lista submetida -- nunca
@@ -170,14 +277,17 @@ export async function updateProduct(id: string, formData: FormData): Promise<Act
         }
       })
     } else {
-      // Alternando de composto pra simples: as peças deixam de fazer
-      // sentido e são removidas -- bloqueado (RESTRICT) se alguma tiver
-      // produção vinculada, igual qualquer outra remoção nesta base.
+      // Alternando de composto/Brinde pra simples: peças e/ou composição de
+      // Brinde deixam de fazer sentido -- peças bloqueadas (RESTRICT) se
+      // alguma tiver produção vinculada, igual qualquer outra remoção
+      // nesta base; composição de Brinde nunca trava (sem FK externa).
+      await prisma.productGiftMaterial.deleteMany({ where: { productId: id } })
+      await prisma.productGiftEquipmentUsage.deleteMany({ where: { productId: id } })
       await prisma.$transaction(async (tx) => {
         await tx.productPart.deleteMany({ where: { productId: id } })
         await tx.product.update({
           where: { id },
-          data: { ...baseData, printerId: data.printerId!, filamentId: data.filamentId!, weightGrams: data.weightGrams!, printTimeHours: data.printTimeHours! },
+          data: { ...baseData, isGift: false, printerId: data.printerId!, filamentId: data.filamentId!, weightGrams: data.weightGrams!, printTimeHours: data.printTimeHours! },
         })
       })
     }
@@ -383,6 +493,45 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
       ...flags,
     },
     settingsInput,
+  )
+}
+
+// Brinde: trilha de custeio própria e paralela a getProductCostBreakdown
+// acima -- nunca chamada pra produto normal (isGift sempre false), e
+// getProductCostBreakdown nunca é chamada pra Brinde (weightGrams/
+// printTimeHours são placeholder, o resultado seria sem sentido).
+// giftEnergyCostPerKwh nulo cai no fallback genérico Settings.
+// energyCostPerKwh (mesmo campo "genérico/fallback" já documentado ali).
+export async function getGiftProductCostBreakdown(productId: string): Promise<GiftProductCostBreakdown> {
+  const [product, settings] = await Promise.all([
+    prisma.product.findUniqueOrThrow({
+      where: { id: productId },
+      include: { giftMaterials: true, giftEquipment: true, accessoryUsages: { include: { accessory: true } } },
+    }),
+    prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
+  ])
+  const energyCostPerKwh = product.giftEnergyCostPerKwh?.toNumber() ?? settings.energyCostPerKwh.toNumber()
+  return calculateGiftProductCost(
+    product.giftMaterials.map((m) => ({ unitCost: m.unitCost.toNumber() })),
+    product.accessoryUsages.map((u) => ({ quantity: u.quantity.toNumber(), avgUnitCost: u.accessory.avgUnitCost.toNumber() })),
+    product.giftEquipment.map((e) => ({
+      name: e.name,
+      purchasePrice: e.purchasePrice.toNumber(),
+      usefulLifeUses: e.usefulLifeUses,
+      powerWatts: e.powerWatts.toNumber(),
+      minutesPerUnit: e.minutesPerUnit.toNumber(),
+    })),
+    energyCostPerKwh,
+  )
+}
+
+// Usada pelo seletor "Qual brinde" em Vendas -- só Brinde ativo, nenhum
+// conceito de "disponível"/estoque (Brinde é montado sob demanda a partir
+// de sobra reciclada + acessório + equipamento, sem ledger de produção).
+export async function getGiftProductOptions(): Promise<{ id: string; name: string; unitCost: number }[]> {
+  const products = await prisma.product.findMany({ where: { active: true, isGift: true }, orderBy: { name: 'asc' } })
+  return Promise.all(
+    products.map(async (p) => ({ id: p.id, name: p.name, unitCost: (await getGiftProductCostBreakdown(p.id)).finalCost })),
   )
 }
 

@@ -606,8 +606,11 @@ export interface ProductVariantStockInfo {
 // sugerido pré-preenche "Preço/Valor unitário" nos dois formulários,
 // continua editável.
 export async function getProductVariantStockOptions(): Promise<ProductVariantStockInfo[]> {
+  // Brinde (isGift=true) nunca é vendido sozinho -- excluído deste
+  // seletor (alimenta Vendas E Entregas de consignação), mesmo raciocínio
+  // em getOwnStockSummary abaixo.
   const products = await prisma.product.findMany({
-    where: { active: true },
+    where: { active: true, isGift: false },
     orderBy: { name: 'asc' },
     include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
   })
@@ -652,9 +655,11 @@ export async function getProductVariantStockOptions(): Promise<ProductVariantSto
 }
 
 export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
+  // Brinde nunca é produzido/estocado -- excluído (alimenta Estoque e
+  // Dashboard).
   const [products, producedByProduct, assembledByProduct, soldByProduct, deliveries, openOrdersByProduct] = await Promise.all([
     prisma.product.findMany({
-      where: { active: true },
+      where: { active: true, isGift: false },
       orderBy: { name: 'asc' },
       include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
     }),

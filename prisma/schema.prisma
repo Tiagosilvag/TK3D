@@ -358,6 +358,24 @@ model Product {
   marketplacePrice      Decimal?                @db.Decimal(10, 2)
   createdAt             DateTime                @default(now())
   updatedAt             DateTime                @updatedAt
+  // Brinde (spec "Brinde reciclado no sistema"): produto que nunca é
+  // vendido sozinho -- existe só pra ser anexado como custo extra numa
+  // Venda (ex.: chaveiro de purga reciclada). isGift=true usa uma trilha
+  // de custeio própria e paralela (giftMaterials/giftEquipment +
+  // accessoryUsages reaproveitado), nunca a de produto normal
+  // (Impressora/Filamento/ProductPart) -- printerId/filamentId/
+  // weightGrams/printTimeHours acima recebem um placeholder (1ª
+  // impressora/filamento ativos, peso/tempo 0) só pra satisfazer as
+  // colunas NOT NULL, nunca lido por nenhum cálculo/tela de Brinde.
+  // Mutuamente exclusivo com isComposite (sempre false pra Brinde).
+  isGift                Boolean                 @default(false)
+  // Tarifa de energia usada no rateio de giftEquipment abaixo -- opcional,
+  // cai no fallback genérico Settings.energyCostPerKwh quando nulo (mesmo
+  // campo "genérico/fallback" já documentado em Settings).
+  giftEnergyCostPerKwh  Decimal?                @db.Decimal(10, 4)
+  giftMaterials         ProductGiftMaterial[]
+  giftEquipment         ProductGiftEquipmentUsage[]
+  giftUsages            SaleGiftUsage[]
   supplyUsages          ProductSupplyUsage[]
   // Generalização da antiga FK única accessoryId (spec §2, task-5 brief):
   // mesmo padrão de ProductSupplyUsage, uma lista produto↔acessório com
@@ -378,6 +396,38 @@ model Product {
   // Mosquetão sendo usado por Chaveiro Café E Chaveiro Presente ao mesmo
   // tempo, com um único estoque compartilhado entre os dois).
   usedAsComponentIn     ProductComponentUsage[] @relation("ComponentUsageComponent")
+}
+
+// Composição de um Brinde (Product.isGift=true): peça/material de custo
+// livre, digitado à mão (ex.: "Purga reciclada -- sobra de impressão",
+// custo R$0,00 porque já foi pago no produto original). Sem estoque/
+// histórico de compra compartilhado -- cada linha pertence a UM Brinde só,
+// por isso cascade direto com o produto (nunca reaproveitado como Supply
+// porque não tem as semânticas de unidade/compra real que Supply exige).
+model ProductGiftMaterial {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  description String
+  unitCost    Decimal  @default(0) @db.Decimal(10, 4)
+  createdAt   DateTime @default(now())
+}
+
+// Equipamento rateado por unidade de um Brinde (ex.: soprador térmico,
+// forma de silicone) -- depreciação = purchasePrice / usefulLifeUses (por
+// USO, não por hora como Printer.depreciationHours, já que aqui não existe
+// um "tempo de impressão" real). Energia só entra quando powerWatts > 0
+// (ex.: forma de silicone não consome energia, powerWatts fica 0).
+model ProductGiftEquipmentUsage {
+  id             String   @id @default(cuid())
+  productId      String
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name           String
+  purchasePrice  Decimal  @db.Decimal(10, 2)
+  usefulLifeUses Int
+  powerWatts     Decimal  @default(0) @db.Decimal(10, 2)
+  minutesPerUnit Decimal  @default(0) @db.Decimal(10, 3)
+  createdAt      DateTime @default(now())
 }
 
 // Melhoria "Produto-como-componente": produto usado como INGREDIENTE de
@@ -823,6 +873,30 @@ model Sale {
   createdAt       DateTime    @default(now())
   order           Order?
 
+  @@index([batchId])
+}
+
+// Brinde anexado a uma venda (spec "Brinde reciclado no sistema" §2):
+// custo extra que entra no custo total do PEDIDO sem afetar o valor
+// cobrado do cliente. Por LOTE (batchId, mesmo token opaco de
+// Sale.batchId/ConsignmentDelivery.batchId -- nunca FK), não por linha de
+// produto -- um brinde é "um mimo pra venda inteira", e um lote pode ter
+// várias linhas de Sale. @@unique([batchId]) trava em no máximo 1 brinde
+// por venda, batendo com o formulário (1 seletor "Qual brinde", não uma
+// lista). unitCost é congelado na criação (mesma filosofia de
+// Sale.costSnapshot -- nunca recalculado depois). onDelete Restrict no
+// productId porque um Brinde nunca é hard-deletado (só soft-delete via
+// deleteProduct), então a FK nunca trava de verdade na prática.
+model SaleGiftUsage {
+  id        String   @id @default(cuid())
+  batchId   String
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity  Int
+  unitCost  Decimal  @db.Decimal(10, 4)
+  createdAt DateTime @default(now())
+
+  @@unique([batchId])
   @@index([batchId])
 }
 

@@ -113,8 +113,8 @@ export function ProductionRunsExplorer({
                 <th>Produto</th>
                 <th>Peça</th>
                 <th>Plate</th>
-                <th>Sucesso/Falhas</th>
-                <th>Custo</th>
+                <th className="text-center">Sucesso/Falhas</th>
+                <th className="text-center">Custo</th>
                 <th>Status</th>
                 <th></th>
               </tr>
@@ -136,10 +136,10 @@ export function ProductionRunsExplorer({
                         <span className="text-slate-400 dark:text-slate-500">—</span>
                       )}
                     </td>
-                    <td>
+                    <td className="text-center">
                       <span className="text-emerald-600 dark:text-emerald-400">{run.quantitySuccess}</span> / <span className={run.quantityFailed > 0 ? 'text-red-600 dark:text-red-400' : ''}>{run.quantityFailed}</span>
                     </td>
-                    <td>{run.cost != null ? formatCurrency(run.cost) : '—'}</td>
+                    <td className="text-center">{run.cost != null ? formatCurrency(run.cost) : '—'}</td>
                     <td><StatusBadge badge={badge} title={run.status === 'CANCELADA' && run.cancelReason ? `Motivo: ${run.cancelReason}` : undefined} /></td>
                     <td className="py-2">
                       <ActionsMenu>
@@ -182,16 +182,16 @@ export function ProductionRunsExplorer({
                   <thead>
                     <tr className="text-left text-slate-500 dark:text-slate-400">
                       <th className="py-1 font-medium">Peça</th>
-                      <th className="py-1 font-medium">Produzido (sucesso)</th>
-                      <th className="py-1 font-medium">Produções</th>
+                      <th className="py-1 text-center font-medium">Produzido (sucesso)</th>
+                      <th className="py-1 text-center font-medium">Produções</th>
                     </tr>
                   </thead>
                   <tbody>
                     {row.parts.map((part) => (
                       <tr key={part.partId ?? '__simple__'}>
                         <td className="py-1">{part.partName}</td>
-                        <td className="py-1 tabular-nums">{part.produced}</td>
-                        <td className="py-1 tabular-nums">{part.runsCount}</td>
+                        <td className="py-1 text-center tabular-nums">{part.produced}</td>
+                        <td className="py-1 text-center tabular-nums">{part.runsCount}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -214,9 +214,9 @@ export function ProductionRunsExplorer({
                 <th className="py-2">Data</th>
                 <th>Impressora</th>
                 <th>Produtos</th>
-                <th>Peças</th>
-                <th>Peso total</th>
-                <th>Custo total</th>
+                <th className="text-center">Peças</th>
+                <th className="text-center">Peso total</th>
+                <th className="text-center">Custo total</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -228,9 +228,9 @@ export function ProductionRunsExplorer({
                     <td className="py-2">{new Date(plate.date).toLocaleDateString('pt-BR')}</td>
                     <td>{plate.printerName}</td>
                     <td className="text-slate-500 dark:text-slate-400">{plate.productNames.join(', ')}</td>
-                    <td className="tabular-nums">{plate.itemCount}</td>
-                    <td className="tabular-nums">{plate.totalGramsUsed.toFixed(1)}g</td>
-                    <td>{formatCurrency(plate.totalCost)}</td>
+                    <td className="text-center tabular-nums">{plate.itemCount}</td>
+                    <td className="text-center tabular-nums">{plate.totalGramsUsed.toFixed(1)}g</td>
+                    <td className="text-center">{formatCurrency(plate.totalCost)}</td>
                     <td><StatusBadge badge={badge} /></td>
                   </tr>
                 )
@@ -263,8 +263,8 @@ export function ProductionRunsExplorer({
                 <tr className="tk-table-head-row">
                   <th className="py-1">Produto/Peça</th>
                   <th>Filamento</th>
-                  <th>Sucesso/Falhas</th>
-                  <th>Custo</th>
+                  <th className="text-center">Sucesso/Falhas</th>
+                  <th className="text-center">Custo</th>
                   <th></th>
                 </tr>
               </thead>
@@ -276,10 +276,10 @@ export function ProductionRunsExplorer({
                       {run.partName && <span className="block text-xs font-normal text-slate-500 dark:text-slate-400">{run.partName}</span>}
                     </td>
                     <td className="text-xs text-slate-500 dark:text-slate-400">{run.filamentName}</td>
-                    <td>
+                    <td className="text-center">
                       <span className="text-emerald-600 dark:text-emerald-400">{run.quantitySuccess}</span> / <span className={run.quantityFailed > 0 ? 'text-red-600 dark:text-red-400' : ''}>{run.quantityFailed}</span>
                     </td>
-                    <td>{run.cost != null ? formatCurrency(run.cost) : '—'}</td>
+                    <td className="text-center">{run.cost != null ? formatCurrency(run.cost) : '—'}</td>
                     <td>
                       <Link href={`/production?editId=${run.id}`} className="text-violet-600 hover:underline dark:text-violet-400">Editar</Link>
                     </td>

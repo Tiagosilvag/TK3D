@@ -22,10 +22,14 @@ export interface ProductCardData {
   suggestedPrice: number
   mercadoLivrePrice: ProductPlatformPriceInfo | null
   shopeePrice: ProductPlatformPriceInfo | null
+  // Brinde (spec "Brinde reciclado no sistema"): nunca vendido sozinho --
+  // card mostra só "Custo", sem as 3 linhas de preço acima.
+  isGift: boolean
 }
 
 type PrinterOption = { id: string; name: string; costPerHour: number }
 type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
+type AccessoryOption = { id: string; name: string; colorName: string; avgUnitCost: number }
 
 // Melhoria "Produtos" §1/§2: listagem vira grade de cards horizontais (foto
 // à esquerda, informação à direita) em vez de tabela -- cadastro vira modal
@@ -37,11 +41,15 @@ export function ProductsExplorer({
   products,
   printers,
   filaments,
+  accessories,
+  defaultEnergyCostPerKwh,
   laborCostPerHour,
 }: {
   products: ProductCardData[]
   printers: PrinterOption[]
   filaments: FilamentOption[]
+  accessories: AccessoryOption[]
+  defaultEnergyCostPerKwh: number
   laborCostPerHour: number
 }) {
   const router = useRouter()
@@ -103,7 +111,7 @@ export function ProductsExplorer({
             <Link
               key={p.id}
               href={`/products/${p.id}`}
-              className="tk-panel flex gap-3 p-3 hover:border-violet-400 dark:hover:border-violet-500"
+              className={`tk-panel flex gap-3 p-3 hover:border-violet-400 dark:hover:border-violet-500 ${p.isGift ? 'border-pink-200 dark:border-pink-900' : ''}`}
             >
               <div className="h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800">
                 {p.coverPhotoId ? (
@@ -115,35 +123,52 @@ export function ProductsExplorer({
               </div>
               <div className="flex min-w-0 flex-1 flex-col justify-between">
                 <div>
-                  <p className="truncate font-medium text-slate-900 dark:text-slate-100">{p.name}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="truncate font-medium text-slate-900 dark:text-slate-100">{p.name}</p>
+                    {p.isGift && (
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-pink-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-pink-700 dark:bg-pink-900/40 dark:text-pink-300">
+                        🎁 Brinde
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {p.category} · {p.partsCount} peça{p.partsCount === 1 ? '' : 's'} · {p.colorsCount} {p.colorsCount === 1 ? 'cor' : 'cores'}
+                    {p.isGift
+                      ? `${p.category} · ${p.partsCount} peça${p.partsCount === 1 ? '' : 's'}`
+                      : `${p.category} · ${p.partsCount} peça${p.partsCount === 1 ? '' : 's'} · ${p.colorsCount} ${p.colorsCount === 1 ? 'cor' : 'cores'}`}
                   </p>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                  <div>
+                {p.isGift ? (
+                  <div className="mt-2 text-xs">
                     <p className="text-slate-400 dark:text-slate-500">Custo</p>
                     <p className="font-medium text-slate-900 dark:text-slate-100">{formatCurrency(p.costPrice)}</p>
+                    <p className="mt-1 text-slate-400 dark:text-slate-500">Sem preço de venda — usado como brinde nas vendas.</p>
                   </div>
-                  <div>
-                    <p className="text-slate-400 dark:text-slate-500">Sugerido</p>
-                    <p className="font-medium text-slate-900 dark:text-slate-100">{formatCurrency(p.suggestedPrice)}</p>
+                ) : (
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <p className="text-slate-400 dark:text-slate-500">Custo</p>
+                      <p className="font-medium text-slate-900 dark:text-slate-100">{formatCurrency(p.costPrice)}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-400 dark:text-slate-500">Sugerido</p>
+                      <p className="font-medium text-slate-900 dark:text-slate-100">{formatCurrency(p.suggestedPrice)}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-400 dark:text-slate-500">Mercado Livre</p>
+                      <p className="font-medium text-slate-900 dark:text-slate-100">{p.mercadoLivrePrice != null ? formatCurrency(p.mercadoLivrePrice.price) : '—'}</p>
+                      {p.mercadoLivrePrice != null && (
+                        <p className="text-slate-400 dark:text-slate-500">taxa {(p.mercadoLivrePrice.feePercent * 100).toFixed(0)}%+{formatCurrency(p.mercadoLivrePrice.feeFixed)}</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-slate-400 dark:text-slate-500">Shopee</p>
+                      <p className="font-medium text-slate-900 dark:text-slate-100">{p.shopeePrice != null ? formatCurrency(p.shopeePrice.price) : '—'}</p>
+                      {p.shopeePrice != null && (
+                        <p className="text-slate-400 dark:text-slate-500">taxa {(p.shopeePrice.feePercent * 100).toFixed(0)}%+{formatCurrency(p.shopeePrice.feeFixed)}</p>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-slate-400 dark:text-slate-500">Mercado Livre</p>
-                    <p className="font-medium text-slate-900 dark:text-slate-100">{p.mercadoLivrePrice != null ? formatCurrency(p.mercadoLivrePrice.price) : '—'}</p>
-                    {p.mercadoLivrePrice != null && (
-                      <p className="text-slate-400 dark:text-slate-500">taxa {(p.mercadoLivrePrice.feePercent * 100).toFixed(0)}%+{formatCurrency(p.mercadoLivrePrice.feeFixed)}</p>
-                    )}
-                  </div>
-                  <div>
-                    <p className="text-slate-400 dark:text-slate-500">Shopee</p>
-                    <p className="font-medium text-slate-900 dark:text-slate-100">{p.shopeePrice != null ? formatCurrency(p.shopeePrice.price) : '—'}</p>
-                    {p.shopeePrice != null && (
-                      <p className="text-slate-400 dark:text-slate-500">taxa {(p.shopeePrice.feePercent * 100).toFixed(0)}%+{formatCurrency(p.shopeePrice.feeFixed)}</p>
-                    )}
-                  </div>
-                </div>
+                )}
               </div>
             </Link>
           ))}
@@ -163,6 +188,8 @@ export function ProductsExplorer({
           <ProductForm
             printers={printers}
             filaments={filaments}
+            accessories={accessories}
+            defaultEnergyCostPerKwh={defaultEnergyCostPerKwh}
             laborCostPerHour={laborCostPerHour}
             showLiveCostPanel={false}
             onSuccess={() => { setModalOpen(false); router.refresh() }}

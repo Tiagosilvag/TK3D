@@ -104,7 +104,7 @@ export function DeliveriesExplorer({
               <th className="py-2">Data</th>
               <th>Parceiro</th>
               <th>Produtos</th>
-              <th>Total</th>
+              <th className="text-center">Total</th>
               <th></th>
             </tr>
           </thead>
@@ -117,7 +117,7 @@ export function DeliveriesExplorer({
                   <td className="py-2">{new Date(batch.deliveryDate).toLocaleDateString('pt-BR')}</td>
                   <td className="font-medium text-slate-900 dark:text-slate-100">{batch.partnerName}</td>
                   <td className="text-slate-500 dark:text-slate-400">{batch.items.length} {batch.items.length === 1 ? 'item' : 'itens'} - {totalUnits} un</td>
-                  <td className="font-medium text-slate-900 dark:text-slate-100">{formatCurrency(totalValue)}</td>
+                  <td className="text-center font-medium text-slate-900 dark:text-slate-100">{formatCurrency(totalValue)}</td>
                   <td className="text-right text-slate-400" aria-hidden>›</td>
                 </tr>
               )
@@ -153,8 +153,8 @@ export function DeliveriesExplorer({
               <thead>
                 <tr className="tk-table-head-row">
                   <th className="py-1">Produto</th>
-                  <th>Qtd.</th>
-                  <th>Preço unit.</th>
+                  <th className="text-center">Qtd.</th>
+                  <th className="text-center">Preço unit.</th>
                   <th></th>
                 </tr>
               </thead>
@@ -167,8 +167,8 @@ export function DeliveriesExplorer({
                         {item.productName}{item.colorLabel && <span className="text-slate-500 dark:text-slate-400"> - {item.colorLabel}</span>}
                       </span>
                     </td>
-                    <td>
-                      <form action={(fd) => handleUpdateQuantity(item.id, fd)} className="flex items-center gap-1">
+                    <td className="text-center">
+                      <form action={(fd) => handleUpdateQuantity(item.id, fd)} className="flex items-center justify-center gap-1">
                         <input
                           type="number"
                           name="quantityDelivered"
@@ -185,7 +185,7 @@ export function DeliveriesExplorer({
                         <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Vendido: {item.quantitySold}</p>
                       )}
                     </td>
-                    <td>{formatCurrency(item.unitPrice)}</td>
+                    <td className="text-center">{formatCurrency(item.unitPrice)}</td>
                     <td>
                       <ConfirmDeleteForm
                         action={() => handleRemoveItem(item.id)}

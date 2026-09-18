@@ -132,8 +132,8 @@ export function PackagingExplorer({ rows, editingItem }: { rows: PackagingRow[];
         <thead>
           <tr className="tk-table-head-row">
             <th className="py-3">Nome</th>
-            <th>Estoque</th>
-            <th>Custo unitário</th>
+            <th className="text-center">Estoque</th>
+            <th className="text-center">Custo unitário</th>
             <th>Status</th>
             <th></th>
           </tr>
@@ -145,7 +145,7 @@ export function PackagingExplorer({ rows, editingItem }: { rows: PackagingRow[];
               <tr key={r.id} className="tk-row">
                 <td className="py-3 font-medium text-slate-900 dark:text-slate-100">{r.name}</td>
                 <td>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-center gap-2">
                     <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
                       <div
                         className={`h-full rounded-full ${barColorClass(r.percentRemaining)}`}
@@ -155,7 +155,7 @@ export function PackagingExplorer({ rows, editingItem }: { rows: PackagingRow[];
                     <span className="tabular-nums text-slate-900 dark:text-slate-100">{r.currentStock} un</span>
                   </div>
                 </td>
-                <td className="text-slate-500 dark:text-slate-400">{formatCurrency(r.avgUnitCost)}</td>
+                <td className="text-center text-slate-500 dark:text-slate-400">{formatCurrency(r.avgUnitCost)}</td>
                 <td><StatusBadge badge={getStockStatusBadge(status)} /></td>
                 <td>
                   <div className="flex flex-col items-start gap-1">

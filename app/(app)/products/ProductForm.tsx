@@ -3,18 +3,21 @@ import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createProduct, updateProduct } from '@/actions/products'
 import { formatCurrency } from '@/lib/format'
+import { calculateGiftEquipmentCostPerUnit } from '@/lib/costing'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
 import { FilamentSelect } from '@/components/FilamentSelect'
 
 type PrinterOption = { id: string; name: string; costPerHour: number }
 type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
+type AccessoryOption = { id: string; name: string; colorName: string; avgUnitCost: number }
 
 type ProductValues = {
   id: string
   name: string
   category: string
   isComposite: boolean
+  isGift: boolean
   printerId: string
   filamentId: string
   weightGrams: number
@@ -23,6 +26,32 @@ type ProductValues = {
   finishingType: string
   usesGlue: boolean
   notes: string | null
+  giftEnergyCostPerKwh: number | null
+}
+
+// Brinde (spec "Brinde reciclado no sistema"): "Peça/material" de custo
+// livre -- ex.: "Purga reciclada (sobra de impressão)", custo R$0,00
+// porque já foi pago no produto original. `id` presente = linha já salva.
+type GiftMaterialRow = { id?: string; description: string; unitCost: string }
+
+// Equipamento rateado por unidade -- potência/tempo ficam vazios (0) pra
+// equipamento sem consumo elétrico (ex.: forma de silicone).
+type GiftEquipmentRow = { id?: string; name: string; purchasePrice: string; usefulLifeUses: string; powerWatts: string; minutesPerUnit: string }
+
+// Acessório real usado no Brinde -- reaproveita o mesmo estoque/custo médio
+// de Accessory que produto normal já usa (ProductAccessoryUsage por baixo).
+type GiftAccessoryRow = { accessoryId: string; quantity: string }
+
+function emptyGiftMaterialRow(): GiftMaterialRow {
+  return { description: '', unitCost: '0' }
+}
+
+function emptyGiftEquipmentRow(): GiftEquipmentRow {
+  return { name: '', purchasePrice: '', usefulLifeUses: '', powerWatts: '0', minutesPerUnit: '0' }
+}
+
+function emptyGiftAccessoryRow(): GiftAccessoryRow {
+  return { accessoryId: '', quantity: '1' }
 }
 
 // Ajuste "peça multi-filamento": uma peça pode precisar de mais de uma
@@ -68,6 +97,11 @@ export function ProductForm({
   existingParts,
   printers,
   filaments,
+  accessories,
+  defaultEnergyCostPerKwh,
+  existingGiftMaterials,
+  existingGiftEquipment,
+  existingGiftAccessories,
   laborCostPerHour,
   currentSuppliesCost = 0,
   currentAccessoriesCost = 0,
@@ -78,6 +112,16 @@ export function ProductForm({
   existingParts?: ExistingPart[]
   printers: PrinterOption[]
   filaments: FilamentOption[]
+  // Brinde: acessórios ativos pro seletor da "Composição" -- mesma lista
+  // que ComponentsSection já usa pra produto normal.
+  accessories: AccessoryOption[]
+  // Brinde: pré-preenche "Tarifa de energia" com Settings.energyCostPerKwh
+  // (mesmo fallback genérico que getGiftProductCostBreakdown usa quando o
+  // campo fica nulo) -- nunca some do form, só editável.
+  defaultEnergyCostPerKwh: number
+  existingGiftMaterials?: GiftMaterialRow[]
+  existingGiftEquipment?: GiftEquipmentRow[]
+  existingGiftAccessories?: GiftAccessoryRow[]
   laborCostPerHour: number
   currentSuppliesCost?: number
   currentAccessoriesCost?: number
@@ -101,6 +145,15 @@ export function ProductForm({
   // acabamento, cola e observações não entram no cálculo e ficam
   // não-controlados (defaultValue), como já era antes.
   const [isComposite, setIsComposite] = useState(product?.isComposite ?? false)
+  const [isGift, setIsGift] = useState(product?.isGift ?? false)
+  const [giftEnergyCostPerKwh, setGiftEnergyCostPerKwh] = useState(String(product?.giftEnergyCostPerKwh ?? defaultEnergyCostPerKwh))
+  const [giftMaterials, setGiftMaterials] = useState<GiftMaterialRow[]>(
+    existingGiftMaterials && existingGiftMaterials.length > 0 ? existingGiftMaterials : [emptyGiftMaterialRow()],
+  )
+  const [giftEquipment, setGiftEquipment] = useState<GiftEquipmentRow[]>(
+    existingGiftEquipment && existingGiftEquipment.length > 0 ? existingGiftEquipment : [emptyGiftEquipmentRow()],
+  )
+  const [giftAccessories, setGiftAccessories] = useState<GiftAccessoryRow[]>(existingGiftAccessories ?? [])
   const [printerId, setPrinterId] = useState(product?.printerId ?? '')
   const [filamentId, setFilamentId] = useState(product?.filamentId ?? '')
   const [weightGrams, setWeightGrams] = useState(product ? String(product.weightGrams) : '')
@@ -145,8 +198,46 @@ export function ProductForm({
     )
   }
 
+  function updateGiftMaterialRow(index: number, patch: Partial<GiftMaterialRow>) {
+    setGiftMaterials((rows) => rows.map((r, i) => (i === index ? { ...r, ...patch } : r)))
+  }
+  function removeGiftMaterialRow(index: number) {
+    setGiftMaterials((rows) => (rows.length > 1 ? rows.filter((_, i) => i !== index) : rows))
+  }
+  function updateGiftEquipmentRow(index: number, patch: Partial<GiftEquipmentRow>) {
+    setGiftEquipment((rows) => rows.map((r, i) => (i === index ? { ...r, ...patch } : r)))
+  }
+  function removeGiftEquipmentRow(index: number) {
+    setGiftEquipment((rows) => (rows.length > 1 ? rows.filter((_, i) => i !== index) : rows))
+  }
+  function updateGiftAccessoryRow(index: number, patch: Partial<GiftAccessoryRow>) {
+    setGiftAccessories((rows) => rows.map((r, i) => (i === index ? { ...r, ...patch } : r)))
+  }
+  function removeGiftAccessoryRow(index: number) {
+    setGiftAccessories((rows) => rows.filter((_, i) => i !== index))
+  }
+
   async function action(formData: FormData) {
-    if (isComposite) {
+    if (isGift) {
+      const validMaterials = giftMaterials.filter((m) => m.description.trim())
+      const validEquipment = giftEquipment.filter((e) => e.name.trim() && e.purchasePrice && e.usefulLifeUses)
+      const validAccessories = giftAccessories.filter((a) => a.accessoryId && a.quantity)
+      formData.set('giftMaterialsJson', JSON.stringify(validMaterials.map((m) => ({ id: m.id, description: m.description, unitCost: parseFloat(m.unitCost) || 0 }))))
+      formData.set(
+        'giftEquipmentJson',
+        JSON.stringify(
+          validEquipment.map((e) => ({
+            id: e.id,
+            name: e.name,
+            purchasePrice: parseFloat(e.purchasePrice),
+            usefulLifeUses: parseInt(e.usefulLifeUses, 10),
+            powerWatts: parseFloat(e.powerWatts) || 0,
+            minutesPerUnit: parseFloat(e.minutesPerUnit) || 0,
+          })),
+        ),
+      )
+      formData.set('giftAccessoriesJson', JSON.stringify(validAccessories.map((a) => ({ accessoryId: a.accessoryId, quantity: parseFloat(a.quantity) }))))
+    } else if (isComposite) {
       const validParts = parts.filter(
         (p) => p.name && p.printerId && p.printTimeHours && p.quantityPerUnit && p.filaments.length > 0 && p.filaments.every((f) => f.filamentId && f.weightGrams),
       )
@@ -202,6 +293,11 @@ export function ProductForm({
         setWeightGrams('')
         setPrintTimeHours('')
         setLaborTimeHours('0')
+        setIsGift(false)
+        setGiftMaterials([emptyGiftMaterialRow()])
+        setGiftEquipment([emptyGiftEquipmentRow()])
+        setGiftAccessories([])
+        setGiftEnergyCostPerKwh(String(defaultEnergyCostPerKwh))
       }
       onSuccess?.()
     } else {
@@ -245,12 +341,69 @@ export function ProductForm({
   const suggestedPrice = totalCost * 2
   const marketplacePrice = totalCost * 3.3
 
+  // Brinde: custo ao vivo somando material (custo livre) + acessório
+  // (custo médio real do estoque) + equipamento rateado (depreciação por
+  // uso + energia, calculateGiftEquipmentCostPerUnit reaproveitado do
+  // servidor -- função pura, sem 'use server', então dá pra chamar aqui
+  // direto no client).
+  const giftEnergyRate = parseFloat(giftEnergyCostPerKwh) || 0
+  const giftMaterialsCost = giftMaterials.reduce((sum, m) => sum + (parseFloat(m.unitCost) || 0), 0)
+  const giftAccessoriesCost = giftAccessories.reduce((sum, a) => {
+    const accessory = accessories.find((x) => x.id === a.accessoryId)
+    return sum + (parseFloat(a.quantity) || 0) * (accessory?.avgUnitCost ?? 0)
+  }, 0)
+  const giftEquipmentBreakdown = giftEquipment
+    .filter((e) => e.name.trim() && parseFloat(e.purchasePrice) > 0 && parseInt(e.usefulLifeUses, 10) > 0)
+    .map((e) =>
+      calculateGiftEquipmentCostPerUnit(
+        {
+          name: e.name,
+          purchasePrice: parseFloat(e.purchasePrice) || 0,
+          usefulLifeUses: parseInt(e.usefulLifeUses, 10) || 0,
+          powerWatts: parseFloat(e.powerWatts) || 0,
+          minutesPerUnit: parseFloat(e.minutesPerUnit) || 0,
+        },
+        giftEnergyRate,
+      ),
+    )
+  const giftEquipmentCost = giftEquipmentBreakdown.reduce((sum, e) => sum + e.costPerUnit, 0)
+  const giftTotalCost = giftMaterialsCost + giftAccessoriesCost + giftEquipmentCost
+
   return (
     <>
       <form ref={formRef} action={action} className="grid grid-cols-2 gap-3 tk-panel p-4 md:grid-cols-3">
+        {/* Brinde (spec "Brinde reciclado no sistema"): toggle mutuamente
+            exclusivo com "Composto" -- um Brinde não passa pelo fluxo de
+            Produção/ProductPart, tem sua própria composição abaixo. */}
+        <div className="col-span-full flex gap-2">
+          <button
+            type="button"
+            onClick={() => setIsGift(false)}
+            className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+              !isGift
+                ? 'bg-gradient-to-r from-violet-600 to-blue-600 text-white dark:from-violet-500 dark:to-blue-500 dark:text-slate-950'
+                : 'border border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
+            }`}
+          >
+            Produto normal
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsGift(true)}
+            className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+              isGift
+                ? 'bg-gradient-to-r from-pink-600 to-rose-500 text-white'
+                : 'border border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
+            }`}
+          >
+            🎁 Brinde
+          </button>
+          <input type="hidden" name="isGift" value={isGift ? 'true' : 'false'} />
+        </div>
+
         {/* Campos obrigatórios, sempre visíveis */}
         <label className="text-sm">
-          Nome *
+          {isGift ? 'Nome do brinde *' : 'Nome *'}
           <input name="name" defaultValue={product?.name} className="tk-input-full" required />
         </label>
         <label className="text-sm">
@@ -258,19 +411,21 @@ export function ProductForm({
           <input name="category" defaultValue={product?.category ?? ''} placeholder="Selecione a categoria" className="tk-input-full" required />
         </label>
 
-        <label className="col-span-full flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-          <input
-            type="checkbox"
-            name="isComposite"
-            value="true"
-            checked={isComposite}
-            onChange={(e) => setIsComposite(e.target.checked)}
-            className="rounded border"
-          />
-          Este produto é composto por múltiplas partes
-        </label>
+        {!isGift && (
+          <label className="col-span-full flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+            <input
+              type="checkbox"
+              name="isComposite"
+              value="true"
+              checked={isComposite}
+              onChange={(e) => setIsComposite(e.target.checked)}
+              className="rounded border"
+            />
+            Este produto é composto por múltiplas partes
+          </label>
+        )}
 
-        {!isComposite && (
+        {!isGift && !isComposite && (
           <>
             <label className="text-sm">
               Impressora *
@@ -301,7 +456,7 @@ export function ProductForm({
           </>
         )}
 
-        {isComposite && (
+        {!isGift && isComposite && (
           <div className="col-span-full space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Peças do produto</h3>
             {parts.map((row, i) => (
@@ -414,6 +569,145 @@ export function ProductForm({
           </div>
         )}
 
+        {isGift && (
+          <>
+            <div className="col-span-full space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Composição</h3>
+
+              {/* Peça/material de custo livre -- pode ser R$0,00 (ex.:
+                  sobra de impressão já paga no produto original). */}
+              {giftMaterials.map((row, i) => (
+                <div key={i} className="grid grid-cols-2 gap-2 md:grid-cols-5">
+                  <label className="text-xs md:col-span-3">
+                    Peça/material
+                    <input
+                      value={row.description}
+                      onChange={(e) => updateGiftMaterialRow(i, { description: e.target.value })}
+                      placeholder="Ex.: Purga reciclada (sobra de impressão)"
+                      className="tk-input-full"
+                    />
+                  </label>
+                  <label className="text-xs">
+                    Custo (R$)
+                    <input type="number" step="0.01" min="0" value={row.unitCost} onChange={(e) => updateGiftMaterialRow(i, { unitCost: e.target.value })} className="tk-input-full" />
+                  </label>
+                  {giftMaterials.length > 1 && (
+                    <button type="button" onClick={() => removeGiftMaterialRow(i)} className="tk-link-danger self-end text-xs">Remover</button>
+                  )}
+                </div>
+              ))}
+              <button type="button" onClick={() => setGiftMaterials((rows) => [...rows, emptyGiftMaterialRow()])} className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                + Adicionar peça/material
+              </button>
+
+              {/* Acessório real -- reaproveita o estoque/custo médio de
+                  Accessory que produto normal já usa. */}
+              {giftAccessories.map((row, i) => {
+                const accessory = accessories.find((a) => a.id === row.accessoryId)
+                return (
+                  <div key={i} className="grid grid-cols-2 gap-2 md:grid-cols-5">
+                    <label className="text-xs md:col-span-3">
+                      Acessório
+                      <select value={row.accessoryId} onChange={(e) => updateGiftAccessoryRow(i, { accessoryId: e.target.value })} className="tk-input-full">
+                        <option value="" disabled>Selecione</option>
+                        {accessories.map((a) => (
+                          <option key={a.id} value={a.id}>{a.colorName ? `${a.name} — ${a.colorName}` : a.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-xs">
+                      Quantidade
+                      <input type="number" step="0.01" min="0.01" value={row.quantity} onChange={(e) => updateGiftAccessoryRow(i, { quantity: e.target.value })} className="tk-input-full" />
+                    </label>
+                    <button type="button" onClick={() => removeGiftAccessoryRow(i)} className="tk-link-danger self-end text-xs">Remover</button>
+                    {accessory && (
+                      <span className="col-span-full text-xs text-slate-400 dark:text-slate-500">puxado do estoque de acessórios — {money(accessory.avgUnitCost)}/un</span>
+                    )}
+                  </div>
+                )
+              })}
+              <button
+                type="button"
+                onClick={() => setGiftAccessories((rows) => [...rows, emptyGiftAccessoryRow()])}
+                className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400"
+              >
+                + Adicionar acessório
+              </button>
+            </div>
+
+            <div className="col-span-full space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Equipamento usado (rateado por unidade)</h3>
+              <label className="text-xs">
+                Tarifa de energia (R$/kWh)
+                <input
+                  name="giftEnergyCostPerKwh"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={giftEnergyCostPerKwh}
+                  onChange={(e) => setGiftEnergyCostPerKwh(e.target.value)}
+                  className="tk-input-full max-w-[10rem]"
+                />
+              </label>
+              {giftEquipment.map((row, i) => {
+                const cost = giftEquipmentBreakdown.find((e) => e.name === row.name && row.name.trim())
+                return (
+                  <div key={i} className="space-y-1 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                      <label className="text-xs md:col-span-2">
+                        Nome do equipamento
+                        <input
+                          value={row.name}
+                          onChange={(e) => updateGiftEquipmentRow(i, { name: e.target.value })}
+                          placeholder="Ex.: Soprador Térmico"
+                          className="tk-input-full"
+                        />
+                      </label>
+                      <label className="text-xs">
+                        Valor de compra
+                        <input type="number" step="0.01" min="0" value={row.purchasePrice} onChange={(e) => updateGiftEquipmentRow(i, { purchasePrice: e.target.value })} className="tk-input-full" />
+                      </label>
+                      <label className="text-xs">
+                        Vida útil (usos)
+                        <input type="number" step="1" min="1" value={row.usefulLifeUses} onChange={(e) => updateGiftEquipmentRow(i, { usefulLifeUses: e.target.value })} className="tk-input-full" />
+                      </label>
+                      <label className="text-xs">
+                        Potência (W)
+                        <input type="number" step="1" min="0" value={row.powerWatts} onChange={(e) => updateGiftEquipmentRow(i, { powerWatts: e.target.value })} className="tk-input-full" />
+                      </label>
+                      <label className="text-xs">
+                        Tempo por unidade (min)
+                        <input type="number" step="0.01" min="0" value={row.minutesPerUnit} onChange={(e) => updateGiftEquipmentRow(i, { minutesPerUnit: e.target.value })} className="tk-input-full" />
+                      </label>
+                      {giftEquipment.length > 1 && (
+                        <button type="button" onClick={() => removeGiftEquipmentRow(i)} className="tk-link-danger self-end text-xs">Remover</button>
+                      )}
+                    </div>
+                    {cost && (
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Depreciação: <span className="font-medium">{money(cost.depreciation)}</span>{' '}
+                        Energia: <span className="font-medium">{money(cost.energy)}</span>{' '}
+                        <span className="font-medium text-pink-600 dark:text-pink-400">Custo por unidade: {money(cost.costPerUnit)}</span>
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+              <button type="button" onClick={() => setGiftEquipment((rows) => [...rows, emptyGiftEquipmentRow()])} className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                + Adicionar equipamento
+              </button>
+            </div>
+
+            <div className="col-span-full flex items-center justify-between rounded-lg border border-pink-200 bg-pink-50 p-3 text-sm dark:border-pink-900 dark:bg-pink-950/30">
+              <span className="font-medium text-slate-700 dark:text-slate-300">Custo total do brinde</span>
+              <span className="font-semibold text-pink-700 dark:text-pink-400">{money(giftTotalCost)}</span>
+            </div>
+            <p className="col-span-full text-xs text-slate-400 dark:text-slate-500">
+              Como é um Brinde, não aparecem campos de preço sugerido nem taxa por plataforma — ele nunca é vendido sozinho, só usado como custo dentro de uma venda.
+            </p>
+          </>
+        )}
+
         {/* Campos opcionais, colapsáveis -- só no formulário de EDIÇÃO
             (product presente). Na modal "Novo produto" (product ausente)
             ficam de fora de propósito, pra cadastro rápido; dá pra
@@ -422,8 +716,9 @@ export function ProductForm({
             (0h, null) quando omitidos na criação, nunca ficam obrigatórios.
             Acabamento/Usa cola foram removidos do formulário -- finishingType
             sempre grava 'NENHUM' (default do schema, ver parse() em
-            actions/products.ts), usesGlue sempre false. */}
-        {product && (
+            actions/products.ts), usesGlue sempre false. Brinde não tem
+            conceito de mão de obra -- fica de fora nos dois modos. */}
+        {product && !isGift && (
           <details className="col-span-full">
             <summary className="tk-summary">Campos opcionais</summary>
             <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -440,7 +735,7 @@ export function ProductForm({
         )}
 
         <div className="col-span-full mt-2">
-          <SubmitButton pendingLabel="Salvando…">{product ? 'Salvar alterações' : 'Adicionar'}</SubmitButton>
+          <SubmitButton pendingLabel="Salvando…">{product ? 'Salvar alterações' : isGift ? 'Salvar brinde' : 'Adicionar'}</SubmitButton>
         </div>
       </form>
 

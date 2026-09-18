@@ -55,9 +55,9 @@ export default async function ConsignmentSaleReportsPage({
             <th className="py-2">Data</th>
             <th>Parceiro</th>
             <th>Produto</th>
-            <th>Qtd. vendida</th>
-            <th>Comissão</th>
-            <th>Repasse</th>
+            <th className="text-center">Qtd. vendida</th>
+            <th className="text-center">Comissão</th>
+            <th className="text-center">Repasse</th>
             <th></th>
           </tr>
         </thead>
@@ -72,9 +72,9 @@ export default async function ConsignmentSaleReportsPage({
                 <td className="py-2">{r.reportDate.toLocaleDateString('pt-BR')}</td>
                 <td>{r.delivery.partner.name}</td>
                 <td>{r.delivery.product.name}</td>
-                <td>{r.quantitySold}</td>
-                <td>{(commission * 100).toFixed(0)}%</td>
-                <td>{formatCurrency(payout)}</td>
+                <td className="text-center">{r.quantitySold}</td>
+                <td className="text-center">{(commission * 100).toFixed(0)}%</td>
+                <td className="text-center">{formatCurrency(payout)}</td>
                 <td>
                   <ConfirmDeleteForm action={async () => { 'use server'; return await deleteConsignmentSaleReport(r.id) }} />
                 </td>

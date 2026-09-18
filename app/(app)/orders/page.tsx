@@ -11,7 +11,8 @@ export const dynamic = 'force-dynamic'
 export default async function OrdersPage() {
   const [orders, products] = await Promise.all([
     prisma.order.findMany({ orderBy: { orderDate: 'desc' }, include: { product: true } }),
-    prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+    // Brinde nunca é vendido sozinho -- excluído do seletor de produto.
+    prisma.product.findMany({ where: { active: true, isGift: false }, orderBy: { name: 'asc' } }),
   ])
 
   return (
@@ -25,8 +26,8 @@ export default async function OrdersPage() {
             <th className="py-2">Data</th>
             <th>Canal</th>
             <th>Produto</th>
-            <th>Qtd.</th>
-            <th>Valor unit.</th>
+            <th className="text-center">Qtd.</th>
+            <th className="text-center">Valor unit.</th>
             <th>Nº pedido</th>
             <th>Status</th>
             <th></th>
@@ -40,8 +41,8 @@ export default async function OrdersPage() {
                 <td className="py-2">{o.orderDate.toLocaleDateString('pt-BR')}</td>
                 <td>{ORDER_CHANNEL_LABELS[o.channel]}</td>
                 <td>{o.product.name}</td>
-                <td>{o.quantity}</td>
-                <td>{formatCurrency(o.unitPrice.toNumber())}</td>
+                <td className="text-center">{o.quantity}</td>
+                <td className="text-center">{formatCurrency(o.unitPrice.toNumber())}</td>
                 <td className="text-slate-500 dark:text-slate-400">{o.orderNumber ?? '—'}</td>
                 <td>
                   <div className="flex items-center gap-2">

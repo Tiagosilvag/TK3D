@@ -740,9 +740,11 @@ export interface AssemblyOverviewRow {
 // com os da tela de detalhe, em vez de uma segunda fórmula que pudesse
 // divergir.
 export async function getAssemblyOverview(): Promise<AssemblyOverviewRow[]> {
+  // Brinde não passa por Montagem -- excluído.
   const products = await prisma.product.findMany({
     where: {
       active: true,
+      isGift: false,
       OR: [{ isComposite: true }, { accessoryUsages: { some: {} } }, { supplyUsages: { some: {} } }, { componentUsages: { some: {} } }],
     },
     orderBy: { name: 'asc' },

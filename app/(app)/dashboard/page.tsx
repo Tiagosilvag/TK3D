@@ -143,7 +143,8 @@ export default async function DashboardPage({
     getProductionByProduct(productionFilters),
     getFailuresByWasteReason(productionFilters),
     getPrinterUsage(productionFilters),
-    prisma.product.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    // Brinde nunca tem produção -- excluído do filtro.
+    prisma.product.findMany({ where: { isGift: false }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     prisma.printer.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     prisma.supply.findMany({ include: { purchases: { orderBy: { purchaseDate: 'desc' } } }, orderBy: { name: 'asc' } }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
@@ -301,7 +302,7 @@ export default async function DashboardPage({
                 <tr className="border-b border-slate-100 text-left text-xs font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
                   <th className="w-12 py-3 pl-5"></th>
                   <th className="py-3">Produto</th>
-                  <th className="py-3 pr-5 text-right">Unidades vendidas</th>
+                  <th className="py-3 text-center">Unidades vendidas</th>
                 </tr>
               </thead>
               <tbody>
@@ -319,7 +320,7 @@ export default async function DashboardPage({
                       </span>
                     </td>
                     <td className="py-3 font-medium text-slate-800 dark:text-slate-200">{entry.product.name}</td>
-                    <td className="py-3 pr-5 text-right tabular-nums text-slate-600 dark:text-slate-400">{integer.format(entry.quantitySold)}</td>
+                    <td className="py-3 text-center tabular-nums text-slate-600 dark:text-slate-400">{integer.format(entry.quantitySold)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -338,7 +339,7 @@ export default async function DashboardPage({
               <thead>
                 <tr className="border-b border-slate-100 text-left text-xs font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
                   <th className="py-3 pl-5">Parceiro / Produto</th>
-                  <th className="py-3 pr-5 text-right">Saldo restante</th>
+                  <th className="py-3 text-center">Saldo restante</th>
                 </tr>
               </thead>
               <tbody>
@@ -355,7 +356,7 @@ export default async function DashboardPage({
                         className={i !== items.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''}
                       >
                         <td className="py-3 pl-9 text-slate-700 dark:text-slate-300">{item.productName}</td>
-                        <td className="py-3 pr-5 text-right tabular-nums font-medium text-slate-800 dark:text-slate-200">
+                        <td className="py-3 text-center tabular-nums font-medium text-slate-800 dark:text-slate-200">
                           {integer.format(item.remaining)}
                         </td>
                       </tr>
@@ -497,18 +498,18 @@ export default async function DashboardPage({
               <thead>
                 <tr className="border-b border-slate-100 text-left text-xs font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
                   <th className="py-3 pl-5">Produto</th>
-                  <th className="py-3 text-right">Produções</th>
-                  <th className="py-3 text-right">Unidades</th>
-                  <th className="py-3 pr-5 text-right">Custo total</th>
+                  <th className="py-3 text-center">Produções</th>
+                  <th className="py-3 text-center">Unidades</th>
+                  <th className="py-3 text-center">Custo total</th>
                 </tr>
               </thead>
               <tbody>
                 {productionByProduct.map((row, i) => (
                   <tr key={row.productId} className={i !== productionByProduct.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''}>
                     <td className="py-3 pl-5 font-medium text-slate-800 dark:text-slate-200">{row.productName}</td>
-                    <td className="py-3 text-right tabular-nums text-slate-600 dark:text-slate-400">{integer.format(row.runsCount)}</td>
-                    <td className="py-3 text-right tabular-nums text-slate-600 dark:text-slate-400">{integer.format(row.quantitySuccess)}</td>
-                    <td className="py-3 pr-5 text-right tabular-nums font-medium text-slate-800 dark:text-slate-200">{formatCurrency(row.totalCost)}</td>
+                    <td className="py-3 text-center tabular-nums text-slate-600 dark:text-slate-400">{integer.format(row.runsCount)}</td>
+                    <td className="py-3 text-center tabular-nums text-slate-600 dark:text-slate-400">{integer.format(row.quantitySuccess)}</td>
+                    <td className="py-3 text-center tabular-nums font-medium text-slate-800 dark:text-slate-200">{formatCurrency(row.totalCost)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -527,16 +528,16 @@ export default async function DashboardPage({
               <thead>
                 <tr className="border-b border-slate-100 text-left text-xs font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
                   <th className="py-3 pl-5">Motivo</th>
-                  <th className="py-3 text-right">Produções</th>
-                  <th className="py-3 pr-5 text-right">Unidades falhadas</th>
+                  <th className="py-3 text-center">Produções</th>
+                  <th className="py-3 text-center">Unidades falhadas</th>
                 </tr>
               </thead>
               <tbody>
                 {failuresByReason.map((row, i) => (
                   <tr key={row.wasteReason} className={i !== failuresByReason.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''}>
                     <td className="py-3 pl-5 font-medium text-slate-800 dark:text-slate-200">{WASTE_REASON_LABELS[row.wasteReason]}</td>
-                    <td className="py-3 text-right tabular-nums text-slate-600 dark:text-slate-400">{integer.format(row.runsCount)}</td>
-                    <td className="py-3 pr-5 text-right tabular-nums font-medium text-red-600 dark:text-red-400">{integer.format(row.quantityFailed)}</td>
+                    <td className="py-3 text-center tabular-nums text-slate-600 dark:text-slate-400">{integer.format(row.runsCount)}</td>
+                    <td className="py-3 text-center tabular-nums font-medium text-red-600 dark:text-red-400">{integer.format(row.quantityFailed)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -555,16 +556,16 @@ export default async function DashboardPage({
               <thead>
                 <tr className="border-b border-slate-100 text-left text-xs font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
                   <th className="py-3 pl-5">Impressora</th>
-                  <th className="py-3 text-right">Produções</th>
-                  <th className="py-3 pr-5 text-right">Horas</th>
+                  <th className="py-3 text-center">Produções</th>
+                  <th className="py-3 text-center">Horas</th>
                 </tr>
               </thead>
               <tbody>
                 {printerUsage.map((row, i) => (
                   <tr key={row.printerId} className={i !== printerUsage.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''}>
                     <td className="py-3 pl-5 font-medium text-slate-800 dark:text-slate-200">{row.printerName}</td>
-                    <td className="py-3 text-right tabular-nums text-slate-600 dark:text-slate-400">{integer.format(row.runsCount)}</td>
-                    <td className="py-3 pr-5 text-right tabular-nums font-medium text-slate-800 dark:text-slate-200">{row.totalHours.toFixed(1)}h</td>
+                    <td className="py-3 text-center tabular-nums text-slate-600 dark:text-slate-400">{integer.format(row.runsCount)}</td>
+                    <td className="py-3 text-center tabular-nums font-medium text-slate-800 dark:text-slate-200">{row.totalHours.toFixed(1)}h</td>
                   </tr>
                 ))}
               </tbody>

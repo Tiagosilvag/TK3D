@@ -49,9 +49,9 @@ export function PartnerStockSection({
         <thead>
           <tr className="tk-table-head-row">
             <th className="py-2">Produto</th>
-            <th>Entregue</th>
-            <th>Vendido</th>
-            <th>Com ela</th>
+            <th className="text-center">Entregue</th>
+            <th className="text-center">Vendido</th>
+            <th className="text-center">Com ela</th>
             <th></th>
           </tr>
         </thead>
@@ -64,9 +64,9 @@ export function PartnerStockSection({
                   {p.productName}
                   {colorCount > 1 && <span className="ml-1.5 text-xs font-normal text-slate-400 dark:text-slate-500">({colorCount} cores)</span>}
                 </td>
-                <td>{p.delivered}</td>
-                <td>{p.sold}</td>
-                <td>{p.remaining}</td>
+                <td className="text-center">{p.delivered}</td>
+                <td className="text-center">{p.sold}</td>
+                <td className="text-center">{p.remaining}</td>
                 <td className="text-right text-slate-400" aria-hidden>›</td>
               </tr>
             )

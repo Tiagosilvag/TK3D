@@ -190,10 +190,10 @@ export function SuppliesExplorer({
         <thead>
           <tr className="tk-table-head-row">
             <th className="py-3">Nome</th>
-            <th>Estoque</th>
-            <th>Custo/unidade</th>
-            <th>Valor em estoque</th>
-            <th>Uso padrão</th>
+            <th className="text-center">Estoque</th>
+            <th className="text-center">Custo/unidade</th>
+            <th className="text-center">Valor em estoque</th>
+            <th className="text-center">Uso padrão</th>
             <th>Status</th>
             <th></th>
           </tr>
@@ -202,10 +202,10 @@ export function SuppliesExplorer({
           {visibleRows.map((r) => (
             <tr key={r.id} className="tk-row align-top">
               <td className="py-3 font-medium text-slate-900 dark:text-slate-100">{r.name}</td>
-              <td>{r.currentStock} {SUPPLY_UNIT_SUFFIX[r.unit]}</td>
-              <td className="text-slate-500 dark:text-slate-400">{formatUnitCost(r.unit, r.avgUnitCost)}</td>
-              <td className="text-slate-500 dark:text-slate-400">{formatCurrency(r.valueInStock)}</td>
-              <td className="text-slate-500 dark:text-slate-400">
+              <td className="text-center">{r.currentStock} {SUPPLY_UNIT_SUFFIX[r.unit]}</td>
+              <td className="text-center text-slate-500 dark:text-slate-400">{formatUnitCost(r.unit, r.avgUnitCost)}</td>
+              <td className="text-center text-slate-500 dark:text-slate-400">{formatCurrency(r.valueInStock)}</td>
+              <td className="text-center text-slate-500 dark:text-slate-400">
                 {r.defaultUsage != null ? `${r.defaultUsage} ${SUPPLY_UNIT_SUFFIX[r.unit]}` : '—'}
               </td>
               <td><StatusBadge badge={getStockStatusBadge(r.status)} /></td>

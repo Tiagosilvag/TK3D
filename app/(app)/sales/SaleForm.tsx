@@ -107,14 +107,26 @@ function resolvePlatformFeeForPrice(platform: PlatformFeeInfo, price: number): {
   return { feePercent: platform.feePercent, feeFixed: platform.feeFixed }
 }
 
+// Brinde (spec "Brinde reciclado no sistema" §2): produto sem preço,
+// anexável como custo extra numa venda -- unitCost vem pronto de
+// getGiftProductOptions (sales/page.tsx), mesmo espírito de
+// ProductOption.unitCost acima (calculado uma vez no servidor).
+export interface GiftProductOption {
+  id: string
+  name: string
+  unitCost: number
+}
+
 export function SaleForm({
   products,
   platforms,
+  giftProducts,
   editingSale,
   defaultProductId,
 }: {
   products: ProductOption[]
   platforms: PlatformFeeInfo[]
+  giftProducts: GiftProductOption[]
   editingSale?: EditingSale
   // 2.2: link de ação rápida "Registrar venda direta" em /stock chega aqui
   // com ?productId=... pra pré-selecionar o produto.
@@ -133,6 +145,13 @@ export function SaleForm({
   // cada "+ Adicionar produto" empurra o rascunho atual pra aqui e limpa os
   // campos Produto/Cor/Quantidade/Valor unitário pro próximo.
   const [items, setItems] = useState<ItemDraft[]>([])
+  // Brinde: anexo opcional por LOTE (não por item) -- mesmo nível de
+  // Data/Comprador/Observações abaixo, nunca dentro da lista "+ Adicionar
+  // produto". Só existe no modo "nova venda" (editingSale continua sem
+  // brinde, ver comentário em removeSaleGiftUsage/actions/sales.ts).
+  const [giftEnabled, setGiftEnabled] = useState(false)
+  const [giftProductId, setGiftProductId] = useState('')
+  const [giftQuantity, setGiftQuantity] = useState('1')
 
   const selectedProduct = useMemo(() => products.find((p) => p.productId === productId), [products, productId])
 
@@ -168,11 +187,17 @@ export function SaleForm({
   // rascunho em edição -- recalcula a cada item adicionado/removido ou
   // campo do rascunho mudado, sem round-trip (mesma lógica pura de
   // resolveSalePlatformFee, só que client-side).
+  // Brinde: custo extra somado ao total da venda, descontado do lucro, sem
+  // afetar saleTotal (o valor cobrado do cliente nunca inclui o brinde).
+  const giftUnitCost = giftProducts.find((g) => g.id === giftProductId)?.unitCost ?? 0
+  const giftQuantityNum = Number(giftQuantity) || 0
+  const giftCost = giftEnabled && giftProductId ? giftUnitCost * giftQuantityNum : 0
+
   const preview = useMemo(() => {
-    if (previewItems.length === 0) return null
+    if (previewItems.length === 0 && giftCost === 0) return null
     const platform = (channel === 'SHOPEE' || channel === 'MERCADO_LIVRE') ? platforms.find((p) => p.kind === channel) : undefined
     let saleTotal = 0
-    let cost = 0
+    let cost = giftCost
     let fee = 0
     for (const it of previewItems) {
       saleTotal += it.unitPrice * it.quantity
@@ -184,7 +209,7 @@ export function SaleForm({
     }
     const profit = saleTotal - cost - fee
     return { saleTotal, cost, fee, profit, margin: saleTotal > 0 ? profit / saleTotal : null }
-  }, [previewItems, channel, platforms, products])
+  }, [previewItems, channel, platforms, products, giftCost])
 
   // Legenda "Taxa Shopee: 20% + R$4,00 (≈R$X/un.)" embaixo do campo Valor
   // unitário -- só do item em rascunho (não do agregado acima), mesmo
@@ -298,6 +323,10 @@ export function SaleForm({
     }
 
     formData.set('itemsJson', JSON.stringify(finalItems))
+    if (giftEnabled && giftProductId && giftQuantityNum > 0) {
+      formData.set('giftProductId', giftProductId)
+      formData.set('giftQuantity', String(giftQuantityNum))
+    }
     const result = await createSaleBatch(formData)
     if (result.success) {
       formRef.current?.reset()
@@ -312,6 +341,9 @@ export function SaleForm({
       // 'new', which never changes between them).
       setProductId('')
       setItems([])
+      setGiftEnabled(false)
+      setGiftProductId('')
+      setGiftQuantity('1')
     } else {
       alert(result.error)
     }
@@ -405,6 +437,38 @@ export function SaleForm({
           </div>
         )}
 
+        {/* Brinde (spec "Brinde reciclado no sistema" §2): anexo por LOTE,
+            junto dos campos de cabeçalho -- nunca dentro da lista
+            "+ Adicionar produto" (é um mimo pra venda inteira, não por
+            produto). Só no modo "nova venda" e quando existe algum Brinde
+            cadastrado. */}
+        {!editingSale && giftProducts.length > 0 && (
+          <div className="col-span-full rounded-lg border border-pink-200 bg-pink-50/50 p-3 dark:border-pink-900 dark:bg-pink-950/20">
+            <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+              <input type="checkbox" checked={giftEnabled} onChange={(e) => setGiftEnabled(e.target.checked)} className="rounded border" />
+              🎁 Incluir brinde nesta venda
+            </label>
+            <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Entra no custo total do pedido, sem afetar o valor cobrado do cliente.</p>
+            {giftEnabled && (
+              <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+                <label className="text-xs md:col-span-3">
+                  Qual brinde
+                  <select value={giftProductId} onChange={(e) => setGiftProductId(e.target.value)} className="tk-input-full">
+                    <option value="" disabled>Selecione</option>
+                    {giftProducts.map((g) => (
+                      <option key={g.id} value={g.id}>{g.name} — {formatCurrency(g.unitCost)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-xs">
+                  Quantidade
+                  <input type="number" step="1" min="1" value={giftQuantity} onChange={(e) => setGiftQuantity(e.target.value)} className="tk-input-full" />
+                </label>
+              </div>
+            )}
+          </div>
+        )}
+
         <label className="text-sm">
           Data da venda *
           <input name="saleDate" type="date" defaultValue={editingSale?.saleDate ?? today()} className="tk-input-full" required />
@@ -431,15 +495,21 @@ export function SaleForm({
           há dado suficiente pra calcular algo (senão mostraria R$0 vazio,
           mais confuso que ausente). */}
       {preview && (
-        <div className="mt-4 grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 sm:grid-cols-3 dark:border-slate-800">
+        <div className={`mt-4 grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 dark:border-slate-800 ${giftCost > 0 ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
           <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Custo de produção</p>
-            <p className="mt-1 text-base font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(preview.cost)}</p>
+            <p className="mt-1 text-base font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(preview.cost - giftCost)}</p>
           </div>
           <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Taxa da plataforma</p>
             <p className="mt-1 text-base font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(preview.fee)}</p>
           </div>
+          {giftCost > 0 && (
+            <div className="rounded-lg bg-pink-50 p-3 dark:bg-pink-950/20">
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Custo do brinde</p>
+              <p className="mt-1 text-base font-semibold tabular-nums text-pink-700 dark:text-pink-400">{formatCurrency(giftCost)}</p>
+            </div>
+          )}
           <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Lucro estimado</p>
             <p className={`mt-1 text-base font-semibold tabular-nums ${preview.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>

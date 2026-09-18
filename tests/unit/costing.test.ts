@@ -23,6 +23,8 @@ import {
   calculateTieredPlatformPrice,
   calculatePlatformPrice,
   resolvePlatformPrice,
+  calculateGiftEquipmentCostPerUnit,
+  calculateGiftProductCost,
   type ProductionCostSnapshotInput,
   type ProductCostBreakdown,
   type ProductionCostSnapshot,
@@ -1324,5 +1326,108 @@ describe('allocatePlatePrintTime', () => {
       { printTimeHoursPerUnit: 0, quantityPlanned: 0 },
     ])
     expect(allocated).toEqual([0, 0])
+  })
+})
+
+// Brinde (spec "Brinde reciclado no sistema"): trilha de custeio própria e
+// paralela à de produto normal -- depreciação de equipamento é por USO
+// (purchasePrice / usefulLifeUses), não por hora como Printer.
+describe('calculateGiftEquipmentCostPerUnit', () => {
+  it('depreciação = valor de compra / vida útil (usos)', () => {
+    const result = calculateGiftEquipmentCostPerUnit(
+      { name: 'Forma de Silicone', purchasePrice: 35, usefulLifeUses: 500, powerWatts: 0, minutesPerUnit: 0 },
+      0.95,
+    )
+    expect(result.depreciation).toBeCloseTo(35 / 500, 6)
+  })
+
+  it('equipamento sem consumo elétrico (powerWatts=0): energia fica em 0, sem quebrar o cálculo', () => {
+    const result = calculateGiftEquipmentCostPerUnit(
+      { name: 'Forma de Silicone', purchasePrice: 35, usefulLifeUses: 500, powerWatts: 0, minutesPerUnit: 0 },
+      0.95,
+    )
+    expect(result.energy).toBe(0)
+    expect(result.costPerUnit).toBeCloseTo(35 / 500, 6)
+  })
+
+  it('energia = potência(kW) × tempo(h) × tarifa, quando powerWatts > 0 (hand-computed)', () => {
+    // Soprador Térmico: 120/3000 depreciação + (2000W/1000)*(0.5min/60)*0.95 energia
+    const result = calculateGiftEquipmentCostPerUnit(
+      { name: 'Soprador Térmico', purchasePrice: 120, usefulLifeUses: 3000, powerWatts: 2000, minutesPerUnit: 0.5 },
+      0.95,
+    )
+    expect(result.depreciation).toBeCloseTo(120 / 3000, 6)
+    expect(result.energy).toBeCloseTo((2000 / 1000) * (0.5 / 60) * 0.95, 6)
+    expect(result.costPerUnit).toBeCloseTo(result.depreciation + result.energy, 6)
+  })
+
+  it('vida útil zero: depreciação fica em 0 em vez de Infinity/NaN', () => {
+    const result = calculateGiftEquipmentCostPerUnit(
+      { name: 'X', purchasePrice: 100, usefulLifeUses: 0, powerWatts: 0, minutesPerUnit: 0 },
+      0.95,
+    )
+    expect(result.depreciation).toBe(0)
+    expect(Number.isFinite(result.costPerUnit)).toBe(true)
+  })
+
+  it('preserva o nome do equipamento no resultado (pra exibir por linha)', () => {
+    const result = calculateGiftEquipmentCostPerUnit(
+      { name: 'Soprador Térmico', purchasePrice: 120, usefulLifeUses: 3000, powerWatts: 2000, minutesPerUnit: 0.5 },
+      0.95,
+    )
+    expect(result.name).toBe('Soprador Térmico')
+  })
+})
+
+describe('calculateGiftProductCost', () => {
+  it('soma materialsCost + accessoriesCost + equipmentCost em finalCost (hand-computed, exemplo do protótipo)', () => {
+    // Chaveiro Purga Reciclada 3×3: purga R$0,00 + corrente R$0,80 +
+    // soprador R$0,056 + forma R$0,070 ≈ R$0,93.
+    const result = calculateGiftProductCost(
+      [{ unitCost: 0 }],
+      [{ quantity: 1, avgUnitCost: 0.8 }],
+      [
+        { name: 'Soprador Térmico', purchasePrice: 120, usefulLifeUses: 3000, powerWatts: 2000, minutesPerUnit: 0.5 },
+        { name: 'Forma de Silicone', purchasePrice: 35, usefulLifeUses: 500, powerWatts: 0, minutesPerUnit: 0 },
+      ],
+      0.95,
+    )
+    expect(result.materialsCost).toBe(0)
+    expect(result.accessoriesCost).toBeCloseTo(0.8, 6)
+    expect(result.equipmentCost).toBeCloseTo(120 / 3000 + (2000 / 1000) * (0.5 / 60) * 0.95 + 35 / 500, 6)
+    expect(result.finalCost).toBeCloseTo(result.materialsCost + result.accessoriesCost + result.equipmentCost, 6)
+    expect(result.finalCost).toBeCloseTo(0.93, 2)
+  })
+
+  it('acessório: custo = quantidade × custo médio ponderado (mesmo padrão de sumUsageCost)', () => {
+    const result = calculateGiftProductCost([], [{ quantity: 3, avgUnitCost: 0.5 }], [], 0.95)
+    expect(result.accessoriesCost).toBeCloseTo(1.5, 6)
+  })
+
+  it('material de custo livre R$0,00 não quebra o total (ex.: sobra de impressão já paga)', () => {
+    const result = calculateGiftProductCost([{ unitCost: 0 }, { unitCost: 0 }], [], [], 0.95)
+    expect(result.materialsCost).toBe(0)
+    expect(result.finalCost).toBe(0)
+  })
+
+  it('sem nenhuma linha (composição vazia): finalCost fica em 0, não erro', () => {
+    const result = calculateGiftProductCost([], [], [], 0.95)
+    expect(result.finalCost).toBe(0)
+    expect(result.equipmentBreakdown).toEqual([])
+  })
+
+  it('equipmentBreakdown expõe o detalhamento por linha, na mesma ordem de entrada', () => {
+    const result = calculateGiftProductCost(
+      [],
+      [],
+      [
+        { name: 'A', purchasePrice: 100, usefulLifeUses: 100, powerWatts: 0, minutesPerUnit: 0 },
+        { name: 'B', purchasePrice: 200, usefulLifeUses: 100, powerWatts: 0, minutesPerUnit: 0 },
+      ],
+      0.95,
+    )
+    expect(result.equipmentBreakdown.map((e) => e.name)).toEqual(['A', 'B'])
+    expect(result.equipmentBreakdown[0].costPerUnit).toBeCloseTo(1, 6)
+    expect(result.equipmentBreakdown[1].costPerUnit).toBeCloseTo(2, 6)
   })
 })

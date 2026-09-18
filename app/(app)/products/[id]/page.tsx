@@ -53,6 +53,8 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
       photos: { orderBy: { createdAt: 'asc' }, select: { id: true, isCover: true } },
       parts: { orderBy: { createdAt: 'asc' }, include: { filamentComponents: true } },
       componentUsages: { include: { componentProduct: true } },
+      giftMaterials: { orderBy: { createdAt: 'asc' } },
+      giftEquipment: { orderBy: { createdAt: 'asc' } },
     },
   })
   if (!product) notFound()
@@ -90,7 +92,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     // servidor em addProductComponentUsage (mais barato checar aqui só o
     // óbvio, sem percorrer o grafo inteiro pra montar a lista).
     prisma.product.findMany({
-      where: { active: true, isComposite: false, id: { not: product.id } },
+      where: { active: true, isComposite: false, isGift: false, id: { not: product.id } },
       orderBy: { name: 'asc' },
       select: { id: true, name: true },
     }),
@@ -243,6 +245,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               name: product.name,
               category: product.category,
               isComposite: product.isComposite,
+              isGift: product.isGift,
               printerId: product.printerId,
               filamentId: product.filamentId,
               weightGrams: product.weightGrams.toNumber(),
@@ -251,6 +254,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               finishingType: product.finishingType,
               usesGlue: product.usesGlue,
               notes: product.notes,
+              giftEnergyCostPerKwh: product.giftEnergyCostPerKwh?.toNumber() ?? null,
             }}
             existingParts={product.parts.map((p) => ({
               id: p.id,
@@ -262,6 +266,18 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
             }))}
             printers={printerOptions}
             filaments={filamentOptions}
+            accessories={accessories.map((a) => ({ id: a.id, name: a.name, colorName: a.colorName, avgUnitCost: a.avgUnitCost.toNumber() }))}
+            defaultEnergyCostPerKwh={settings.energyCostPerKwh.toNumber()}
+            existingGiftMaterials={product.giftMaterials.map((m) => ({ id: m.id, description: m.description, unitCost: String(m.unitCost.toNumber()) }))}
+            existingGiftEquipment={product.giftEquipment.map((e) => ({
+              id: e.id,
+              name: e.name,
+              purchasePrice: String(e.purchasePrice.toNumber()),
+              usefulLifeUses: String(e.usefulLifeUses),
+              powerWatts: String(e.powerWatts.toNumber()),
+              minutesPerUnit: String(e.minutesPerUnit.toNumber()),
+            }))}
+            existingGiftAccessories={product.isGift ? product.accessoryUsages.map((u) => ({ accessoryId: u.accessoryId, quantity: String(u.quantity.toNumber()) })) : undefined}
             laborCostPerHour={settings.laborCostPerHour.toNumber()}
             currentSuppliesCost={currentSuppliesCost}
             currentAccessoriesCost={currentAccessoriesCost}
@@ -275,7 +291,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
                 <thead>
                   <tr className="tk-table-head-row">
                     <th className="py-1">Peça</th>
-                    <th>Qtd. por unidade</th>
+                    <th className="text-center">Qtd. por unidade</th>
                     <th>Última produção</th>
                     <th>Status</th>
                   </tr>
@@ -287,7 +303,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
                     return (
                       <tr key={part.id} className="tk-row">
                         <td className="py-1">{part.name}</td>
-                        <td>{part.quantityPerUnit}</td>
+                        <td className="text-center">{part.quantityPerUnit}</td>
                         <td>{latestRun ? latestRun.date.toLocaleDateString('pt-BR') : '—'}</td>
                         <td>
                           {badge ? (
@@ -304,14 +320,19 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
             </div>
           )}
 
-          <ComponentsSection
-            productId={product.id}
-            components={components}
-            accessories={accessories.map((a) => ({ id: a.id, name: a.name, colorName: a.colorName }))}
-            supplies={supplies.map((s) => ({ id: s.id, name: s.name, unit: s.unit, defaultUsage: s.defaultUsage?.toNumber() ?? null }))}
-            packagingItems={packagingItems.map((p) => ({ id: p.id, name: p.name }))}
-            products={product.isComposite ? productOptions : []}
-          />
+          {/* Brinde: acessórios são editados inline em ProductForm ("Composição"),
+              não aqui -- evita dois lugares diferentes mexendo na mesma
+              ProductAccessoryUsage. */}
+          {!product.isGift && (
+            <ComponentsSection
+              productId={product.id}
+              components={components}
+              accessories={accessories.map((a) => ({ id: a.id, name: a.name, colorName: a.colorName }))}
+              supplies={supplies.map((s) => ({ id: s.id, name: s.name, unit: s.unit, defaultUsage: s.defaultUsage?.toNumber() ?? null }))}
+              packagingItems={packagingItems.map((p) => ({ id: p.id, name: p.name }))}
+              products={product.isComposite ? productOptions : []}
+            />
+          )}
 
           {/* Melhoria "Parceiros de consignação" §5: mapa opcional de "quais
               acessórios (variação exata, já com cor) cada COMBINAÇÃO DE COR
@@ -340,7 +361,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
                           <thead>
                             <tr className="tk-table-head-row">
                               <th className="py-1">Acessório</th>
-                              <th>Quantidade</th>
+                              <th className="text-center">Quantidade</th>
                               <th></th>
                             </tr>
                           </thead>
@@ -348,7 +369,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
                             {usagesForCombo.map((usage) => (
                               <tr key={usage.id} className="tk-row">
                                 <td className="py-1">{accessoryOptionLabel(usage.accessory)}</td>
-                                <td>{usage.quantity.toNumber()}</td>
+                                <td className="text-center">{usage.quantity.toNumber()}</td>
                                 <td>
                                   <form action={async () => { 'use server'; await removeProductAccessoryColorUsage(usage.id) }}>
                                     <button className="tk-link-danger">Remover</button>
@@ -394,23 +415,28 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
           </div>
         </div>
 
-        <div>
-          <CostBreakdown breakdown={breakdown} flags={costFlags} marketplacePlatformPrices={marketplacePlatformPrices} />
-          <PriceSimulation
-            productId={product.id}
-            finalCost={breakdown.finalCost}
-            defaultMarkup={settings.defaultMarkup.toNumber()}
-            defaultMarginPercent={settings.desiredMarginPercent.toNumber()}
-            defaultDiscountPercent={settings.defaultDiscountPercent.toNumber()}
-            marketplaceFeePercent={settings.marketplaceFeePercent.toNumber()}
-            taxPercent={settings.taxPercent.toNumber()}
-            marketplaceFixedFee={settings.marketplaceFixedFee.toNumber()}
-            roundingMode={settings.roundingMode}
-            roundingCustomCents={settings.roundingCustomCents}
-            currentSuggestedPrice={product.suggestedPrice?.toNumber() ?? null}
-            currentMarketplacePrice={product.marketplacePrice?.toNumber() ?? null}
-          />
-        </div>
+        {/* Brinde: sem preço sugerido/taxa de plataforma (nunca vendido
+            sozinho) -- o "Custo total do brinde" ao vivo já aparece dentro
+            do próprio ProductForm, junto da Composição/Equipamento. */}
+        {!product.isGift && (
+          <div>
+            <CostBreakdown breakdown={breakdown} flags={costFlags} marketplacePlatformPrices={marketplacePlatformPrices} />
+            <PriceSimulation
+              productId={product.id}
+              finalCost={breakdown.finalCost}
+              defaultMarkup={settings.defaultMarkup.toNumber()}
+              defaultMarginPercent={settings.desiredMarginPercent.toNumber()}
+              defaultDiscountPercent={settings.defaultDiscountPercent.toNumber()}
+              marketplaceFeePercent={settings.marketplaceFeePercent.toNumber()}
+              taxPercent={settings.taxPercent.toNumber()}
+              marketplaceFixedFee={settings.marketplaceFixedFee.toNumber()}
+              roundingMode={settings.roundingMode}
+              roundingCustomCents={settings.roundingCustomCents}
+              currentSuggestedPrice={product.suggestedPrice?.toNumber() ?? null}
+              currentMarketplacePrice={product.marketplacePrice?.toNumber() ?? null}
+            />
+          </div>
+        )}
       </div>
     </div>
   )

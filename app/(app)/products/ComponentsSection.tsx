@@ -183,8 +183,8 @@ export function ComponentsSection({
             <tr className="tk-table-head-row">
               <th className="py-1">Tipo</th>
               <th>Componente</th>
-              <th>Quantidade</th>
-              <th>Custo</th>
+              <th className="text-center">Quantidade</th>
+              <th className="text-center">Custo</th>
               <th></th>
             </tr>
           </thead>
@@ -193,8 +193,8 @@ export function ComponentsSection({
               <tr key={`${row.type}-${row.id}`} className="tk-row">
                 <td className="py-1 text-slate-500 dark:text-slate-400">{TYPE_LABELS[row.type]}</td>
                 <td>{row.name}</td>
-                <td>{row.quantity}{row.unitSuffix}</td>
-                <td>{formatCurrency(row.cost)}</td>
+                <td className="text-center">{row.quantity}{row.unitSuffix}</td>
+                <td className="text-center">{formatCurrency(row.cost)}</td>
                 <td>
                   <button type="button" onClick={() => handleRemove(row)} className="tk-link-danger">Remover</button>
                 </td>

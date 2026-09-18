@@ -66,7 +66,7 @@ export default async function ConsignmentPartnerDetailPage({ params }: { params:
                 <th>Tipo</th>
                 <th>Produto</th>
                 <th>Cor</th>
-                <th>Qtd.</th>
+                <th className="text-center">Qtd.</th>
               </tr>
             </thead>
             <tbody>
@@ -76,7 +76,7 @@ export default async function ConsignmentPartnerDetailPage({ params }: { params:
                   <td>{HISTORY_TYPE_LABELS[event.type]}</td>
                   <td>{event.productName}</td>
                   <td className="text-slate-500 dark:text-slate-400">{event.colorLabel ?? '—'}</td>
-                  <td>{event.quantity}</td>
+                  <td className="text-center">{event.quantity}</td>
                 </tr>
               ))}
             </tbody>

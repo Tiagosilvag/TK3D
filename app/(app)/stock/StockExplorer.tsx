@@ -205,10 +205,10 @@ export function StockExplorer({ rows }: { rows: StockRow[] }) {
             <thead>
               <tr className="tk-table-head-row sticky top-0 z-10 bg-white dark:bg-slate-900">
                 <th className="py-2.5 pl-3">Produto</th>
-                <th>Disponível</th>
-                <th>Prontas p/ montar</th>
-                <th>Consignado</th>
-                <th>Vendido</th>
+                <th className="text-center">Disponível</th>
+                <th className="text-center">Prontas p/ montar</th>
+                <th className="text-center">Consignado</th>
+                <th className="text-center">Vendido</th>
                 <th className="pr-3">Ações</th>
               </tr>
             </thead>
@@ -233,8 +233,8 @@ export function StockExplorer({ rows }: { rows: StockRow[] }) {
                       </div>
                     </div>
                   </td>
-                  <td><Quantity value={r.available} emphasis lowStock={r.lowStock} /></td>
-                  <td>
+                  <td className="text-center"><Quantity value={r.available} emphasis lowStock={r.lowStock} /></td>
+                  <td className="text-center">
                     {r.readyToAssemble == null ? (
                       <span className="text-slate-400 dark:text-slate-500">-</span>
                     ) : r.readyToAssemble > 0 ? (
@@ -245,8 +245,8 @@ export function StockExplorer({ rows }: { rows: StockRow[] }) {
                       <Quantity value={r.readyToAssemble} />
                     )}
                   </td>
-                  <td><Quantity value={r.consignado} /></td>
-                  <td><Quantity value={r.soldDirect} /></td>
+                  <td className="text-center"><Quantity value={r.consignado} /></td>
+                  <td className="text-center"><Quantity value={r.soldDirect} /></td>
                   <td className="pr-3">
                     <div className="flex items-center gap-1">
                       {r.variants.length > 0 ? (

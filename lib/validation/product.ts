@@ -32,6 +32,44 @@ export const productPartFilamentSchema = z.object({
 
 export type ProductPartFilamentInput = z.infer<typeof productPartFilamentSchema>
 
+// Brinde (spec "Brinde reciclado no sistema"): peça/material de custo
+// livre (pode ser R$0,00 -- ex. "sobra de impressão já paga no produto
+// original"). `id` presente = editar essa linha existente; sem histórico
+// externo referenciando (diferente de ProductPart), então
+// actions/products.ts reconcilia por delete-then-recreate, não por diff.
+export const giftMaterialSchema = z.object({
+  id: z.string().optional(),
+  description: z.string().min(1, 'Descrição é obrigatória'),
+  unitCost: decimalNumber(z.number().nonnegative('Custo não pode ser negativo')),
+})
+
+export type GiftMaterialInput = z.infer<typeof giftMaterialSchema>
+
+// Equipamento rateado por unidade (ex.: soprador térmico, forma de
+// silicone) -- powerWatts/minutesPerUnit ficam em 0 (default) pra
+// equipamento sem consumo elétrico, sem quebrar o cálculo de energia.
+export const giftEquipmentSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().min(1, 'Nome do equipamento é obrigatório'),
+  purchasePrice: decimalNumber(z.number().positive('Valor de compra deve ser maior que zero')),
+  usefulLifeUses: z.coerce.number().int('Vida útil deve ser um número inteiro').positive('Vida útil deve ser maior que zero'),
+  powerWatts: decimalNumber(z.number().nonnegative('Potência não pode ser negativa')).optional().default(0),
+  minutesPerUnit: decimalNumber(z.number().nonnegative('Tempo não pode ser negativo')).optional().default(0),
+})
+
+export type GiftEquipmentInput = z.infer<typeof giftEquipmentSchema>
+
+// Acessório real usado na composição de um Brinde -- reaproveita
+// ProductAccessoryUsage (mesmo modelo/custo médio ponderado que produto
+// normal já usa), só a origem da linha (form do Brinde, não
+// ComponentsSection) é diferente.
+export const giftAccessorySchema = z.object({
+  accessoryId: z.string().min(1, 'Selecione um acessório'),
+  quantity: decimalNumber(z.number().positive('Quantidade deve ser maior que zero')),
+})
+
+export type GiftAccessoryInput = z.infer<typeof giftAccessorySchema>
+
 // 2.1 Produto composto (BOM): uma peça da lista de partes de um produto
 // composto. `id` presente = editar essa peça existente; ausente = peça
 // nova (actions/products.ts decide create vs update por isso).
@@ -81,8 +119,23 @@ export const productSchema = z
     usesGlue: checkboxBoolean,
     notes: z.string().optional().nullable(),
     parts: z.array(productPartSchema).optional(),
+    // Brinde: mutuamente exclusivo com isComposite (actions/products.ts
+    // sempre grava isComposite=false quando isGift=true). Sem exigir ao
+    // menos 1 material/equipamento/acessório -- composição pode começar
+    // vazia (custo 0) e ser completada depois, mesmo espírito permissivo
+    // do resto do formulário de produto.
+    isGift: checkboxBoolean,
+    giftEnergyCostPerKwh: decimalNumber(z.number().nonnegative('Tarifa não pode ser negativa')).optional(),
+    giftMaterials: z.array(giftMaterialSchema).optional(),
+    giftEquipment: z.array(giftEquipmentSchema).optional(),
+    giftAccessories: z.array(giftAccessorySchema).optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.isGift) {
+      // Nenhum campo de produto normal (impressora/filamento/peso/tempo)
+      // é exigido -- Brinde não passa pelo fluxo de Produção.
+      return
+    }
     if (data.isComposite) {
       if (!data.parts || data.parts.length === 0) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Adicione ao menos uma peça', path: ['parts'] })

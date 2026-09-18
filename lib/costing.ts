@@ -956,3 +956,61 @@ export function buildSaleCostSnapshot(
     ...(platformFee ? { platformFee } : {}),
   }
 }
+
+// Brinde (spec "Brinde reciclado no sistema"): trilha de custeio própria e
+// paralela à de produto normal acima -- não usa Impressora/Filamento/
+// ProductPart/ProductCostFlags (nenhum desses termos faz sentido pra um
+// item montado de sobra reciclada + acessório + equipamento rateado, não
+// "impresso" no sentido do fluxo de Produção). Equipamento (ex.: soprador
+// térmico, forma de silicone) deprecia por USO (purchasePrice ÷
+// usefulLifeUses), não por hora como Printer.depreciationHours -- aqui não
+// existe um "tempo de impressão" real pra ratear. Energia só entra quando
+// powerWatts > 0 (equipamento sem consumo elétrico, ex. forma de silicone,
+// fica com energy=0 sem quebrar o cálculo).
+export interface GiftEquipmentLineInput {
+  name: string
+  purchasePrice: number
+  usefulLifeUses: number
+  powerWatts: number
+  minutesPerUnit: number
+}
+
+export interface GiftEquipmentLineCost {
+  name: string
+  depreciation: number
+  energy: number
+  costPerUnit: number
+}
+
+export function calculateGiftEquipmentCostPerUnit(input: GiftEquipmentLineInput, energyCostPerKwh: number): GiftEquipmentLineCost {
+  const depreciation = input.usefulLifeUses > 0 ? input.purchasePrice / input.usefulLifeUses : 0
+  const energy = input.powerWatts > 0 ? (input.powerWatts / 1000) * (input.minutesPerUnit / 60) * energyCostPerKwh : 0
+  return { name: input.name, depreciation, energy, costPerUnit: depreciation + energy }
+}
+
+export interface GiftProductCostBreakdown {
+  materialsCost: number
+  accessoriesCost: number
+  equipmentCost: number
+  equipmentBreakdown: GiftEquipmentLineCost[]
+  finalCost: number
+}
+
+export function calculateGiftProductCost(
+  materials: { unitCost: number }[],
+  accessories: { quantity: number; avgUnitCost: number }[],
+  equipment: GiftEquipmentLineInput[],
+  energyCostPerKwh: number,
+): GiftProductCostBreakdown {
+  const materialsCost = materials.reduce((sum, m) => sum + m.unitCost, 0)
+  const accessoriesCost = accessories.reduce((sum, a) => sum + a.quantity * a.avgUnitCost, 0)
+  const equipmentBreakdown = equipment.map((e) => calculateGiftEquipmentCostPerUnit(e, energyCostPerKwh))
+  const equipmentCost = equipmentBreakdown.reduce((sum, e) => sum + e.costPerUnit, 0)
+  return {
+    materialsCost,
+    accessoriesCost,
+    equipmentCost,
+    equipmentBreakdown,
+    finalCost: materialsCost + accessoriesCost + equipmentCost,
+  }
+}

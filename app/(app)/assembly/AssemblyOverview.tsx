@@ -86,8 +86,8 @@ export function AssemblyOverview({ rows }: { rows: AssemblyOverviewRow[] }) {
             <thead>
               <tr className="tk-table-head-row">
                 <th className="py-2">Produto</th>
-                <th>Já montado</th>
-                <th>Disp. p/ montagem</th>
+                <th className="text-center">Já montado</th>
+                <th className="text-center">Disp. p/ montagem</th>
                 <th></th>
               </tr>
             </thead>
@@ -100,8 +100,8 @@ export function AssemblyOverview({ rows }: { rows: AssemblyOverviewRow[] }) {
                     </Link>
                     <span className="block text-xs text-slate-500 dark:text-slate-400">{r.partsCount} peça{r.partsCount === 1 ? '' : 's'}</span>
                   </td>
-                  <td>{r.alreadyAssembled}</td>
-                  <td>
+                  <td className="text-center">{r.alreadyAssembled}</td>
+                  <td className="text-center">
                     <Link
                       href={`/assembly?productId=${r.productId}`}
                       className={`font-medium hover:underline ${r.maxAssemblableUnits > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}

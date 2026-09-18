@@ -3,8 +3,8 @@ import { Fragment } from 'react'
 import { prisma } from '@/lib/prisma'
 import { formatCurrency, getSaleChannelBadge } from '@/lib/format'
 import { SaleForm } from './SaleForm'
-import { deleteSale, getSaleProfit } from '@/actions/sales'
-import { getProductCostBreakdown } from '@/actions/products'
+import { deleteSale, getSaleProfit, removeSaleGiftUsage } from '@/actions/sales'
+import { getProductCostBreakdown, getGiftProductOptions } from '@/actions/products'
 import { getProductVariantStockOptions } from '@/lib/reports'
 import type { PlatformFeeTier } from '@/lib/costing'
 import { VariantChip } from '@/components/VariantChip'
@@ -36,7 +36,7 @@ export default async function SalesPage({
     : undefined
   const range = resolveDateRange({ from, to })
 
-  const [sales, productOptions, editingSaleRecord, platformRows] = await Promise.all([
+  const [sales, productOptions, editingSaleRecord, platformRows, giftProducts] = await Promise.all([
     prisma.sale.findMany({
       where: { ...(activeChannel ? { channel: activeChannel } : {}), saleDate: { gte: range.gte, lte: range.lte } },
       orderBy: { saleDate: 'desc' },
@@ -52,7 +52,18 @@ export default async function SalesPage({
     // calcularem a taxa client-side sem round-trip a cada campo mudado --
     // mesmo dado que settings/page.tsx já usa, reaproveitando PlatformFeeTier.
     prisma.marketplacePlatform.findMany({ orderBy: { platform: 'asc' } }),
+    // Brinde: opções pro seletor "Qual brinde" do formulário.
+    getGiftProductOptions(),
   ])
+
+  // Brinde: anexo por LOTE (não por linha de Sale) -- busca depois de
+  // `sales` porque depende dos batchId já carregados (respeitando o mesmo
+  // filtro de canal/data da query acima, por tabela).
+  const batchIds = [...new Set(sales.map((s) => s.batchId))]
+  const giftUsages = batchIds.length > 0
+    ? await prisma.saleGiftUsage.findMany({ where: { batchId: { in: batchIds } }, include: { product: true } })
+    : []
+  const giftUsageByBatchId = new Map(giftUsages.map((g) => [g.batchId, g]))
 
   // Melhoria "Redesign Vendas": custo unitário de cada produto, pro bloco
   // "Custo de produção" da prévia ao vivo (3) -- reaproveita
@@ -108,10 +119,15 @@ export default async function SalesPage({
   // Melhoria "Redesign Vendas" §5/§6: cards de resumo + rodapé de totais,
   // ambos derivados de `profits`/`sales` já carregados (filtro de
   // canal/data já aplicado na query acima), sem nenhuma query nova.
+  // Brinde: soma do custo de todos os brindes anexados nos lotes visíveis
+  // (giftUsages já vem filtrado pelos mesmos batchIds de `sales`) --
+  // entra no custo total/desconta do lucro, nunca no valor vendido.
+  const totalGiftCost = giftUsages.reduce((sum, g) => sum + g.unitCost.toNumber() * g.quantity, 0)
+
   const totalSaleAmount = profits.reduce((sum, p) => sum + p.saleTotal, 0)
   const totalFees = profits.reduce((sum, p) => sum + p.platformFeeAmount, 0)
-  const totalCost = profits.reduce((sum, p) => sum + p.costTotal, 0)
-  const totalProfit = profits.reduce((sum, p) => sum + p.profit, 0)
+  const totalCost = profits.reduce((sum, p) => sum + p.costTotal, 0) + totalGiftCost
+  const totalProfit = profits.reduce((sum, p) => sum + p.profit, 0) - totalGiftCost
 
   // Melhoria "Vendas: múltiplos produtos numa venda": agrupa as linhas de
   // Sale por batchId (mesmo padrão Map-por-batchId de
@@ -121,10 +137,10 @@ export default async function SalesPage({
   // sub-linha de totais no final. `sales` já vem ordenado por saleDate
   // desc, e Map preserva a ordem de primeira inserção -- os lotes já saem
   // na ordem certa.
-  const batchesMap = new Map<string, { batchId: string; saleDate: Date; channel: SaleChannel; buyerOrPlatform: string | null; lines: { sale: (typeof sales)[number]; profit: (typeof profits)[number] }[] }>()
+  const batchesMap = new Map<string, { batchId: string; saleDate: Date; channel: SaleChannel; buyerOrPlatform: string | null; gift: (typeof giftUsages)[number] | null; lines: { sale: (typeof sales)[number]; profit: (typeof profits)[number] }[] }>()
   for (let i = 0; i < sales.length; i++) {
     const s = sales[i]
-    const batch = batchesMap.get(s.batchId) ?? { batchId: s.batchId, saleDate: s.saleDate, channel: s.channel, buyerOrPlatform: s.buyerOrPlatform, lines: [] }
+    const batch = batchesMap.get(s.batchId) ?? { batchId: s.batchId, saleDate: s.saleDate, channel: s.channel, buyerOrPlatform: s.buyerOrPlatform, gift: giftUsageByBatchId.get(s.batchId) ?? null, lines: [] }
     batch.lines.push({ sale: s, profit: profits[i] })
     batchesMap.set(s.batchId, batch)
   }
@@ -168,6 +184,7 @@ export default async function SalesPage({
           key={editingSale?.id ?? 'new'}
           products={productOptionsWithCost}
           platforms={platforms}
+          giftProducts={giftProducts}
           editingSale={editingSale}
           defaultProductId={productId}
         />
@@ -205,12 +222,12 @@ export default async function SalesPage({
             <th className="py-2">Data</th>
             <th>Plataforma</th>
             <th>Produto</th>
-            <th>Qtd.</th>
-            <th>Valor unit.</th>
+            <th className="text-center">Qtd.</th>
+            <th className="text-center">Valor unit.</th>
             <th>Comprador</th>
-            <th>Custo</th>
-            <th>Taxa</th>
-            <th>Lucro</th>
+            <th className="text-center">Custo</th>
+            <th className="text-center">Taxa</th>
+            <th className="text-center">Lucro</th>
             <th></th>
           </tr>
         </thead>
@@ -221,12 +238,16 @@ export default async function SalesPage({
             // totais só aparece pra venda com 2+ produtos -- venda de 1
             // produto só já mostra Custo/Taxa/Lucro na própria linha, sem
             // duplicar.
+            // Brinde: custo do brinde entra no subtotal do lote (nunca em
+            // cada linha individual -- não pertence a nenhum produto
+            // específico do lote).
+            const batchGiftCost = batch.gift ? batch.gift.unitCost.toNumber() * batch.gift.quantity : 0
             const batchTotals = isMulti
               ? batch.lines.reduce((acc, l) => ({
                   cost: acc.cost + l.profit.costTotal,
                   fee: acc.fee + l.profit.platformFeeAmount,
                   profit: acc.profit + l.profit.profit,
-                }), { cost: 0, fee: 0, profit: 0 })
+                }), { cost: batchGiftCost, fee: 0, profit: -batchGiftCost })
               : null
 
             return (
@@ -257,14 +278,43 @@ export default async function SalesPage({
                             {colorInfo.label}
                           </span>
                         )}
+                        {/* Brinde: tag na 1ª linha do lote (não é dono de
+                            nenhuma linha específica) + remoção pontual. */}
+                        {idx === 0 && batch.gift && (
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 rounded-full bg-pink-100 px-2 py-0.5 text-xs font-medium text-pink-700 dark:bg-pink-900/40 dark:text-pink-300">
+                              🎁 + {batch.gift.product.name}
+                            </span>
+                            <ConfirmDeleteForm
+                              action={async () => { 'use server'; return await removeSaleGiftUsage(batch.gift!.id) }}
+                              confirmMessage="Remover o brinde desta venda?"
+                            />
+                          </div>
+                        )}
                       </td>
-                      <td>{s.quantity}</td>
-                      <td>{formatCurrency(s.unitPrice.toNumber())}</td>
+                      <td className="text-center">{s.quantity}</td>
+                      <td className="text-center">{formatCurrency(s.unitPrice.toNumber())}</td>
                       {idx === 0 && (
                         <td className="text-slate-500 dark:text-slate-400" rowSpan={batch.lines.length}>{batch.buyerOrPlatform ?? '-'}</td>
                       )}
-                      <td>{formatCurrency(costTotal)}</td>
-                      <td>
+                      <td className="text-center">
+                        {/* Brinde: só o lote de 1 produto mostra o custo já
+                            combinado aqui (é a única linha que representa o
+                            lote inteiro) -- lote com 2+ produtos mostra o
+                            brinde na linha de subtotal abaixo, não aqui
+                            (evita contar 2x ou escolher uma linha "dona"). */}
+                        {!isMulti && batchGiftCost > 0 ? (
+                          <>
+                            {formatCurrency(costTotal + batchGiftCost)}
+                            <span className="block text-xs font-normal text-slate-400 dark:text-slate-500">
+                              produção {formatCurrency(costTotal)} + brinde {formatCurrency(batchGiftCost)}
+                            </span>
+                          </>
+                        ) : (
+                          formatCurrency(costTotal)
+                        )}
+                      </td>
+                      <td className="text-center">
                         {formatCurrency(platformFeeAmount)}
                         {platformFeeBreakdown && (
                           <span className="block text-xs font-normal text-slate-400 dark:text-slate-500">
@@ -272,38 +322,53 @@ export default async function SalesPage({
                           </span>
                         )}
                       </td>
-                      <td>
-                        <details>
-                          <summary
-                            className={`cursor-pointer list-none font-medium ${profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}
-                            title="Ver detalhamento do lucro"
-                          >
-                            {formatCurrency(profit)}
-                            {estimated && (
-                              <span title="Venda anterior a este recurso: custo estimado retroativamente, pode variar se preços mudarem" className="ml-1 text-slate-400 dark:text-slate-500">*</span>
-                            )}
-                          </summary>
-                          <dl className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
-                            <div className="flex justify-between gap-3">
-                              <dt>Valor da venda</dt>
-                              <dd>{formatCurrency(saleTotal)}</dd>
-                            </div>
-                            <div className="flex justify-between gap-3">
-                              <dt>Custo de produção</dt>
-                              <dd>− {formatCurrency(costTotal)}</dd>
-                            </div>
-                            {platformFeeAmount > 0 && (
-                              <div className="flex justify-between gap-3">
-                                <dt>Taxa da plataforma</dt>
-                                <dd>− {formatCurrency(platformFeeAmount)}</dd>
-                              </div>
-                            )}
-                            <div className="flex justify-between gap-3 font-medium text-slate-700 dark:text-slate-200">
-                              <dt>Lucro</dt>
-                              <dd>{formatCurrency(profit)}</dd>
-                            </div>
-                          </dl>
-                        </details>
+                      <td className="text-center">
+                        {(() => {
+                          // Brinde: só o lote de 1 produto desconta o custo
+                          // do brinde do lucro exibido AQUI -- mesmo
+                          // raciocínio da célula Custo acima.
+                          const rowGiftCost = !isMulti ? batchGiftCost : 0
+                          const displayProfit = profit - rowGiftCost
+                          return (
+                            <details>
+                              <summary
+                                className={`cursor-pointer list-none font-medium ${displayProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}
+                                title="Ver detalhamento do lucro"
+                              >
+                                {formatCurrency(displayProfit)}
+                                {estimated && (
+                                  <span title="Venda anterior a este recurso: custo estimado retroativamente, pode variar se preços mudarem" className="ml-1 text-slate-400 dark:text-slate-500">*</span>
+                                )}
+                              </summary>
+                              <dl className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                                <div className="flex justify-between gap-3">
+                                  <dt>Valor da venda</dt>
+                                  <dd>{formatCurrency(saleTotal)}</dd>
+                                </div>
+                                <div className="flex justify-between gap-3">
+                                  <dt>Custo de produção</dt>
+                                  <dd>− {formatCurrency(costTotal)}</dd>
+                                </div>
+                                {rowGiftCost > 0 && (
+                                  <div className="flex justify-between gap-3">
+                                    <dt>Brinde</dt>
+                                    <dd>− {formatCurrency(rowGiftCost)}</dd>
+                                  </div>
+                                )}
+                                {platformFeeAmount > 0 && (
+                                  <div className="flex justify-between gap-3">
+                                    <dt>Taxa da plataforma</dt>
+                                    <dd>− {formatCurrency(platformFeeAmount)}</dd>
+                                  </div>
+                                )}
+                                <div className="flex justify-between gap-3 font-medium text-slate-700 dark:text-slate-200">
+                                  <dt>Lucro</dt>
+                                  <dd>{formatCurrency(displayProfit)}</dd>
+                                </div>
+                              </dl>
+                            </details>
+                          )
+                        })()}
                       </td>
                       <td>
                         <ActionsMenu>
@@ -319,9 +384,14 @@ export default async function SalesPage({
                 {isMulti && batchTotals && (
                   <tr className="bg-slate-50 text-xs font-medium text-slate-600 dark:bg-slate-800/40 dark:text-slate-300">
                     <td colSpan={6} className="py-1.5 pl-2">Total desta venda ({batch.lines.length} produtos)</td>
-                    <td className="py-1.5">{formatCurrency(batchTotals.cost)}</td>
-                    <td className="py-1.5">{formatCurrency(batchTotals.fee)}</td>
-                    <td className={`py-1.5 ${batchTotals.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatCurrency(batchTotals.profit)}</td>
+                    <td className="py-1.5 text-center">
+                      {formatCurrency(batchTotals.cost)}
+                      {batchGiftCost > 0 && (
+                        <span className="block font-normal text-slate-400 dark:text-slate-500">inclui brinde {formatCurrency(batchGiftCost)}</span>
+                      )}
+                    </td>
+                    <td className="py-1.5 text-center">{formatCurrency(batchTotals.fee)}</td>
+                    <td className={`py-1.5 text-center ${batchTotals.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatCurrency(batchTotals.profit)}</td>
                     <td></td>
                   </tr>
                 )}
@@ -335,9 +405,9 @@ export default async function SalesPage({
           <tfoot>
             <tr className="border-t border-slate-200 font-medium text-slate-700 dark:border-slate-700 dark:text-slate-200">
               <td className="py-2" colSpan={6}>Total ({batches.length} {batches.length === 1 ? 'venda' : 'vendas'})</td>
-              <td>{formatCurrency(totalCost)}</td>
-              <td>{formatCurrency(totalFees)}</td>
-              <td className={totalProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{formatCurrency(totalProfit)}</td>
+              <td className="text-center">{formatCurrency(totalCost)}</td>
+              <td className="text-center">{formatCurrency(totalFees)}</td>
+              <td className={`text-center ${totalProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatCurrency(totalProfit)}</td>
               <td></td>
             </tr>
           </tfoot>

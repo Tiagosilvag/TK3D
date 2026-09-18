@@ -982,7 +982,8 @@ export interface ProductionByProductRow {
 }
 
 export async function getProductionByProduct(): Promise<ProductionByProductRow[]> {
-  const products = await prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } })
+  // Brinde nunca passa pelo fluxo de Produção -- excluído deste relatório.
+  const products = await prisma.product.findMany({ where: { active: true, isGift: false }, orderBy: { name: 'asc' } })
 
   const rows: ProductionByProductRow[] = []
   for (const product of products) {

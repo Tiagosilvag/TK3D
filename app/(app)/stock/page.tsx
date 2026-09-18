@@ -50,8 +50,11 @@ export default async function StockPage() {
   const [rows, settings, products, adjustments] = await Promise.all([
     getOwnStockSummary(),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
+    // Brinde não é estocado (excluído de getOwnStockSummary também) --
+    // exclusão aqui é só defensiva/consistente, já que `rows` (de
+    // getOwnStockSummary) nunca inclui um Brinde pra cruzar com esta lista.
     prisma.product.findMany({
-      where: { active: true },
+      where: { active: true, isGift: false },
       select: { id: true, category: true, isComposite: true, photos: { where: { isCover: true }, select: { id: true }, take: 1 } },
     }),
     prisma.stockAdjustment.findMany({ where: { resourceType: 'PRODUCT' }, orderBy: { createdAt: 'desc' } }),

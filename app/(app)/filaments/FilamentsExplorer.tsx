@@ -69,12 +69,12 @@ function chipClass(active: boolean): string {
   }`
 }
 
-function SortHeader({ label, active, dir, onClick }: { label: string; active: boolean; dir: 'asc' | 'desc'; onClick: () => void }) {
+function SortHeader({ label, active, dir, onClick, center }: { label: string; active: boolean; dir: 'asc' | 'desc'; onClick: () => void; center?: boolean }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center gap-1 ${active ? 'text-slate-900 dark:text-slate-100' : ''}`}
+      className={`flex w-full items-center gap-1 ${center ? 'justify-center' : ''} ${active ? 'text-slate-900 dark:text-slate-100' : ''}`}
     >
       {label}
       {active && <span aria-hidden>{dir === 'asc' ? '▲' : '▼'}</span>}
@@ -207,8 +207,8 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
             <th className="py-3"></th>
             <th><SortHeader label="Marca" active={sortKey === 'manufacturer'} dir={sortDir} onClick={() => toggleSort('manufacturer')} /></th>
             <th>Material</th>
-            <th><SortHeader label="Estoque" active={sortKey === 'percentRemaining'} dir={sortDir} onClick={() => toggleSort('percentRemaining')} /></th>
-            <th><SortHeader label="R$/g" active={sortKey === 'pricePerGram'} dir={sortDir} onClick={() => toggleSort('pricePerGram')} /></th>
+            <th className="text-center"><SortHeader label="Estoque" active={sortKey === 'percentRemaining'} dir={sortDir} onClick={() => toggleSort('percentRemaining')} center /></th>
+            <th className="text-center"><SortHeader label="R$/g" active={sortKey === 'pricePerGram'} dir={sortDir} onClick={() => toggleSort('pricePerGram')} center /></th>
             <th>Status</th>
             <th></th>
           </tr>
@@ -230,7 +230,7 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
                 </td>
                 <td className="text-slate-500 dark:text-slate-400">{r.material}</td>
                 <td title={`${r.currentStockGrams}g restantes`}>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-center gap-2">
                     <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
                       <div
                         className={`h-full rounded-full ${barColorClass(r.percentRemaining)}`}
@@ -240,7 +240,7 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
                     <span className="tabular-nums text-slate-900 dark:text-slate-100">{r.percentRemaining.toFixed(0)}%</span>
                   </div>
                 </td>
-                <td className="text-slate-500 dark:text-slate-400">
+                <td className="text-center text-slate-500 dark:text-slate-400">
                   {priceMissing ? (
                     <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
                       ⚠️ Preço não informado

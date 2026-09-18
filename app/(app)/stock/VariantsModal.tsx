@@ -161,10 +161,10 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
                   {product.isComposite
                     ? pieceColumns.map((name) => <th key={name} className="py-2">{name}</th>)
                     : <th className="py-2">Cor</th>}
-                  <th className="py-2 text-right text-emerald-600 dark:text-emerald-400">Disponível</th>
-                  <th className={`py-2 text-right text-blue-600 dark:text-blue-400 ${NUMERIC_DIVIDER}`}>Prontas p/ montar</th>
-                  <th className={`py-2 text-right text-violet-600 dark:text-violet-400 ${NUMERIC_DIVIDER}`}>Consignado</th>
-                  <th className={`py-2 text-right text-slate-500 dark:text-slate-400 ${NUMERIC_DIVIDER}`}>Vendido</th>
+                  <th className="py-2 text-center text-emerald-600 dark:text-emerald-400">Disponível</th>
+                  <th className={`py-2 text-center text-blue-600 dark:text-blue-400 ${NUMERIC_DIVIDER}`}>Prontas p/ montar</th>
+                  <th className={`py-2 text-center text-violet-600 dark:text-violet-400 ${NUMERIC_DIVIDER}`}>Consignado</th>
+                  <th className={`py-2 text-center text-slate-500 dark:text-slate-400 ${NUMERIC_DIVIDER}`}>Vendido</th>
                   <th className="py-2"></th>
                 </tr>
               </thead>
@@ -187,10 +187,10 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
                           <ColorCell variant={v} />
                         </td>
                       )}
-                      <td className={`text-right tabular-nums ${availableClass(v)}`}>{v.available}</td>
-                      <td className={`text-right tabular-nums ${NUMERIC_DIVIDER} ${zeroableClass(v.readyToAssemble, 'text-blue-600 dark:text-blue-400')}`}>{v.readyToAssemble ?? '—'}</td>
-                      <td className={`text-right tabular-nums ${NUMERIC_DIVIDER} ${zeroableClass(v.consignado, 'text-violet-600 dark:text-violet-400')}`}>{v.consignado}</td>
-                      <td className={`text-right tabular-nums ${NUMERIC_DIVIDER} ${zeroableClass(v.sold, 'text-slate-500 dark:text-slate-400')}`}>{v.sold}</td>
+                      <td className={`text-center tabular-nums ${availableClass(v)}`}>{v.available}</td>
+                      <td className={`text-center tabular-nums ${NUMERIC_DIVIDER} ${zeroableClass(v.readyToAssemble, 'text-blue-600 dark:text-blue-400')}`}>{v.readyToAssemble ?? '—'}</td>
+                      <td className={`text-center tabular-nums ${NUMERIC_DIVIDER} ${zeroableClass(v.consignado, 'text-violet-600 dark:text-violet-400')}`}>{v.consignado}</td>
+                      <td className={`text-center tabular-nums ${NUMERIC_DIVIDER} ${zeroableClass(v.sold, 'text-slate-500 dark:text-slate-400')}`}>{v.sold}</td>
                       <td className="text-right">
                         <button
                           type="button"

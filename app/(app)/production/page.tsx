@@ -53,7 +53,8 @@ export default async function ProductionPage({
     // "Custo total", "Falhas no período") refletem TODO o período filtrado,
     // não só a página atual -- select leve, sem includes pesados.
     prisma.productionRun.findMany({ where: runsWhere, select: { quantityFailed: true, costSnapshot: true } }),
-    prisma.product.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+    // Brinde não passa pelo fluxo de Produção -- excluído do seletor.
+    prisma.product.findMany({ where: { active: true, isGift: false }, orderBy: { name: 'asc' } }),
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { manufacturer: 'asc' } }),
     editId
