@@ -764,6 +764,12 @@ model MarketplacePlatform {
   // crescente, { maxPrice: number | null; feePercent: number; feeFixed:
   // number }[], maxPrice null só na última faixa (sem teto).
   feeTiers   Json?
+  // Melhoria "Mercado Livre: taxa por faixa de preço": nota livre pra
+  // lembrar a qual categoria a comissão configurada acima se refere (o
+  // vendedor confere isso na Central do Vendedor do próprio Mercado Livre,
+  // já que a comissão varia por categoria) -- puramente informativo, nunca
+  // usado em cálculo. Opcional/nulo em qualquer plataforma que não use.
+  categoryReference String?
   updatedAt  DateTime                @updatedAt
 }
 

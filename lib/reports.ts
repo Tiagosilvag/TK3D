@@ -575,6 +575,11 @@ export interface ProductVariantStockOption {
   label: string
   colorHex: string | null
   available: number
+  // Melhoria "Vendas: chips por peça/cor" -- mesmo dado estruturado que
+  // getProductVariantBreakdown já produz (já usado por VariantsModal.tsx
+  // em /stock), repassado aqui pra SaleForm.tsx/sales/page.tsx poderem
+  // renderizar chips em vez de um texto corrido único.
+  attrs: VariantAttr[]
 }
 
 export interface ProductVariantStockInfo {
@@ -640,6 +645,7 @@ export async function getProductVariantStockOptions(): Promise<ProductVariantSto
         label: v.label,
         colorHex: v.colorHex,
         available: Math.max(0, v.quantity - (deliveredByProductAndKey.get(`${p.id}::${v.key}`) ?? 0) - (soldByProductAndKey.get(`${p.id}::${v.key}`) ?? 0)),
+        attrs: v.attrs,
       })),
     }
   }))

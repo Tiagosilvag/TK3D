@@ -1198,6 +1198,51 @@ describe('calculateTieredPlatformPrice', () => {
   })
 })
 
+// Melhoria "Mercado Livre: taxa por faixa de preço": a comissão é ÚNICA
+// (não muda por faixa, diferente da Shopee) -- só a 1ª faixa soma +50%
+// (o componente "50% do valor" que o ML cobra só até R$12,50), e a última
+// é sempre isenta (feeFixed 0). Isso já é totalmente expressável no MESMO
+// formato PlatformFeeTier[] da Shopee (a 1ª faixa só tem uma feePercent
+// maior) -- nenhuma função nova precisa existir, só confirma que
+// resolveTieredPlatformFee/calculateTieredPlatformPrice tratam esse
+// formato corretamente (SettingsForm.tsx monta esse array a partir da
+// comissão configurada, ver plano).
+const mlTiers = [
+  { maxPrice: 12.50, feePercent: 0.12 + 0.50, feeFixed: 0 },
+  { maxPrice: 29.99, feePercent: 0.12, feeFixed: 6.25 },
+  { maxPrice: 49.99, feePercent: 0.12, feeFixed: 6.5 },
+  { maxPrice: 78.99, feePercent: 0.12, feeFixed: 6.75 },
+  { maxPrice: null, feePercent: 0.12, feeFixed: 0 },
+]
+
+describe('resolveTieredPlatformFee (faixas no formato Mercado Livre)', () => {
+  it('1ª faixa (até R$12,50) usa a comissão + 50% embutido, sem taxa fixa', () => {
+    expect(resolveTieredPlatformFee(mlTiers, 10)).toEqual({ feePercent: 0.62, feeFixed: 0 })
+  })
+
+  it('faixas 2-4 usam a comissão pura + taxa fixa própria de cada uma', () => {
+    expect(resolveTieredPlatformFee(mlTiers, 20)).toEqual({ feePercent: 0.12, feeFixed: 6.25 })
+    expect(resolveTieredPlatformFee(mlTiers, 40)).toEqual({ feePercent: 0.12, feeFixed: 6.5 })
+    expect(resolveTieredPlatformFee(mlTiers, 60)).toEqual({ feePercent: 0.12, feeFixed: 6.75 })
+  })
+
+  it('acima de R$79 (última faixa) é isento de taxa fixa, só a comissão', () => {
+    expect(resolveTieredPlatformFee(mlTiers, 100)).toEqual({ feePercent: 0.12, feeFixed: 0 })
+  })
+})
+
+describe('calculateTieredPlatformPrice (faixas no formato Mercado Livre)', () => {
+  it('converge pra 1ª faixa (comissão+50%) pra um preço sugerido baixo', () => {
+    const price = calculateTieredPlatformPrice(3, 0, mlTiers)
+    expect(resolveTieredPlatformFee(mlTiers, price)).toEqual({ feePercent: 0.62, feeFixed: 0 })
+  })
+
+  it('converge pra última faixa (isenta) pra um preço sugerido alto', () => {
+    const price = calculateTieredPlatformPrice(200, 0, mlTiers)
+    expect(resolveTieredPlatformFee(mlTiers, price)).toEqual({ feePercent: 0.12, feeFixed: 0 })
+  })
+})
+
 // Melhoria "Mostrar taxa da plataforma": helper único reaproveitado por
 // getPlatformSalePrice e pela tela de Produtos (listagem e detalhe) --
 // bug corrigido: essas duas telas usavam calculatePlatformPrice direto com

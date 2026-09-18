@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient, Prisma } from '@prisma/client'
 import { updateMarketplacePlatformFees, getPlatformSalePrice, resolveSalePlatformFee } from '@/actions/marketplacePlatforms'
 import { getProductCostBreakdown } from '@/actions/products'
 import { calculatePlatformPrice, calculateTieredPlatformPrice, type PlatformFeeTier } from '@/lib/costing'
@@ -22,6 +22,13 @@ async function cleanup() {
     update: { laborCostPerHour: 10, defaultMarkup: 2, energyCostPerKwh: 1, failureRatePercent: 0.1, taxPercent: 0.055 },
     create: { id: 1 },
   })
+  // MarketplacePlatform.feeTiers/categoryReference são estado que persiste
+  // entre testes (linhas fixas, nunca recriadas) -- sem resetar aqui, um
+  // teste que grava feeTiers (ex.: o de faixas do Mercado Livre) vazaria
+  // pro próximo teste que espera comportamento "sem faixas" (taxa única).
+  // feePercent/feeFixed/avgFreight continuam sem reset porque todo teste
+  // já os define explicitamente antes de usar.
+  await prisma.marketplacePlatform.updateMany({ data: { feeTiers: Prisma.JsonNull, categoryReference: null } })
 }
 
 beforeAll(async () => {
@@ -47,6 +54,17 @@ const shopeeTiers: PlatformFeeTier[] = [
   { maxPrice: 199.99, feePercent: 0.14, feeFixed: 20 },
   { maxPrice: 499.99, feePercent: 0.14, feeFixed: 26 },
   { maxPrice: null, feePercent: 0.14, feeFixed: 26 },
+]
+
+// Melhoria "Mercado Livre: taxa por faixa de preço" -- comissão única
+// (12%) + 50% embutido só na 1ª faixa, isenção na última, mesmo formato
+// PlatformFeeTier[] que a Shopee já usa (ver SettingsForm.tsx).
+const mlTiers: PlatformFeeTier[] = [
+  { maxPrice: 12.50, feePercent: 0.62, feeFixed: 0 },
+  { maxPrice: 29.99, feePercent: 0.12, feeFixed: 6.25 },
+  { maxPrice: 49.99, feePercent: 0.12, feeFixed: 6.5 },
+  { maxPrice: 78.99, feePercent: 0.12, feeFixed: 6.75 },
+  { maxPrice: null, feePercent: 0.12, feeFixed: 0 },
 ]
 
 async function createCheapProduct() {
@@ -141,6 +159,21 @@ describe('marketplacePlatforms actions', () => {
     expect(platform.feeTiers).toBeNull()
   })
 
+  it('updateMarketplacePlatformFees(MERCADO_LIVRE) grava feeTiers (formato de comissão única + faixa isenta) e categoryReference', async () => {
+    const result = await updateMarketplacePlatformFees('MERCADO_LIVRE', fd({
+      feePercent: String(mlTiers[0].feePercent),
+      feeFixed: String(mlTiers[0].feeFixed),
+      avgFreight: '20',
+      feeTiersJson: JSON.stringify(mlTiers),
+      categoryReference: 'Casa, Móveis e Decoração',
+    }))
+    expect(result.success).toBe(true)
+
+    const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'MERCADO_LIVRE' } })
+    expect(platform.feeTiers).toEqual(mlTiers)
+    expect(platform.categoryReference).toBe('Casa, Móveis e Decoração')
+  })
+
   it('getPlatformSalePrice(SHOPEE) usa a faixa certa pra um produto barato (suggestedPrice cai na 1ª faixa)', async () => {
     await updateMarketplacePlatformFees('SHOPEE', fd({
       feePercent: '0.20',
@@ -232,6 +265,21 @@ describe('marketplacePlatforms actions', () => {
 
       const result = await resolveSalePlatformFee('MERCADO_LIVRE', 100)
       expect(result).toEqual({ feePercent: 0.16, feeFixed: 6, feeAmountPerUnit: 100 * 0.16 + 6 })
+    })
+
+    it('MERCADO_LIVRE com feeTiers resolve a faixa certa pro unitPrice real (1ª faixa com +50% embutido, última isenta)', async () => {
+      await updateMarketplacePlatformFees('MERCADO_LIVRE', fd({
+        feePercent: String(mlTiers[0].feePercent),
+        feeFixed: String(mlTiers[0].feeFixed),
+        avgFreight: '20',
+        feeTiersJson: JSON.stringify(mlTiers),
+      }))
+
+      const naFaixaEspecial = await resolveSalePlatformFee('MERCADO_LIVRE', 10)
+      expect(naFaixaEspecial).toEqual({ feePercent: 0.62, feeFixed: 0, feeAmountPerUnit: 10 * 0.62 })
+
+      const isento = await resolveSalePlatformFee('MERCADO_LIVRE', 200)
+      expect(isento).toEqual({ feePercent: 0.12, feeFixed: 0, feeAmountPerUnit: 200 * 0.12 })
     })
   })
 })

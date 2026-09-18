@@ -28,6 +28,10 @@ const feesSchema = z.object({
   feeFixed: z.coerce.number({ invalid_type_error: 'Valor inválido' }).min(0, 'Valor não pode ser negativo'),
   avgFreight: z.coerce.number({ invalid_type_error: 'Valor inválido' }).min(0, 'Valor não pode ser negativo'),
   feeTiersJson: z.string().optional(),
+  // Melhoria "Mercado Livre: taxa por faixa de preço": nota livre da
+  // categoria a que a comissão se refere -- só o Mercado Livre envia,
+  // puramente informativo (ver comentário no schema).
+  categoryReference: z.string().optional(),
 })
 
 export async function updateMarketplacePlatformFees(platform: MarketplacePlatformKind, formData: FormData): Promise<ActionResult> {

@@ -167,6 +167,11 @@ export interface SaleProfit {
   // canal legado MARKETPLACE, ou venda anterior a este ajuste (sem dado
   // histórico pra reconstruir).
   platformFeeAmount: number
+  // Melhoria "Redesign Vendas" -- %/fixo que gerou platformFeeAmount (lido
+  // do mesmo snapshot congelado), pra UI mostrar a legenda "14% + R$4,00"
+  // na coluna Taxa sem recalcular nada. null quando platformFeeAmount é 0
+  // (Direta/legado/sem taxa).
+  platformFeeBreakdown: { feePercent: number; feeFixed: number } | null
 }
 
 // Reads sale.costSnapshot.total (frozen at creation time, spec §4's
@@ -185,10 +190,11 @@ export async function getSaleProfit(saleId: string): Promise<SaleProfit> {
 
   if (snapshot) {
     const platformFeeAmount = snapshot.platformFee?.amountTotal ?? 0
-    return { profit: saleTotal - snapshot.total - platformFeeAmount, saleTotal, costTotal: snapshot.total, estimated: false, platformFeeAmount }
+    const platformFeeBreakdown = snapshot.platformFee ? { feePercent: snapshot.platformFee.feePercent, feeFixed: snapshot.platformFee.feeFixed } : null
+    return { profit: saleTotal - snapshot.total - platformFeeAmount, saleTotal, costTotal: snapshot.total, estimated: false, platformFeeAmount, platformFeeBreakdown }
   }
 
   const breakdown = await getProductCostBreakdown(sale.productId)
   const costTotal = sale.quantity * breakdown.finalCost
-  return { profit: saleTotal - costTotal, saleTotal, costTotal, estimated: true, platformFeeAmount: 0 }
+  return { profit: saleTotal - costTotal, saleTotal, costTotal, estimated: true, platformFeeAmount: 0, platformFeeBreakdown: null }
 }

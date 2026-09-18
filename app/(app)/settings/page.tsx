@@ -54,6 +54,7 @@ export default async function SettingsPage() {
           feeFixed: p.feeFixed.toNumber(),
           avgFreight: p.avgFreight.toNumber(),
           feeTiers: p.feeTiers as unknown as PlatformFeeTier[] | null,
+          categoryReference: p.categoryReference,
         }))}
       />
     </div>
