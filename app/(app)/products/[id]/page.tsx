@@ -5,8 +5,9 @@ import { getProductionStatusBadge } from '@/lib/format'
 import { StatusBadge } from '@/components/StatusBadge'
 import {
   calculatePrinterDepreciationCostPerHour,
-  calculatePlatformPrice,
+  resolvePlatformPrice,
   type ProductCostFlags,
+  type PlatformFeeTier,
 } from '@/lib/costing'
 import { ProductForm } from '../ProductForm'
 import { CostBreakdown, type MarketplacePlatformPrice } from '../CostBreakdown'
@@ -24,6 +25,16 @@ import {
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { getProductVariantBreakdown } from '@/lib/reports'
 import { productNeedsAssembly } from '@/lib/products'
+
+// Bug "impressora da peça volta pro valor antigo depois de salvar": esta
+// página não tinha `dynamic = 'force-dynamic'` (diferente de toda outra
+// página de catálogo/edição do app) -- sem ele, o Next.js podia servir o
+// RSC payload cacheado (Full Route Cache) mesmo depois do
+// `router.refresh()` do ProductForm, fazendo o formulário reidratar com o
+// `existingParts` de ANTES da edição (a gravação em si sempre esteve
+// correta no banco). Forçar renderização dinâmica garante que cada
+// `router.refresh()` busque o estado real, recém-salvo.
+export const dynamic = 'force-dynamic'
 
 const PLATFORM_LABELS: Record<string, string> = { MERCADO_LIVRE: 'Mercado Livre', SHOPEE: 'Shopee' }
 
@@ -179,13 +190,23 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
   }
 
   // Melhoria "Produtos" §3: "Preço marketplace" genérico vira 1 valor por
-  // plataforma cadastrada (Mercado Livre, Shopee) -- mesma fórmula de
-  // getPlatformSalePrice (actions/marketplacePlatforms.ts), calculada aqui
-  // direto porque já temos o breakdown carregado.
-  const marketplacePlatformPrices: MarketplacePlatformPrice[] = platforms.map((platform) => ({
-    label: PLATFORM_LABELS[platform.platform] ?? platform.platform,
-    price: calculatePlatformPrice(breakdown.suggestedPrice, settings.taxPercent.toNumber(), platform.feePercent.toNumber(), platform.feeFixed.toNumber()),
-  }))
+  // plataforma cadastrada (Mercado Livre, Shopee) -- mesmo helper de
+  // getPlatformSalePrice (actions/marketplacePlatforms.ts), calculado aqui
+  // direto porque já temos o breakdown carregado. Bug "preço Shopee sempre
+  // usava a 1ª faixa": chamava calculatePlatformPrice direto com
+  // feePercent/feeFixed achatados -- resolvePlatformPrice resolve a faixa
+  // certa quando platform.feeTiers existir (Shopee), mesmo helper
+  // reaproveitado na listagem de Produtos.
+  const marketplacePlatformPrices: MarketplacePlatformPrice[] = platforms.map((platform) => {
+    const resolved = resolvePlatformPrice(
+      breakdown.suggestedPrice,
+      settings.taxPercent.toNumber(),
+      platform.feePercent.toNumber(),
+      platform.feeFixed.toNumber(),
+      platform.feeTiers as unknown as PlatformFeeTier[] | null,
+    )
+    return { label: PLATFORM_LABELS[platform.platform] ?? platform.platform, ...resolved }
+  })
 
   return (
     <div className="tk-page">

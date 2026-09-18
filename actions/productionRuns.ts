@@ -1131,7 +1131,12 @@ export async function getPlateDetail(id: string): Promise<PlateDetail | null> {
       id: run.id,
       productName: run.product.name,
       partName: run.productPart?.name ?? null,
-      filamentName: `${run.filament.manufacturer} ${run.filament.colorName} — Rolo #${String(run.filament.rollNumber).padStart(3, '0')}`,
+      // Melhoria "nome do filamento na Produção": marca + "Rolo #" deixava a
+      // linha grande demais pra identificar rápido qual filamento é -- só
+      // tipo (material) + cor, que é o que importa pra reconhecer de
+      // relance na tabela (a listagem de Filamentos continua mostrando
+      // marca/rolo, onde faz sentido escolher entre rolos específicos).
+      filamentName: `${run.filament.material} ${run.filament.colorName}`,
       quantityPlanned: run.quantityPlanned,
       quantitySuccess: run.quantitySuccess,
       quantityFailed: run.quantityFailed,

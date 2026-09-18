@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { saleSchema } from '@/lib/validation/sale'
 import { getProductCostBreakdown } from './products'
 import { buildSaleCostSnapshot, type SaleCostSnapshot } from '@/lib/costing'
+import { resolveSalePlatformFee } from './marketplacePlatforms'
 import { revalidatePath } from 'next/cache'
 import type { Prisma } from '@prisma/client'
 
@@ -73,7 +74,12 @@ export async function createSale(formData: FormData): Promise<ActionResult> {
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
   const breakdown = await getProductCostBreakdown(parsed.data.productId)
-  const snapshot = buildSaleCostSnapshot(breakdown, parsed.data.quantity)
+  const platformFee = await resolveSalePlatformFee(parsed.data.channel, parsed.data.unitPrice)
+  const snapshot = buildSaleCostSnapshot(
+    breakdown,
+    parsed.data.quantity,
+    platformFee ? { feePercent: platformFee.feePercent, feeFixed: platformFee.feeFixed, amountTotal: platformFee.feeAmountPerUnit * parsed.data.quantity } : undefined,
+  )
 
   await prisma.$transaction(async (tx) => {
     const sale = await tx.sale.create({
@@ -102,7 +108,12 @@ export async function updateSale(id: string, formData: FormData): Promise<Action
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
   const breakdown = await getProductCostBreakdown(parsed.data.productId)
-  const snapshot = buildSaleCostSnapshot(breakdown, parsed.data.quantity)
+  const platformFee = await resolveSalePlatformFee(parsed.data.channel, parsed.data.unitPrice)
+  const snapshot = buildSaleCostSnapshot(
+    breakdown,
+    parsed.data.quantity,
+    platformFee ? { feePercent: platformFee.feePercent, feeFixed: platformFee.feeFixed, amountTotal: platformFee.feeAmountPerUnit * parsed.data.quantity } : undefined,
+  )
 
   await prisma.$transaction(async (tx) => {
     await restorePackagingForSale(tx, id)
@@ -150,6 +161,12 @@ export interface SaleProfit {
   // UI surfaces this so it isn't silently indistinguishable from a frozen,
   // guaranteed-stable profit.
   estimated: boolean
+  // Melhoria "Mostrar taxa da plataforma": taxa Shopee/Mercado Livre já
+  // descontada de `profit` (lida do snapshot congelado -- ver
+  // SaleCostSnapshot.platformFee em lib/costing.ts). 0 pra venda Direta,
+  // canal legado MARKETPLACE, ou venda anterior a este ajuste (sem dado
+  // histórico pra reconstruir).
+  platformFeeAmount: number
 }
 
 // Reads sale.costSnapshot.total (frozen at creation time, spec §4's
@@ -167,10 +184,11 @@ export async function getSaleProfit(saleId: string): Promise<SaleProfit> {
   const saleTotal = sale.quantity * sale.unitPrice.toNumber()
 
   if (snapshot) {
-    return { profit: saleTotal - snapshot.total, saleTotal, costTotal: snapshot.total, estimated: false }
+    const platformFeeAmount = snapshot.platformFee?.amountTotal ?? 0
+    return { profit: saleTotal - snapshot.total - platformFeeAmount, saleTotal, costTotal: snapshot.total, estimated: false, platformFeeAmount }
   }
 
   const breakdown = await getProductCostBreakdown(sale.productId)
   const costTotal = sale.quantity * breakdown.finalCost
-  return { profit: saleTotal - costTotal, saleTotal, costTotal, estimated: true }
+  return { profit: saleTotal - costTotal, saleTotal, costTotal, estimated: true, platformFeeAmount: 0 }
 }

@@ -1,10 +1,10 @@
 'use server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { calculatePlatformPrice, calculateTieredPlatformPrice, type PlatformFeeTier } from '@/lib/costing'
+import { resolvePlatformPrice, resolveTieredPlatformFee, type PlatformFeeTier, type PlatformPriceBreakdown } from '@/lib/costing'
 import { getProductCostBreakdown } from './products'
 import { revalidatePath } from 'next/cache'
-import { Prisma, type MarketplacePlatformKind } from '@prisma/client'
+import { Prisma, type MarketplacePlatformKind, type SaleChannel } from '@prisma/client'
 
 type ActionResult = { success: boolean; error?: string }
 
@@ -69,23 +69,47 @@ export async function updateMarketplacePlatformFees(platform: MarketplacePlatfor
 // usando a taxa específica DAQUELA plataforma (em vez do par genérico
 // Settings.marketplaceFeePercent/marketplaceFixedFee que o prefill de
 // "Marketplace" genérico usava antes). Melhoria "Shopee: taxa por faixa de
-// preço": platformConfig.feeTiers presente (Shopee) usa a taxa da faixa
-// certa pro preço resultante; ausente (Mercado Livre) continua com a taxa
-// única de sempre -- calculatePlatformPrice, sem mudança nenhuma.
-export async function getPlatformSalePrice(productId: string, platform: MarketplacePlatformKind): Promise<number> {
+// preço": resolvePlatformPrice (lib/costing.ts) decide sozinho entre
+// faixas (feeTiers presente, ex.: Shopee) ou taxa única (ausente, ex.:
+// Mercado Livre) -- mesmo helper usado pela tela de Produtos, pra nunca
+// divergir de novo. Retorna o breakdown completo (não só o preço) --
+// melhoria "Mostrar taxa da plataforma": SaleForm.tsx usa feePercent/
+// feeFixed/feeAmount pra mostrar a taxa aplicada, não só o preço final.
+export async function getPlatformSalePrice(productId: string, platform: MarketplacePlatformKind): Promise<PlatformPriceBreakdown> {
   const [breakdown, platformConfig, settings] = await Promise.all([
     getProductCostBreakdown(productId),
     prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform } }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
   ])
   const tiers = platformConfig.feeTiers as unknown as PlatformFeeTier[] | null
-  if (tiers && tiers.length > 0) {
-    return calculateTieredPlatformPrice(breakdown.suggestedPrice, settings.taxPercent.toNumber(), tiers)
-  }
-  return calculatePlatformPrice(
+  return resolvePlatformPrice(
     breakdown.suggestedPrice,
     settings.taxPercent.toNumber(),
     platformConfig.feePercent.toNumber(),
     platformConfig.feeFixed.toNumber(),
+    tiers,
   )
+}
+
+// Melhoria "Mostrar taxa da plataforma": taxa REAL cobrada numa venda, pra
+// congelar no costSnapshot (lib/costing.ts#buildSaleCostSnapshot) no
+// momento da criação -- ao contrário de getPlatformSalePrice acima (que
+// resolve a faixa certa pro PREÇO SUGERIDO, com o ponto fixo de
+// calculateTieredPlatformPrice porque a faixa depende do preço final que
+// ainda não existe), aqui o preço JÁ FOI DECIDIDO (o unitPrice de verdade
+// da venda) -- só resolver a faixa certa pra ele direto, sem gross-up.
+// `null` pra DIRETA/MARKETPLACE (canal antigo): nenhum dos dois nunca teve
+// taxa de plataforma.
+export async function resolveSalePlatformFee(
+  channel: SaleChannel,
+  unitPrice: number,
+): Promise<{ feePercent: number; feeFixed: number; feeAmountPerUnit: number } | null> {
+  if (channel !== 'SHOPEE' && channel !== 'MERCADO_LIVRE') return null
+  const platformConfig = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: channel } })
+  const tiers = platformConfig.feeTiers as unknown as PlatformFeeTier[] | null
+  const { feePercent, feeFixed } =
+    tiers && tiers.length > 0
+      ? resolveTieredPlatformFee(tiers, unitPrice)
+      : { feePercent: platformConfig.feePercent.toNumber(), feeFixed: platformConfig.feeFixed.toNumber() }
+  return { feePercent, feeFixed, feeAmountPerUnit: unitPrice * feePercent + feeFixed }
 }

@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { orderSchema, orderStatusEnum } from '@/lib/validation/order'
 import { getProductCostBreakdown } from '@/actions/products'
 import { consumePackagingForSale } from '@/actions/sales'
+import { resolveSalePlatformFee } from '@/actions/marketplacePlatforms'
 import { buildSaleCostSnapshot } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 import type { Prisma, OrderChannel, SaleChannel } from '@prisma/client'
@@ -64,12 +65,18 @@ export async function updateOrderStatus(id: string, formData: FormData): Promise
   }
 
   const breakdown = await getProductCostBreakdown(order.productId)
-  const snapshot = buildSaleCostSnapshot(breakdown, order.quantity)
+  const saleChannel = ORDER_CHANNEL_TO_SALE_CHANNEL[order.channel]
+  const platformFee = await resolveSalePlatformFee(saleChannel, order.unitPrice.toNumber())
+  const snapshot = buildSaleCostSnapshot(
+    breakdown,
+    order.quantity,
+    platformFee ? { feePercent: platformFee.feePercent, feeFixed: platformFee.feeFixed, amountTotal: platformFee.feeAmountPerUnit * order.quantity } : undefined,
+  )
 
   await prisma.$transaction(async (tx) => {
     const sale = await tx.sale.create({
       data: {
-        channel: ORDER_CHANNEL_TO_SALE_CHANNEL[order.channel],
+        channel: saleChannel,
         productId: order.productId,
         quantity: order.quantity,
         unitPrice: order.unitPrice,

@@ -2,7 +2,8 @@ import { prisma } from '@/lib/prisma'
 import {
   calculatePrinterDepreciationCostPerHour,
   calculateFilamentPricePerGram,
-  calculatePlatformPrice,
+  resolvePlatformPrice,
+  type PlatformFeeTier,
 } from '@/lib/costing'
 import { getProductCostBreakdown } from '@/actions/products'
 import { ProductsExplorer, type ProductCardData } from './ProductsExplorer'
@@ -49,11 +50,30 @@ export default async function ProductsPage() {
       colorsCount,
       coverPhotoId: p.photos[0]?.id ?? null,
       costPrice: breakdown.finalCost,
+      suggestedPrice: breakdown.suggestedPrice,
       mercadoLivrePrice: mercadoLivre
-        ? calculatePlatformPrice(breakdown.suggestedPrice, taxPercent, mercadoLivre.feePercent.toNumber(), mercadoLivre.feeFixed.toNumber())
+        ? resolvePlatformPrice(
+            breakdown.suggestedPrice,
+            taxPercent,
+            mercadoLivre.feePercent.toNumber(),
+            mercadoLivre.feeFixed.toNumber(),
+            mercadoLivre.feeTiers as unknown as PlatformFeeTier[] | null,
+          )
         : null,
+      // Bug "Preço Shopee na listagem ignora faixa": calculatePlatformPrice
+      // direto com shopee.feePercent/feeFixed sempre usava a taxa da 1ª
+      // faixa (o par "achatado" só espelha ela, ver comentário em
+      // SettingsForm.tsx) -- resolvePlatformPrice (lib/costing.ts) resolve
+      // a faixa certa quando feeTiers existir, mesmo helper que
+      // getPlatformSalePrice já usa pro prefill em Vendas.
       shopeePrice: shopee
-        ? calculatePlatformPrice(breakdown.suggestedPrice, taxPercent, shopee.feePercent.toNumber(), shopee.feeFixed.toNumber())
+        ? resolvePlatformPrice(
+            breakdown.suggestedPrice,
+            taxPercent,
+            shopee.feePercent.toNumber(),
+            shopee.feeFixed.toNumber(),
+            shopee.feeTiers as unknown as PlatformFeeTier[] | null,
+          )
         : null,
     }
   })

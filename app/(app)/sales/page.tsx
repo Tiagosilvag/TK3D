@@ -125,7 +125,7 @@ export default async function SalesPage({
         </thead>
         <tbody>
           {sales.map((s, i) => {
-            const { profit, estimated, saleTotal, costTotal } = profits[i]
+            const { profit, estimated, saleTotal, costTotal, platformFeeAmount } = profits[i]
             const colorInfo = s.colorComboKey ? colorLabelByProductAndKey.get(`${s.productId}::${s.colorComboKey}`) : undefined
             return (
               <tr key={s.id} className="tk-row align-top">
@@ -166,6 +166,12 @@ export default async function SalesPage({
                         <dt>Custo de produção</dt>
                         <dd>− {formatCurrency(costTotal)}</dd>
                       </div>
+                      {platformFeeAmount > 0 && (
+                        <div className="flex justify-between gap-3">
+                          <dt>Taxa da plataforma</dt>
+                          <dd>− {formatCurrency(platformFeeAmount)}</dd>
+                        </div>
+                      )}
                       <div className="flex justify-between gap-3 font-medium text-slate-700 dark:text-slate-200">
                         <dt>Lucro</dt>
                         <dd>{formatCurrency(profit)}</dd>

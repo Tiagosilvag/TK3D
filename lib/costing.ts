@@ -335,6 +335,41 @@ export function calculateTieredPlatformPrice(suggestedPrice: number, taxPercent:
   return price
 }
 
+// Bug "preço marketplace na tela de Produtos ignora faixa da Shopee":
+// getPlatformSalePrice, a tela de Produtos (listagem e detalhe) precisavam
+// da MESMA resolução tiered-ou-flat, mas cada um reimplementava o branch
+// (ou, no caso de Produtos, nem tinha o branch -- sempre usava
+// calculatePlatformPrice com o par flat, que pra Shopee só espelha a 1ª
+// faixa). Um helper só, reaproveitado nos 3 lugares, pra nunca mais
+// divergir -- devolve não só o preço final, mas também a taxa%/fixa que
+// REALMENTE valeu pra ele (a faixa resolvida, quando houver faixas), pra
+// telas que precisam mostrar "quanto é a taxa" e não só o preço já embutido.
+export interface PlatformPriceBreakdown {
+  price: number
+  feePercent: number
+  feeFixed: number
+  // taxa em R$ que a plataforma consome de UMA unidade vendida por `price`
+  // (feePercent*price + feeFixed) -- não inclui imposto, que já foi
+  // descontado dentro de `price` via calculatePlatformPrice.
+  feeAmount: number
+}
+
+export function resolvePlatformPrice(
+  suggestedPrice: number,
+  taxPercent: number,
+  flatFeePercent: number,
+  flatFeeFixed: number,
+  feeTiers: PlatformFeeTier[] | null,
+): PlatformPriceBreakdown {
+  if (feeTiers && feeTiers.length > 0) {
+    const price = calculateTieredPlatformPrice(suggestedPrice, taxPercent, feeTiers)
+    const { feePercent, feeFixed } = resolveTieredPlatformFee(feeTiers, price)
+    return { price, feePercent, feeFixed, feeAmount: price * feePercent + feeFixed }
+  }
+  const price = calculatePlatformPrice(suggestedPrice, taxPercent, flatFeePercent, flatFeeFixed)
+  return { price, feePercent: flatFeePercent, feeFixed: flatFeeFixed, feeAmount: price * flatFeePercent + flatFeeFixed }
+}
+
 export function combineProductCost(terms: ProductCostTerms, flags: ProductCostFlags, settings: Settings): ProductCostBreakdown {
   const subtotal =
     terms.filamentCost * on(flags.includeFilamentCost) +
@@ -896,12 +931,28 @@ export interface SaleCostSnapshot {
   quantity: number
   unitCost: ProductCostBreakdown
   total: number
+  // Melhoria "Mostrar taxa da plataforma": taxa REAL cobrada nesta venda,
+  // resolvida uma vez na criação a partir do unitPrice de verdade (não do
+  // preço sugerido) -- mesmo princípio de custo histórico congelado do
+  // resto do snapshot. Ausente pra venda Direta/canal legado MARKETPLACE
+  // (nunca tiveram taxa) e pra venda anterior a este ajuste (nenhum dado
+  // histórico pra reconstruir -- nunca inventado retroativamente).
+  platformFee?: {
+    feePercent: number
+    feeFixed: number
+    amountTotal: number
+  }
 }
 
-export function buildSaleCostSnapshot(breakdown: ProductCostBreakdown, quantity: number): SaleCostSnapshot {
+export function buildSaleCostSnapshot(
+  breakdown: ProductCostBreakdown,
+  quantity: number,
+  platformFee?: { feePercent: number; feeFixed: number; amountTotal: number },
+): SaleCostSnapshot {
   return {
     quantity,
     unitCost: breakdown,
     total: breakdown.finalCost * quantity,
+    ...(platformFee ? { platformFee } : {}),
   }
 }

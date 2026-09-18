@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { confirmAssembly, type AssemblyPartStatus, type AssemblyComponentStatus, type AssemblyResourceRequirement } from '@/actions/assembly'
 import { SubmitButton } from '@/components/SubmitButton'
-import { ComponentCategoryCard, type ComponentOption, type ComponentRow } from './ComponentCategoryCard'
+import { ComponentCategoryCard, optionLabel, type ComponentOption, type ComponentRow } from './ComponentCategoryCard'
 import { ComboSelect, type ComboOption } from './ComboSelect'
 
 // Melhoria "Produto-como-componente": peça (ProductPart) e componente
@@ -158,6 +158,14 @@ export function ConfirmAssemblyForm({
   // mais editável/trocável linha a linha aqui.
   const [accessoryRows, setAccessoryRows] = useState<ComponentRow[]>(() => toRows(accessoryRequirements.filter((r) => !r.colorOptions)))
   const [supplyRows, setSupplyRows] = useState<ComponentRow[]>(() => toRows(supplyRequirements))
+  // Bug "acessório não aparece na montagem, resumindo no final": Acessórios/
+  // Insumos SEM cor variável (accessoryRows/supplyRows) nunca entravam no
+  // resumo do passo 3 "Confira antes de montar" -- só os chips de cor
+  // (colorSelectables), então um acessório de quantidade fixa (ex.: ELO)
+  // ficava invisível na revisão final mesmo sendo decrementado do estoque
+  // ao confirmar. Mapa id→opção pra resolver nome/unidade de exibição.
+  const accessoryById = useMemo(() => new Map(allAccessories.map((a) => [a.id, a])), [allAccessories])
+  const supplyById = useMemo(() => new Map(allSupplies.map((s) => [s.id, s])), [allSupplies])
   // Embalagem §5: mostrada por completude/visibilidade, NUNCA submetida ao
   // confirmAssembly (continua consumida só na Venda) -- estado só existe
   // aqui pra alimentar o próprio ComponentCategoryCard (readOnly).
@@ -354,6 +362,31 @@ export function ConfirmAssemblyForm({
                 })}
               </div>
             </div>
+
+            {(accessoryRows.some((r) => r.id) || supplyRows.some((r) => r.id)) && (
+              <div className="tk-panel p-4">
+                <h2 className="mb-1 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Acessórios & insumos</h2>
+                <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">Também vão ser descontados do estoque ao confirmar.</p>
+                <div className="flex flex-wrap gap-2">
+                  {accessoryRows.filter((r) => r.id).map((r) => {
+                    const option = accessoryById.get(r.id)
+                    return (
+                      <span key={r.id} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs dark:border-slate-700 dark:bg-slate-800/60">
+                        {option ? optionLabel(option) : '—'} × {r.quantityPerUnit}{option?.unit ? option.unit.toLowerCase() : 'un'}
+                      </span>
+                    )
+                  })}
+                  {supplyRows.filter((r) => r.id).map((r) => {
+                    const option = supplyById.get(r.id)
+                    return (
+                      <span key={r.id} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs dark:border-slate-700 dark:bg-slate-800/60">
+                        {option ? optionLabel(option) : '—'} × {r.quantityPerUnit}{option?.unit ? option.unit.toLowerCase() : 'un'}
+                      </span>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             <form action={action} className="tk-panel grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
               <input type="hidden" name="productId" value={productId} />

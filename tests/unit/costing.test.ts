@@ -21,6 +21,8 @@ import {
   recomputeProductionRunPrinterCost,
   resolveTieredPlatformFee,
   calculateTieredPlatformPrice,
+  calculatePlatformPrice,
+  resolvePlatformPrice,
   type ProductionCostSnapshotInput,
   type ProductCostBreakdown,
   type ProductionCostSnapshot,
@@ -1029,6 +1031,21 @@ describe('buildSaleCostSnapshot (task-10 brief, new feature -- Sale cost snapsho
     expect(a).toEqual(b)
     expect(JSON.parse(JSON.stringify(a))).toEqual(a)
   })
+
+  // Melhoria "Mostrar taxa da plataforma": platformFee é opcional -- venda
+  // Direta (ou qualquer chamada sem o 3º parâmetro) não grava o campo,
+  // igual a uma venda anterior a este ajuste (nunca inventado retroativo).
+  it('sem platformFee (venda Direta, ou chamada antiga): campo ausente no snapshot', () => {
+    const snapshot = buildSaleCostSnapshot(breakdown, 2)
+    expect(snapshot.platformFee).toBeUndefined()
+  })
+
+  it('com platformFee (venda Shopee/Mercado Livre): grava a taxa congelada junto', () => {
+    const snapshot = buildSaleCostSnapshot(breakdown, 2, { feePercent: 0.20, feeFixed: 4, amountTotal: 12.5 })
+    expect(snapshot.platformFee).toEqual({ feePercent: 0.20, feeFixed: 4, amountTotal: 12.5 })
+    // o resto do snapshot continua igual, taxa não interfere no custo de produção
+    expect(snapshot.total).toBeCloseTo(7.81 * 2, 6)
+  })
 })
 
 // "Simulação de preço" (task-6 brief, spec §2): a client-side-only pricing
@@ -1178,6 +1195,40 @@ describe('calculateTieredPlatformPrice', () => {
 
   it('é uma função pura: mesma entrada sempre produz o mesmo resultado', () => {
     expect(calculateTieredPlatformPrice(150, 0.055, shopeeTiers)).toBe(calculateTieredPlatformPrice(150, 0.055, shopeeTiers))
+  })
+})
+
+// Melhoria "Mostrar taxa da plataforma": helper único reaproveitado por
+// getPlatformSalePrice e pela tela de Produtos (listagem e detalhe) --
+// bug corrigido: essas duas telas usavam calculatePlatformPrice direto com
+// o par flat, que pra Shopee só espelha a 1ª faixa.
+describe('resolvePlatformPrice', () => {
+  it('com feeTiers: delega pra calculateTieredPlatformPrice e devolve a faixa que realmente valeu', () => {
+    const result = resolvePlatformPrice(30, 0, 0.20, 4, shopeeTiers)
+    expect(result.price).toBeCloseTo(calculateTieredPlatformPrice(30, 0, shopeeTiers), 4)
+    expect(result.feePercent).toBeCloseTo(0.20)
+    expect(result.feeFixed).toBeCloseTo(4)
+    expect(result.feeAmount).toBeCloseTo(result.price * 0.20 + 4, 4)
+  })
+
+  it('com feeTiers, produto caro: resolve a faixa certa (não a 1ª), diferente do par flat', () => {
+    const result = resolvePlatformPrice(600, 0, 0.20, 4, shopeeTiers)
+    expect(result.feePercent).toBeCloseTo(0.14)
+    expect(result.feeFixed).toBeCloseTo(26)
+    expect(result.price).toBeCloseTo(calculatePlatformPrice(600, 0, 0.14, 26), 4)
+  })
+
+  it('sem feeTiers (null): delega pra calculatePlatformPrice com o par flat de sempre', () => {
+    const result = resolvePlatformPrice(100, 0.055, 0.16, 6, null)
+    expect(result.price).toBeCloseTo(calculatePlatformPrice(100, 0.055, 0.16, 6), 4)
+    expect(result.feePercent).toBe(0.16)
+    expect(result.feeFixed).toBe(6)
+    expect(result.feeAmount).toBeCloseTo(result.price * 0.16 + 6, 4)
+  })
+
+  it('feeTiers vazio ([]) se comporta como null -- cai no par flat', () => {
+    const result = resolvePlatformPrice(100, 0.055, 0.16, 6, [])
+    expect(result.price).toBeCloseTo(calculatePlatformPrice(100, 0.055, 0.16, 6), 4)
   })
 })
 

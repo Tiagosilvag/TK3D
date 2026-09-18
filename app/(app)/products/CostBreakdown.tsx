@@ -38,6 +38,9 @@ const ROWS: { key: keyof ProductCostBreakdown; label: string; flagKey: keyof Pro
 export interface MarketplacePlatformPrice {
   label: string
   price: number
+  feePercent: number
+  feeFixed: number
+  feeAmount: number
 }
 
 export function CostBreakdown({
@@ -82,9 +85,15 @@ export function CostBreakdown({
         </div>
         {marketplacePlatformPrices.length > 0 ? (
           marketplacePlatformPrices.map((p) => (
-            <div key={p.label} className="flex justify-between font-semibold text-violet-700 dark:text-violet-400">
-              <dt>Preço {p.label}</dt>
-              <dd>{money(p.price)}</dd>
+            <div key={p.label}>
+              <div className="flex justify-between font-semibold text-violet-700 dark:text-violet-400">
+                <dt>Preço {p.label}</dt>
+                <dd>{money(p.price)}</dd>
+              </div>
+              <div className="flex justify-between text-xs text-slate-400 dark:text-slate-500">
+                <dt>Taxa {p.label}</dt>
+                <dd>{(p.feePercent * 100).toFixed(0)}% + {money(p.feeFixed)} = {money(p.feeAmount)}</dd>
+              </div>
             </div>
           ))
         ) : (

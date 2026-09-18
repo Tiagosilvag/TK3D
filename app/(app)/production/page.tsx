@@ -128,7 +128,11 @@ export default async function ProductionPage({
           : !editingRunSnapshot || editingRunSnapshot.printTimeHours === undefined || !editingRunSnapshot.printerCostFlags
             ? 'Produção anterior a este recurso -- não guardou o tempo de impressão necessário pra recalcular o custo.'
             : null,
-        filamentName: `${editingRunRecord.filament.manufacturer} ${editingRunRecord.filament.colorName} — Rolo #${String(editingRunRecord.filament.rollNumber).padStart(3, '0')}`,
+        // Melhoria "nome do filamento na Produção": mesmo corte de
+        // marca/Rolo# que getPlateDetail já usa (actions/productionRuns.ts)
+        // -- aqui é só o cabeçalho readonly ao editar uma produção já
+        // registrada, tipo + cor já identifica de relance.
+        filamentName: `${editingRunRecord.filament.material} ${editingRunRecord.filament.colorName}`,
         isMultiFilament: editingRunRecord.filamentUsages.length > 0,
         date: editingRunRecord.date.toISOString().slice(0, 10),
         quantityPlanned: editingRunRecord.quantityPlanned,

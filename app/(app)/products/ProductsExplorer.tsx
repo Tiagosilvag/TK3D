@@ -5,6 +5,12 @@ import { useRouter } from 'next/navigation'
 import { formatCurrency } from '@/lib/format'
 import { ProductForm } from './ProductForm'
 
+export interface ProductPlatformPriceInfo {
+  price: number
+  feePercent: number
+  feeFixed: number
+}
+
 export interface ProductCardData {
   id: string
   name: string
@@ -13,8 +19,9 @@ export interface ProductCardData {
   colorsCount: number
   coverPhotoId: string | null
   costPrice: number
-  mercadoLivrePrice: number | null
-  shopeePrice: number | null
+  suggestedPrice: number
+  mercadoLivrePrice: ProductPlatformPriceInfo | null
+  shopeePrice: ProductPlatformPriceInfo | null
 }
 
 type PrinterOption = { id: string; name: string; costPerHour: number }
@@ -113,18 +120,28 @@ export function ProductsExplorer({
                     {p.category} · {p.partsCount} peça{p.partsCount === 1 ? '' : 's'} · {p.colorsCount} {p.colorsCount === 1 ? 'cor' : 'cores'}
                   </p>
                 </div>
-                <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                   <div>
                     <p className="text-slate-400 dark:text-slate-500">Custo</p>
                     <p className="font-medium text-slate-900 dark:text-slate-100">{formatCurrency(p.costPrice)}</p>
                   </div>
                   <div>
+                    <p className="text-slate-400 dark:text-slate-500">Sugerido</p>
+                    <p className="font-medium text-slate-900 dark:text-slate-100">{formatCurrency(p.suggestedPrice)}</p>
+                  </div>
+                  <div>
                     <p className="text-slate-400 dark:text-slate-500">Mercado Livre</p>
-                    <p className="font-medium text-slate-900 dark:text-slate-100">{p.mercadoLivrePrice != null ? formatCurrency(p.mercadoLivrePrice) : '—'}</p>
+                    <p className="font-medium text-slate-900 dark:text-slate-100">{p.mercadoLivrePrice != null ? formatCurrency(p.mercadoLivrePrice.price) : '—'}</p>
+                    {p.mercadoLivrePrice != null && (
+                      <p className="text-slate-400 dark:text-slate-500">taxa {(p.mercadoLivrePrice.feePercent * 100).toFixed(0)}%+{formatCurrency(p.mercadoLivrePrice.feeFixed)}</p>
+                    )}
                   </div>
                   <div>
                     <p className="text-slate-400 dark:text-slate-500">Shopee</p>
-                    <p className="font-medium text-slate-900 dark:text-slate-100">{p.shopeePrice != null ? formatCurrency(p.shopeePrice) : '—'}</p>
+                    <p className="font-medium text-slate-900 dark:text-slate-100">{p.shopeePrice != null ? formatCurrency(p.shopeePrice.price) : '—'}</p>
+                    {p.shopeePrice != null && (
+                      <p className="text-slate-400 dark:text-slate-500">taxa {(p.shopeePrice.feePercent * 100).toFixed(0)}%+{formatCurrency(p.shopeePrice.feeFixed)}</p>
+                    )}
                   </div>
                 </div>
               </div>

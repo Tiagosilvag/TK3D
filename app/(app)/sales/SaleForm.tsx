@@ -5,7 +5,15 @@ import Link from 'next/link'
 import { createSale, updateSale } from '@/actions/sales'
 import { getPlatformSalePrice } from '@/actions/marketplacePlatforms'
 import { SubmitButton } from '@/components/SubmitButton'
+import { formatCurrency } from '@/lib/format'
 import type { MarketplacePlatformKind } from '@prisma/client'
+
+// Melhoria "Mostrar taxa da plataforma": ao lado do Valor unitário, mostra
+// quanto da taxa Shopee/Mercado Livre entrou no preço sugerido -- resolvido
+// junto com o prefill (getPlatformSalePrice já devolve o breakdown, não só
+// o preço), pra tirar a dúvida "a taxa está indo?" sem precisar abrir
+// Configurações ou fazer conta de cabeça.
+const PLATFORM_LABELS: Record<string, string> = { SHOPEE: 'Shopee', MERCADO_LIVRE: 'Mercado Livre' }
 
 // Melhoria "Vendas por variante": cada produto ativo já vem com suas
 // variantes de cor em estoque (getProductVariantStockOptions, lib/reports.ts)
@@ -64,6 +72,7 @@ export function SaleForm({
   const formRef = useRef<HTMLFormElement>(null)
   const [unitPrice, setUnitPrice] = useState(editingSale ? String(editingSale.unitPrice) : '')
   const [prefilling, setPrefilling] = useState(false)
+  const [feeInfo, setFeeInfo] = useState<{ label: string; feePercent: number; feeFixed: number; feeAmount: number } | null>(null)
   const [productId, setProductId] = useState(editingSale?.productId ?? defaultProductId ?? '')
   const [colorComboKey, setColorComboKey] = useState(editingSale?.colorComboKey ?? '')
 
@@ -83,14 +92,19 @@ export function SaleForm({
   // differ.
   async function maybePrefillMarketplacePrice(currentProductId: string, channel: string) {
     if (editingSale) return
-    if ((channel !== 'SHOPEE' && channel !== 'MERCADO_LIVRE') || !currentProductId) return
+    if ((channel !== 'SHOPEE' && channel !== 'MERCADO_LIVRE') || !currentProductId) {
+      setFeeInfo(null)
+      return
+    }
     setPrefilling(true)
     try {
-      const price = await getPlatformSalePrice(currentProductId, channel as MarketplacePlatformKind)
-      setUnitPrice(price.toFixed(2))
+      const result = await getPlatformSalePrice(currentProductId, channel as MarketplacePlatformKind)
+      setUnitPrice(result.price.toFixed(2))
+      setFeeInfo({ label: PLATFORM_LABELS[channel], feePercent: result.feePercent, feeFixed: result.feeFixed, feeAmount: result.feeAmount })
     } catch {
       // Product lookup failing here shouldn't block filling the form
       // manually — leave whatever the user already typed in place.
+      setFeeInfo(null)
     } finally {
       setPrefilling(false)
     }
@@ -197,6 +211,11 @@ export function SaleForm({
           className="tk-input-full"
           required
         />
+        {feeInfo && !prefilling && (
+          <span className="mt-1 block text-xs font-normal text-slate-400 dark:text-slate-500">
+            Taxa {feeInfo.label}: {(feeInfo.feePercent * 100).toFixed(0)}% + {formatCurrency(feeInfo.feeFixed)} (≈{formatCurrency(feeInfo.feeAmount)}/un.)
+          </span>
+        )}
       </label>
       <label className="text-sm">
         Data da venda *

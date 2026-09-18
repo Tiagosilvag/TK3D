@@ -24,7 +24,7 @@ export interface ComponentRow {
   defaultQuantityPerUnit: number
 }
 
-function optionLabel(o: ComponentOption): string {
+export function optionLabel(o: ComponentOption): string {
   return o.colorName ? `${o.name} — ${o.colorName}` : o.name
 }
 
