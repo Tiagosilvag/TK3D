@@ -9,8 +9,15 @@ import { getProductAverageProductionCost } from '@/actions/products'
 
 type ActionResult = { success: boolean; error?: string }
 
-function filamentLabel(f: { manufacturer: string; colorName: string; rollNumber: number }): string {
-  return `${f.manufacturer} ${f.colorName} — Rolo #${String(f.rollNumber).padStart(3, '0')}`
+// Bug "cores todas juntas com marca/rolo, difícil de ler": a partir da
+// Montagem (e telas depois dela -- Meu Estoque, Vendas), só a cor importa
+// pra identificar de relance -- marca/"Rolo #" só fazem sentido nos
+// processos ANTES desse ponto (cadastro de produto, escolher o rolo físico
+// ao registrar produção). Mesma convenção que lib/reports.ts#filamentComboLabel
+// já usa (getProductVariantBreakdown, que alimenta Estoque/Vendas) --
+// alinha os dois em vez de cada um formatar diferente.
+function filamentLabel(f: { colorName: string }): string {
+  return f.colorName
 }
 
 function accessoryLabel(a: { name: string; colorName: string }): string {
@@ -446,14 +453,26 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
       ? siblings.map((s) => ({
           key: s.id,
           filamentIds: [],
-          label: accessoryLabel(s),
+          // Bug "nome do acessório duplicado": `label` é só a COR aqui,
+          // igual peça/componente (cujo colorOptions[].label nunca repete
+          // o próprio nome da peça) -- o nome base ("ARGOLA") já aparece
+          // como cabeçalho/`item.name` acima do seletor e na frente de "—"
+          // em "{item.name} — {chosen.label}" (ConfirmAssemblyForm.tsx).
+          label: s.colorName,
           available: Math.max(0, s.currentStock.toNumber()),
           colorHex: s.colorHex,
         }))
       : null
     return {
       id: u.accessoryId,
-      name: accessoryLabel(u.accessory),
+      // Bug "nome do acessório duplicado" (ex. "ARGOLA — PRATA — ARGOLA —
+      // PRATA"): quando há colorOptions, a UI monta "{name} — {cor
+      // escolhida}" (ConfirmAssemblyForm.tsx) -- `name` aqui precisa ser só
+      // o nome BASE (sem cor), senão a cor aparece 2x (embutida no name E
+      // no colorOptions[].label escolhido). Sem irmãos de cor (colorOptions
+      // null), ninguém monta esse "{name} — {cor}" pra este id -- mantém
+      // accessoryLabel (nome + cor) porque é a única fonte de exibição.
+      name: colorOptions ? u.accessory.name : accessoryLabel(u.accessory),
       quantityPerUnit: u.quantity.toNumber(),
       available: Math.max(0, u.accessory.currentStock.toNumber()),
       colorOptions,

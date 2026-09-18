@@ -46,6 +46,14 @@ function toAccessoryColorSelectables(accessoryRequirements: AssemblyResourceRequ
 // seleção.
 function defaultColorChoice(item: ColorSelectable): string {
   if (!item.colorOptions || item.colorOptions.length === 0) return ''
+  // Bug "prévia diz Prata mas pré-preenche Dourado": pra Acessório
+  // (item.key = o próprio id do acessório registrado na ficha técnica --
+  // nunca bate com nenhuma chave de combo de peça/componente, então esse
+  // branch é inofensivo pra eles), o padrão deve ser a cor REGISTRADA, não
+  // simplesmente a de maior estoque entre os "irmãos" -- só cai pro
+  // "maior estoque" se a cor registrada estiver zerada.
+  const registered = item.colorOptions.find((o) => o.key === item.key)
+  if (registered && registered.available > 0) return registered.key
   const best = item.colorOptions.reduce((a, b) => (b.available > a.available ? b : a))
   return best.key
 }

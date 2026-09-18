@@ -72,7 +72,11 @@ describe('Acessório com cor variável rastreado por leva de montagem', () => {
     expect(keys).toEqual([dourada.id, prata.id].sort())
     const prataOption = requirement.colorOptions!.find((o) => o.key === prata.id)!
     expect(prataOption.available).toBe(20)
-    expect(prataOption.label).toBe('Corrente Bolinha — Prata')
+    // Bug "nome do acessório duplicado" (ex. "ARGOLA — Prata — ARGOLA —
+    // Prata" na revisão da montagem): label vira só a cor -- o nome base
+    // já aparece como `requirement.name`/cabeçalho, igual peça/componente
+    // (cujo colorOptions[].label nunca repete o próprio nome).
+    expect(prataOption.label).toBe('Prata')
   })
 
   it('2 confirmações com cores de acessório diferentes viram 2 variações distintas no Estoque, cada uma com a quantidade certa', async () => {
