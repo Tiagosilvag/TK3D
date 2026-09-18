@@ -227,6 +227,7 @@ export default async function SalesPage({
             <th>Comprador</th>
             <th className="text-center">Custo</th>
             <th className="text-center">Taxa</th>
+            <th className="text-center">Recebido</th>
             <th className="text-center">Lucro</th>
             <th></th>
           </tr>
@@ -246,8 +247,9 @@ export default async function SalesPage({
               ? batch.lines.reduce((acc, l) => ({
                   cost: acc.cost + l.profit.costTotal,
                   fee: acc.fee + l.profit.platformFeeAmount,
+                  saleTotal: acc.saleTotal + l.profit.saleTotal,
                   profit: acc.profit + l.profit.profit,
-                }), { cost: batchGiftCost, fee: 0, profit: -batchGiftCost })
+                }), { cost: batchGiftCost, fee: 0, saleTotal: 0, profit: -batchGiftCost })
               : null
 
             return (
@@ -322,6 +324,7 @@ export default async function SalesPage({
                           </span>
                         )}
                       </td>
+                      <td className="text-center">{formatCurrency(saleTotal - platformFeeAmount)}</td>
                       <td className="text-center">
                         {(() => {
                           // Brinde: só o lote de 1 produto desconta o custo
@@ -391,6 +394,7 @@ export default async function SalesPage({
                       )}
                     </td>
                     <td className="py-1.5 text-center">{formatCurrency(batchTotals.fee)}</td>
+                    <td className="py-1.5 text-center">{formatCurrency(batchTotals.saleTotal - batchTotals.fee)}</td>
                     <td className={`py-1.5 text-center ${batchTotals.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatCurrency(batchTotals.profit)}</td>
                     <td></td>
                   </tr>
@@ -407,6 +411,7 @@ export default async function SalesPage({
               <td className="py-2" colSpan={6}>Total ({batches.length} {batches.length === 1 ? 'venda' : 'vendas'})</td>
               <td className="text-center">{formatCurrency(totalCost)}</td>
               <td className="text-center">{formatCurrency(totalFees)}</td>
+              <td className="text-center">{formatCurrency(totalSaleAmount - totalFees)}</td>
               <td className={`text-center ${totalProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatCurrency(totalProfit)}</td>
               <td></td>
             </tr>
