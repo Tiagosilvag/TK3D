@@ -20,3 +20,15 @@ export const saleSchema = z.object({
   // falta de registro de cor).
   colorComboKey: z.string().optional().nullable(),
 })
+
+// Melhoria "Vendas: múltiplos produtos numa venda": um item da venda (o que
+// varia por produto) -- reaproveita os mesmos validadores de saleSchema
+// (.pick), nunca duplicados. Usado por createSaleBatch.
+export const saleItemSchema = saleSchema.pick({ productId: true, quantity: true, unitPrice: true, colorComboKey: true })
+
+// Campos de cabeçalho (o que é preenchido uma vez pra venda inteira,
+// repetido em toda linha de Sale gravada) + a lista de itens -- mesmo
+// padrão de consignmentDeliveryBatchSchema (lib/validation/consignment.ts).
+export const saleBatchSchema = saleSchema
+  .omit({ productId: true, quantity: true, unitPrice: true, colorComboKey: true })
+  .extend({ items: z.array(saleItemSchema).min(1, 'Adicione pelo menos um produto') })

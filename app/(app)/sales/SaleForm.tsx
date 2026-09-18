@@ -2,7 +2,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { createSale, updateSale } from '@/actions/sales'
+import { createSaleBatch, updateSale } from '@/actions/sales'
 import { getPlatformSalePrice } from '@/actions/marketplacePlatforms'
 import { SubmitButton } from '@/components/SubmitButton'
 import { formatCurrency } from '@/lib/format'
@@ -76,6 +76,24 @@ type EditingSale = {
   colorComboKey: string | null
 }
 
+// Melhoria "Vendas: múltiplos produtos numa venda": item já confirmado na
+// lista (denormaliza nome/cor pra exibir sem precisar procurar de novo em
+// `products`) -- mesmo padrão de DeliveryBatchForm.tsx#ItemDraft.
+interface ItemDraft {
+  productId: string
+  productName: string
+  colorComboKey: string | null
+  colorLabel: string | null
+  colorHex: string | null
+  quantity: number
+  unitPrice: number
+}
+
+// Formato "de fio" (o que createSaleBatch espera por item) -- usado tanto
+// pra serializar `items` no submit quanto pra somar o item em rascunho
+// (ainda não confirmado na lista) na prévia ao vivo.
+type WireItem = { productId: string; quantity: number; unitPrice: number; colorComboKey: string | null }
+
 // Melhoria "Redesign Vendas" §3: mesma resolução de faixa que
 // resolveSalePlatformFee (actions/marketplacePlatforms.ts) faz no
 // servidor pra congelar o costSnapshot -- reimplementada aqui como cálculo
@@ -110,6 +128,11 @@ export function SaleForm({
   const [prefilling, setPrefilling] = useState(false)
   const [productId, setProductId] = useState(editingSale?.productId ?? defaultProductId ?? '')
   const [colorComboKey, setColorComboKey] = useState(editingSale?.colorComboKey ?? '')
+  // Melhoria "Vendas: múltiplos produtos numa venda": só usado no modo
+  // "nova venda" (editingSale editar continua 1 item só, sem esta lista) --
+  // cada "+ Adicionar produto" empurra o rascunho atual pra aqui e limpa os
+  // campos Produto/Cor/Quantidade/Valor unitário pro próximo.
+  const [items, setItems] = useState<ItemDraft[]>([])
 
   const selectedProduct = useMemo(() => products.find((p) => p.productId === productId), [products, productId])
 
@@ -120,24 +143,59 @@ export function SaleForm({
   // nenhuma) não pede cor -- mesma convenção de Entregas.
   const requiresColorChoice = Boolean(selectedProduct && selectedProduct.variants.length > 0)
 
-  // Melhoria "Redesign Vendas" §3: prévia ao vivo -- 3 blocos que
-  // recalculam a cada mudança de Plataforma/Produto/Variação/Quantidade/
-  // Valor unitário, sem precisar salvar a venda. Cor/variação não entra na
-  // conta (o custeio não diferencia por cor), só nas outras 4.
   const quantityNum = Number(quantity) || 0
   const unitPriceNum = Number(unitPrice) || 0
-  const saleTotalPreview = unitPriceNum * quantityNum
-  const costPreview = selectedProduct ? selectedProduct.unitCost * quantityNum : null
-  const platformFeePreview = useMemo(() => {
+
+  // Melhoria "Vendas: múltiplos produtos numa venda": o item em rascunho
+  // (campos Produto/Cor/Quantidade/Valor unitário ainda não confirmados via
+  // "+ Adicionar produto") só entra na conta quando está completo -- assim
+  // uma venda de 1 produto só continua funcionando sem precisar clicar
+  // "+ Adicionar produto" nenhuma vez (mesma UX de sempre), e um 2º+
+  // produto em edição soma na prévia antes mesmo de confirmado.
+  const draftItem: WireItem | null = useMemo(() => {
+    if (!productId || quantityNum <= 0 || unitPriceNum <= 0) return null
+    if (requiresColorChoice && !colorComboKey) return null
+    return { productId, quantity: quantityNum, unitPrice: unitPriceNum, colorComboKey: colorComboKey || null }
+  }, [productId, quantityNum, unitPriceNum, requiresColorChoice, colorComboKey])
+
+  const previewItems: WireItem[] = useMemo(() => {
+    const committed = items.map((i) => ({ productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice, colorComboKey: i.colorComboKey }))
+    return draftItem ? [...committed, draftItem] : committed
+  }, [items, draftItem])
+
+  // Melhoria "Redesign Vendas" §3 (estendida pra múltiplos produtos): os 3
+  // blocos somam Custo/Taxa/Lucro de TODOS os itens já adicionados + o
+  // rascunho em edição -- recalcula a cada item adicionado/removido ou
+  // campo do rascunho mudado, sem round-trip (mesma lógica pura de
+  // resolveSalePlatformFee, só que client-side).
+  const preview = useMemo(() => {
+    if (previewItems.length === 0) return null
+    const platform = (channel === 'SHOPEE' || channel === 'MERCADO_LIVRE') ? platforms.find((p) => p.kind === channel) : undefined
+    let saleTotal = 0
+    let cost = 0
+    let fee = 0
+    for (const it of previewItems) {
+      saleTotal += it.unitPrice * it.quantity
+      cost += (products.find((p) => p.productId === it.productId)?.unitCost ?? 0) * it.quantity
+      if (platform) {
+        const { feePercent, feeFixed } = resolvePlatformFeeForPrice(platform, it.unitPrice)
+        fee += (it.unitPrice * feePercent + feeFixed) * it.quantity
+      }
+    }
+    const profit = saleTotal - cost - fee
+    return { saleTotal, cost, fee, profit, margin: saleTotal > 0 ? profit / saleTotal : null }
+  }, [previewItems, channel, platforms, products])
+
+  // Legenda "Taxa Shopee: 20% + R$4,00 (≈R$X/un.)" embaixo do campo Valor
+  // unitário -- só do item em rascunho (não do agregado acima), mesmo
+  // formato de antes desta melhoria.
+  const draftFeePreview = useMemo(() => {
     if (channel !== 'SHOPEE' && channel !== 'MERCADO_LIVRE') return null
     const platform = platforms.find((p) => p.kind === channel)
     if (!platform) return null
     const { feePercent, feeFixed } = resolvePlatformFeeForPrice(platform, unitPriceNum)
-    return { label: PLATFORM_LABELS[channel], feePercent, feeFixed, feeAmountPerUnit: unitPriceNum * feePercent + feeFixed, feeAmountTotal: (unitPriceNum * feePercent + feeFixed) * quantityNum }
-  }, [channel, unitPriceNum, quantityNum, platforms])
-  const profitPreview = costPreview !== null ? saleTotalPreview - costPreview - (platformFeePreview?.feeAmountTotal ?? 0) : null
-  const marginPreview = profitPreview !== null && saleTotalPreview > 0 ? profitPreview / saleTotalPreview : null
-  const showPreview = Boolean(channel && productId && quantityNum > 0 && unitPriceNum > 0)
+    return { label: PLATFORM_LABELS[channel], feePercent, feeFixed, feeAmountPerUnit: unitPriceNum * feePercent + feeFixed }
+  }, [channel, unitPriceNum, platforms])
 
   // Convenience only: when the sale is on Shopee/Mercado Livre, suggest that
   // platform's own computed price (cost + markup + THAT platform's specific
@@ -170,12 +228,53 @@ export function SaleForm({
     void maybePrefillMarketplacePrice(productId, newChannel)
   }
 
-  async function action(formData: FormData) {
+  // Melhoria "Vendas: múltiplos produtos numa venda": confirma o rascunho
+  // atual na lista de itens da venda e limpa os campos pro próximo produto
+  // -- campos de cabeçalho (Plataforma/Data/Comprador/Observações) não são
+  // tocados, continuam valendo pra venda inteira.
+  function handleAddItem() {
+    if (!productId || !selectedProduct) {
+      alert('Selecione um produto')
+      return
+    }
     if (requiresColorChoice && !colorComboKey) {
       alert('Selecione a cor/variação vendida')
       return
     }
+    if (quantityNum <= 0) {
+      alert('Informe uma quantidade válida')
+      return
+    }
+    if (unitPriceNum <= 0) {
+      alert('Informe um valor unitário válido')
+      return
+    }
+    const variant = selectedProduct.variants.find((v) => v.key === colorComboKey)
+    setItems((prev) => [...prev, {
+      productId,
+      productName: selectedProduct.productName,
+      colorComboKey: colorComboKey || null,
+      colorLabel: variant?.label ?? null,
+      colorHex: variant?.colorHex ?? null,
+      quantity: quantityNum,
+      unitPrice: unitPriceNum,
+    }])
+    setProductId('')
+    setColorComboKey('')
+    setQuantity('1')
+    setUnitPrice('')
+  }
+
+  function removeItem(index: number) {
+    setItems((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  async function action(formData: FormData) {
     if (editingSale) {
+      if (requiresColorChoice && !colorComboKey) {
+        alert('Selecione a cor/variação vendida')
+        return
+      }
       const result = await updateSale(editingSale.id, formData)
       if (!result.success) {
         alert(result.error)
@@ -184,7 +283,22 @@ export function SaleForm({
       router.push('/sales')
       return
     }
-    const result = await createSale(formData)
+
+    // Melhoria "Vendas: múltiplos produtos numa venda": o item em rascunho
+    // (se completo) entra automaticamente, então registrar 1 produto só
+    // continua sem precisar clicar "+ Adicionar produto" nenhuma vez.
+    const finalItems = draftItem ? [...items.map((i) => ({ productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice, colorComboKey: i.colorComboKey })), draftItem] : items
+    if (finalItems.length === 0) {
+      if (productId && requiresColorChoice && !colorComboKey) {
+        alert('Selecione a cor/variação vendida')
+      } else {
+        alert('Adicione pelo menos um produto')
+      }
+      return
+    }
+
+    formData.set('itemsJson', JSON.stringify(finalItems))
+    const result = await createSaleBatch(formData)
     if (result.success) {
       formRef.current?.reset()
       setUnitPrice('')
@@ -197,6 +311,7 @@ export function SaleForm({
       // mounted across consecutive "new sale" submits (page.tsx keys it
       // 'new', which never changes between them).
       setProductId('')
+      setItems([])
     } else {
       alert(result.error)
     }
@@ -218,8 +333,8 @@ export function SaleForm({
           </select>
         </label>
         <label className="text-sm">
-          Produto *
-          <select name="productId" value={productId} onChange={(e) => handleProductChange(e.target.value)} className="tk-input-full" required>
+          Produto {editingSale && '*'}
+          <select name="productId" value={productId} onChange={(e) => handleProductChange(e.target.value)} className="tk-input-full" required={Boolean(editingSale)}>
             <option value="" disabled>Selecione</option>
             {products.map((p) => (
               <option key={p.productId} value={p.productId}>{p.productName}</option>
@@ -228,8 +343,8 @@ export function SaleForm({
         </label>
         {requiresColorChoice && (
           <label className="text-sm">
-            Cor/Variação *
-            <select name="colorComboKey" value={colorComboKey} onChange={(e) => setColorComboKey(e.target.value)} className="tk-input-full" required>
+            Cor/Variação {editingSale && '*'}
+            <select name="colorComboKey" value={colorComboKey} onChange={(e) => setColorComboKey(e.target.value)} className="tk-input-full" required={Boolean(editingSale)}>
               <option value="" disabled>Selecione a cor</option>
               {selectedProduct!.variants.map((v) => (
                 <option key={v.key} value={v.key} disabled={v.available <= 0}>
@@ -240,11 +355,11 @@ export function SaleForm({
           </label>
         )}
         <label className="text-sm">
-          Quantidade *
-          <input name="quantity" type="number" step="1" min="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="tk-input-full" required />
+          Quantidade {editingSale && '*'}
+          <input name="quantity" type="number" step="1" min="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="tk-input-full" required={Boolean(editingSale)} />
         </label>
         <label className="text-sm">
-          Valor unitário * {prefilling && <span className="text-xs font-normal text-slate-400 dark:text-slate-500">(preenchendo…)</span>}
+          Valor unitário {editingSale && '*'} {prefilling && <span className="text-xs font-normal text-slate-400 dark:text-slate-500">(preenchendo…)</span>}
           <input
             name="unitPrice"
             type="number"
@@ -253,14 +368,43 @@ export function SaleForm({
             value={unitPrice}
             onChange={(e) => setUnitPrice(e.target.value)}
             className="tk-input-full"
-            required
+            required={Boolean(editingSale)}
           />
-          {platformFeePreview && !prefilling && (
+          {draftFeePreview && !prefilling && (
             <span className="mt-1 block text-xs font-normal text-slate-400 dark:text-slate-500">
-              Taxa {platformFeePreview.label}: {(platformFeePreview.feePercent * 100).toFixed(0)}% + {formatCurrency(platformFeePreview.feeFixed)} (≈{formatCurrency(platformFeePreview.feeAmountPerUnit)}/un.)
+              Taxa {draftFeePreview.label}: {(draftFeePreview.feePercent * 100).toFixed(0)}% + {formatCurrency(draftFeePreview.feeFixed)} (≈{formatCurrency(draftFeePreview.feeAmountPerUnit)}/un.)
             </span>
           )}
         </label>
+
+        {!editingSale && (
+          <div className="col-span-full">
+            <button
+              type="button"
+              onClick={handleAddItem}
+              className="w-full rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60"
+            >
+              + Adicionar produto
+            </button>
+            {items.length > 0 && (
+              <div className="mt-2 space-y-1.5">
+                {items.map((item, i) => (
+                  <div key={i} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700">
+                    <span className="flex min-w-0 items-center gap-2">
+                      {item.colorHex && <span style={{ background: item.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                      <span className="min-w-0 truncate">
+                        {item.productName}{item.colorLabel && <span className="text-slate-500 dark:text-slate-400"> - {item.colorLabel}</span>}{' '}
+                        <span className="text-slate-500 dark:text-slate-400">x{item.quantity} · {formatCurrency(item.unitPrice)}</span>
+                      </span>
+                    </span>
+                    <button type="button" onClick={() => removeItem(i)} aria-label="Remover item" className="shrink-0 text-slate-400 hover:text-red-600 dark:hover:text-red-400">🗑</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <label className="text-sm">
           Data da venda *
           <input name="saleDate" type="date" defaultValue={editingSale?.saleDate ?? today()} className="tk-input-full" required />
@@ -286,26 +430,23 @@ export function SaleForm({
       {/* Melhoria "Redesign Vendas" §3: prévia ao vivo -- só aparece quando
           há dado suficiente pra calcular algo (senão mostraria R$0 vazio,
           mais confuso que ausente). */}
-      {showPreview && (
+      {preview && (
         <div className="mt-4 grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 sm:grid-cols-3 dark:border-slate-800">
           <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Custo de produção</p>
-            <p className="mt-1 text-base font-semibold tabular-nums text-slate-900 dark:text-slate-100">{costPreview !== null ? formatCurrency(costPreview) : '—'}</p>
+            <p className="mt-1 text-base font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(preview.cost)}</p>
           </div>
           <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Taxa da plataforma</p>
-            <p className="mt-1 text-base font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(platformFeePreview?.feeAmountTotal ?? 0)}</p>
-            {platformFeePreview && (
-              <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{(platformFeePreview.feePercent * 100).toFixed(0)}% + {formatCurrency(platformFeePreview.feeFixed)}</p>
-            )}
+            <p className="mt-1 text-base font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(preview.fee)}</p>
           </div>
           <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Lucro estimado</p>
-            <p className={`mt-1 text-base font-semibold tabular-nums ${(profitPreview ?? 0) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-              {profitPreview !== null ? formatCurrency(profitPreview) : '—'}
+            <p className={`mt-1 text-base font-semibold tabular-nums ${preview.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+              {formatCurrency(preview.profit)}
             </p>
-            {marginPreview !== null && (
-              <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{(marginPreview * 100).toFixed(0)}% de margem</p>
+            {preview.margin !== null && (
+              <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{(preview.margin * 100).toFixed(0)}% de margem</p>
             )}
           </div>
         </div>

@@ -118,16 +118,20 @@ export default async function StockPage() {
     const status = statusByProductId.get(r.productId)
     const producedBreakdown = variantBreakdownMap.get(r.productId) ?? []
 
-    const knownVariants: StockVariantRow[] = producedBreakdown.map((v) => ({
-      key: v.key,
-      label: v.label,
-      colorHex: v.colorHex,
-      attrs: v.attrs,
-      available: availableByProductAndKey.get(`${r.productId}::${v.key}`) ?? 0,
-      readyToAssemble: status ? computeReadyToAssembleForVariant(status, v.key) : 0,
-      consignado: Math.max(0, (deliveredMap.get(`${r.productId}::${v.key}`) ?? 0) - (consignmentSoldMap.get(`${r.productId}::${v.key}`) ?? 0)),
-      sold: soldMap.get(`${r.productId}::${v.key}`) ?? 0,
-    }))
+    const knownVariants: StockVariantRow[] = producedBreakdown.map((v) => {
+      const available = availableByProductAndKey.get(`${r.productId}::${v.key}`) ?? 0
+      return {
+        key: v.key,
+        label: v.label,
+        colorHex: v.colorHex,
+        attrs: v.attrs,
+        available,
+        lowStock: available > 0 && available <= threshold,
+        readyToAssemble: status ? computeReadyToAssembleForVariant(status, v.key) : 0,
+        consignado: Math.max(0, (deliveredMap.get(`${r.productId}::${v.key}`) ?? 0) - (consignmentSoldMap.get(`${r.productId}::${v.key}`) ?? 0)),
+        sold: soldMap.get(`${r.productId}::${v.key}`) ?? 0,
+      }
+    })
 
     // Melhoria "Estoque moderno": produzido/vendido/consignado por variante
     // podem, cada um independentemente, ter uma sobra não atribuída a
@@ -145,13 +149,15 @@ export default async function StockPage() {
     const soldRemainder = Math.max(0, r.soldDirect - soldSumKnown)
     const consignadoRemainder = Math.max(0, r.consignmentRemaining - consignadoSumKnown)
 
+    const unknownAvailable = Math.max(0, producedRemainder - soldRemainder - consignadoRemainder)
     const variants: StockVariantRow[] = knownVariants.length > 0 && (producedRemainder > 0 || soldRemainder > 0 || consignadoRemainder > 0)
       ? [...knownVariants, {
           key: '__unknown__',
           label: 'Sem cor registrada',
           colorHex: null,
           attrs: [],
-          available: Math.max(0, producedRemainder - soldRemainder - consignadoRemainder),
+          available: unknownAvailable,
+          lowStock: unknownAvailable > 0 && unknownAvailable <= threshold,
           readyToAssemble: null,
           consignado: consignadoRemainder,
           sold: soldRemainder,

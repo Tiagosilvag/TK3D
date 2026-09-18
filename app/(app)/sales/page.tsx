@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { Fragment } from 'react'
 import { prisma } from '@/lib/prisma'
 import { formatCurrency, getSaleChannelBadge } from '@/lib/format'
 import { SaleForm } from './SaleForm'
@@ -111,7 +112,29 @@ export default async function SalesPage({
   const totalFees = profits.reduce((sum, p) => sum + p.platformFeeAmount, 0)
   const totalCost = profits.reduce((sum, p) => sum + p.costTotal, 0)
   const totalProfit = profits.reduce((sum, p) => sum + p.profit, 0)
-  const avgTicket = sales.length > 0 ? totalSaleAmount / sales.length : 0
+
+  // Melhoria "Vendas: múltiplos produtos numa venda": agrupa as linhas de
+  // Sale por batchId (mesmo padrão Map-por-batchId de
+  // app/(app)/consignment/deliveries/page.tsx) -- venda de 1 produto só
+  // continua sendo um "lote" de 1 linha, sem mudança visual nenhuma; venda
+  // de 2+ produtos mostra cada linha dentro do mesmo bloco, com uma
+  // sub-linha de totais no final. `sales` já vem ordenado por saleDate
+  // desc, e Map preserva a ordem de primeira inserção -- os lotes já saem
+  // na ordem certa.
+  const batchesMap = new Map<string, { batchId: string; saleDate: Date; channel: SaleChannel; buyerOrPlatform: string | null; lines: { sale: (typeof sales)[number]; profit: (typeof profits)[number] }[] }>()
+  for (let i = 0; i < sales.length; i++) {
+    const s = sales[i]
+    const batch = batchesMap.get(s.batchId) ?? { batchId: s.batchId, saleDate: s.saleDate, channel: s.channel, buyerOrPlatform: s.buyerOrPlatform, lines: [] }
+    batch.lines.push({ sale: s, profit: profits[i] })
+    batchesMap.set(s.batchId, batch)
+  }
+  const batches = [...batchesMap.values()]
+
+  // "Ticket médio" é por VENDA (lote), não por linha de produto -- uma
+  // venda de 2 produtos ainda é 1 ticket só. Só muda o resultado quando
+  // existir alguma venda multi-produto; o caso de hoje (1 linha = 1 venda)
+  // continua idêntico.
+  const avgTicket = batches.length > 0 ? totalSaleAmount / batches.length : 0
 
   return (
     <div className="tk-page">
@@ -192,83 +215,117 @@ export default async function SalesPage({
           </tr>
         </thead>
         <tbody>
-          {sales.map((s, i) => {
-            const { profit, estimated, saleTotal, costTotal, platformFeeAmount, platformFeeBreakdown } = profits[i]
-            const colorInfo = s.colorComboKey ? colorLabelByProductAndKey.get(`${s.productId}::${s.colorComboKey}`) : undefined
+          {batches.map((batch) => {
+            const isMulti = batch.lines.length > 1
+            // Melhoria "Vendas: múltiplos produtos numa venda": sub-linha de
+            // totais só aparece pra venda com 2+ produtos -- venda de 1
+            // produto só já mostra Custo/Taxa/Lucro na própria linha, sem
+            // duplicar.
+            const batchTotals = isMulti
+              ? batch.lines.reduce((acc, l) => ({
+                  cost: acc.cost + l.profit.costTotal,
+                  fee: acc.fee + l.profit.platformFeeAmount,
+                  profit: acc.profit + l.profit.profit,
+                }), { cost: 0, fee: 0, profit: 0 })
+              : null
+
             return (
-              <tr key={s.id} className="tk-row align-top">
-                <td className="py-2">{s.saleDate.toLocaleDateString('pt-BR')}</td>
-                <td>
-                  <StatusBadge badge={getSaleChannelBadge(s.channel)} />
-                </td>
-                <td>
-                  {s.product.name}
-                  {colorInfo && colorInfo.attrs.length > 0 && (
-                    <div className="mt-1 flex flex-wrap items-center gap-1">
-                      {colorInfo.attrs.map((attr, j) => <VariantChip key={j} attr={attr} />)}
-                    </div>
-                  )}
-                  {colorInfo && colorInfo.attrs.length === 0 && (
-                    <span className="flex items-center gap-1.5 text-xs font-normal text-slate-500 dark:text-slate-400">
-                      {colorInfo.colorHex && <span style={{ background: colorInfo.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                      {colorInfo.label}
-                    </span>
-                  )}
-                </td>
-                <td>{s.quantity}</td>
-                <td>{formatCurrency(s.unitPrice.toNumber())}</td>
-                <td className="text-slate-500 dark:text-slate-400">{s.buyerOrPlatform ?? '-'}</td>
-                <td>{formatCurrency(costTotal)}</td>
-                <td>
-                  {formatCurrency(platformFeeAmount)}
-                  {platformFeeBreakdown && (
-                    <span className="block text-xs font-normal text-slate-400 dark:text-slate-500">
-                      {(platformFeeBreakdown.feePercent * 100).toFixed(0)}% + {formatCurrency(platformFeeBreakdown.feeFixed)}
-                    </span>
-                  )}
-                </td>
-                <td>
-                  <details>
-                    <summary
-                      className={`cursor-pointer list-none font-medium ${profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}
-                      title="Ver detalhamento do lucro"
-                    >
-                      {formatCurrency(profit)}
-                      {estimated && (
-                        <span title="Venda anterior a este recurso: custo estimado retroativamente, pode variar se preços mudarem" className="ml-1 text-slate-400 dark:text-slate-500">*</span>
+              <Fragment key={batch.batchId}>
+                {batch.lines.map(({ sale: s, profit: p }, idx) => {
+                  const { profit, estimated, saleTotal, costTotal, platformFeeAmount, platformFeeBreakdown } = p
+                  const colorInfo = s.colorComboKey ? colorLabelByProductAndKey.get(`${s.productId}::${s.colorComboKey}`) : undefined
+                  return (
+                    <tr key={s.id} className="tk-row align-top">
+                      {idx === 0 && (
+                        <>
+                          <td className="py-2" rowSpan={batch.lines.length}>{batch.saleDate.toLocaleDateString('pt-BR')}</td>
+                          <td rowSpan={batch.lines.length}>
+                            <StatusBadge badge={getSaleChannelBadge(batch.channel)} />
+                          </td>
+                        </>
                       )}
-                    </summary>
-                    <dl className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
-                      <div className="flex justify-between gap-3">
-                        <dt>Valor da venda</dt>
-                        <dd>{formatCurrency(saleTotal)}</dd>
-                      </div>
-                      <div className="flex justify-between gap-3">
-                        <dt>Custo de produção</dt>
-                        <dd>− {formatCurrency(costTotal)}</dd>
-                      </div>
-                      {platformFeeAmount > 0 && (
-                        <div className="flex justify-between gap-3">
-                          <dt>Taxa da plataforma</dt>
-                          <dd>− {formatCurrency(platformFeeAmount)}</dd>
-                        </div>
+                      <td>
+                        {s.product.name}
+                        {colorInfo && colorInfo.attrs.length > 0 && (
+                          <div className="mt-1 flex flex-wrap items-center gap-1">
+                            {colorInfo.attrs.map((attr, j) => <VariantChip key={j} attr={attr} />)}
+                          </div>
+                        )}
+                        {colorInfo && colorInfo.attrs.length === 0 && (
+                          <span className="flex items-center gap-1.5 text-xs font-normal text-slate-500 dark:text-slate-400">
+                            {colorInfo.colorHex && <span style={{ background: colorInfo.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                            {colorInfo.label}
+                          </span>
+                        )}
+                      </td>
+                      <td>{s.quantity}</td>
+                      <td>{formatCurrency(s.unitPrice.toNumber())}</td>
+                      {idx === 0 && (
+                        <td className="text-slate-500 dark:text-slate-400" rowSpan={batch.lines.length}>{batch.buyerOrPlatform ?? '-'}</td>
                       )}
-                      <div className="flex justify-between gap-3 font-medium text-slate-700 dark:text-slate-200">
-                        <dt>Lucro</dt>
-                        <dd>{formatCurrency(profit)}</dd>
-                      </div>
-                    </dl>
-                  </details>
-                </td>
-                <td>
-                  <ActionsMenu>
-                    <Link href={`/sales?editId=${s.id}`} className="tk-menu-item">
-                      Editar
-                    </Link>
-                    <ConfirmDeleteForm action={async () => { 'use server'; return await deleteSale(s.id) }} className="tk-menu-item-danger" />
-                  </ActionsMenu>
-                </td>
-              </tr>
+                      <td>{formatCurrency(costTotal)}</td>
+                      <td>
+                        {formatCurrency(platformFeeAmount)}
+                        {platformFeeBreakdown && (
+                          <span className="block text-xs font-normal text-slate-400 dark:text-slate-500">
+                            {(platformFeeBreakdown.feePercent * 100).toFixed(0)}% + {formatCurrency(platformFeeBreakdown.feeFixed)}
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        <details>
+                          <summary
+                            className={`cursor-pointer list-none font-medium ${profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}
+                            title="Ver detalhamento do lucro"
+                          >
+                            {formatCurrency(profit)}
+                            {estimated && (
+                              <span title="Venda anterior a este recurso: custo estimado retroativamente, pode variar se preços mudarem" className="ml-1 text-slate-400 dark:text-slate-500">*</span>
+                            )}
+                          </summary>
+                          <dl className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                            <div className="flex justify-between gap-3">
+                              <dt>Valor da venda</dt>
+                              <dd>{formatCurrency(saleTotal)}</dd>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                              <dt>Custo de produção</dt>
+                              <dd>− {formatCurrency(costTotal)}</dd>
+                            </div>
+                            {platformFeeAmount > 0 && (
+                              <div className="flex justify-between gap-3">
+                                <dt>Taxa da plataforma</dt>
+                                <dd>− {formatCurrency(platformFeeAmount)}</dd>
+                              </div>
+                            )}
+                            <div className="flex justify-between gap-3 font-medium text-slate-700 dark:text-slate-200">
+                              <dt>Lucro</dt>
+                              <dd>{formatCurrency(profit)}</dd>
+                            </div>
+                          </dl>
+                        </details>
+                      </td>
+                      <td>
+                        <ActionsMenu>
+                          <Link href={`/sales?editId=${s.id}`} className="tk-menu-item">
+                            Editar
+                          </Link>
+                          <ConfirmDeleteForm action={async () => { 'use server'; return await deleteSale(s.id) }} className="tk-menu-item-danger" />
+                        </ActionsMenu>
+                      </td>
+                    </tr>
+                  )
+                })}
+                {isMulti && batchTotals && (
+                  <tr className="bg-slate-50 text-xs font-medium text-slate-600 dark:bg-slate-800/40 dark:text-slate-300">
+                    <td colSpan={6} className="py-1.5 pl-2">Total desta venda ({batch.lines.length} produtos)</td>
+                    <td className="py-1.5">{formatCurrency(batchTotals.cost)}</td>
+                    <td className="py-1.5">{formatCurrency(batchTotals.fee)}</td>
+                    <td className={`py-1.5 ${batchTotals.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatCurrency(batchTotals.profit)}</td>
+                    <td></td>
+                  </tr>
+                )}
+              </Fragment>
             )
           })}
         </tbody>
@@ -277,7 +334,7 @@ export default async function SalesPage({
           // filtrado (mesmos `profits` já usados linha a linha acima).
           <tfoot>
             <tr className="border-t border-slate-200 font-medium text-slate-700 dark:border-slate-700 dark:text-slate-200">
-              <td className="py-2" colSpan={6}>Total ({sales.length} {sales.length === 1 ? 'venda' : 'vendas'})</td>
+              <td className="py-2" colSpan={6}>Total ({batches.length} {batches.length === 1 ? 'venda' : 'vendas'})</td>
               <td>{formatCurrency(totalCost)}</td>
               <td>{formatCurrency(totalFees)}</td>
               <td className={totalProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>{formatCurrency(totalProfit)}</td>

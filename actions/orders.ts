@@ -1,5 +1,6 @@
 'use server'
 import { z } from 'zod'
+import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { orderSchema, orderStatusEnum } from '@/lib/validation/order'
 import { getProductCostBreakdown } from '@/actions/products'
@@ -84,6 +85,10 @@ export async function updateOrderStatus(id: string, formData: FormData): Promise
         buyerOrPlatform: ORDER_CHANNEL_PLATFORM_LABEL[order.channel],
         notes: order.orderNumber ? `Pedido #${order.orderNumber}` : null,
         costSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+        // Melhoria "Vendas: múltiplos produtos numa venda": Sale.batchId é
+        // NOT NULL -- pedido concluído sempre vira uma venda de 1 item só,
+        // então recebe seu próprio lote (mesmo raciocínio de createSale).
+        batchId: randomUUID(),
       },
     })
     await tx.order.update({ where: { id }, data: { status: 'CONCLUIDO', saleId: sale.id } })

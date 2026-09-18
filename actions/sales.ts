@@ -1,11 +1,12 @@
 'use server'
+import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { saleSchema } from '@/lib/validation/sale'
+import { saleSchema, saleBatchSchema } from '@/lib/validation/sale'
 import { getProductCostBreakdown } from './products'
 import { buildSaleCostSnapshot, type SaleCostSnapshot } from '@/lib/costing'
 import { resolveSalePlatformFee } from './marketplacePlatforms'
 import { revalidatePath } from 'next/cache'
-import type { Prisma } from '@prisma/client'
+import type { Prisma, SaleChannel } from '@prisma/client'
 
 type ActionResult = { success: boolean; error?: string }
 type TxClient = Prisma.TransactionClient
@@ -69,26 +70,81 @@ async function restorePackagingForSale(tx: TxClient, saleId: string): Promise<vo
 // Supply/Settings values -- never recalculated afterwards. Filament/
 // Accessory/Supply stock is NOT touched here (already consumed earlier, at
 // produção/montagem) -- só embalagem, ver consumePackagingForSale acima.
+//
+// Melhoria "Vendas: múltiplos produtos numa venda": lógica de 1 LINHA de
+// Sale extraída pra este helper, reaproveitado por createSale (lote de 1
+// item, ver abaixo) e createSaleBatch (N itens, mesmo batchId) -- nenhuma
+// duplicação entre os dois. `header` são os campos repetidos em toda linha
+// da mesma venda (canal/data/comprador/observações); `item` é o que varia
+// por produto.
+type SaleHeader = { channel: SaleChannel; saleDate: Date; buyerOrPlatform?: string | null; notes?: string | null }
+type SaleItemInput = { productId: string; quantity: number; unitPrice: number; colorComboKey?: string | null }
+
+async function createSaleRow(tx: TxClient, batchId: string, header: SaleHeader, item: SaleItemInput): Promise<void> {
+  const breakdown = await getProductCostBreakdown(item.productId)
+  const platformFee = await resolveSalePlatformFee(header.channel, item.unitPrice)
+  const snapshot = buildSaleCostSnapshot(
+    breakdown,
+    item.quantity,
+    platformFee ? { feePercent: platformFee.feePercent, feeFixed: platformFee.feeFixed, amountTotal: platformFee.feeAmountPerUnit * item.quantity } : undefined,
+  )
+  const sale = await tx.sale.create({
+    data: {
+      ...header,
+      ...item,
+      batchId,
+      costSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+    },
+  })
+  await consumePackagingForSale(tx, sale.id, item.productId, item.quantity)
+}
+
 export async function createSale(formData: FormData): Promise<ActionResult> {
   const parsed = parse(formData)
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
-  const breakdown = await getProductCostBreakdown(parsed.data.productId)
-  const platformFee = await resolveSalePlatformFee(parsed.data.channel, parsed.data.unitPrice)
-  const snapshot = buildSaleCostSnapshot(
-    breakdown,
-    parsed.data.quantity,
-    platformFee ? { feePercent: platformFee.feePercent, feeFixed: platformFee.feeFixed, amountTotal: platformFee.feeAmountPerUnit * parsed.data.quantity } : undefined,
-  )
+  // Lote de 1 item -- mesmo raciocínio de createConsignmentDelivery (linha
+  // solta, mas ainda precisa de um batchId próprio já que a coluna é
+  // NOT NULL). O formulário de venda nova com vários produtos usa
+  // createSaleBatch abaixo, não esta função.
+  await prisma.$transaction((tx) => createSaleRow(tx, randomUUID(), parsed.data, parsed.data))
+  revalidatePath('/sales')
+  revalidatePath('/packaging')
+  return { success: true }
+}
 
+// Melhoria "Vendas: múltiplos produtos numa venda": uma venda real pode
+// incluir vários produtos/cores de uma vez -- esta action cria todas as
+// linhas de uma submissão do formulário numa transação só (tudo ou nada),
+// todas compartilhando um batchId gerado aqui (ver comentário de
+// Sale.batchId em prisma/schema.prisma). Campos de cabeçalho (canal/data/
+// comprador/observações) ficam repetidos em cada linha, nunca uma tabela
+// "venda" própria -- mesma justificativa de ConsignmentDelivery.batchId.
+// Editar/excluir continuam por LINHA (updateSale/deleteSale, sem mudança).
+export async function createSaleBatch(formData: FormData): Promise<ActionResult> {
+  const raw = Object.fromEntries(formData)
+  let items: unknown
+  try {
+    items = JSON.parse(String(raw.itemsJson ?? '[]'))
+  } catch {
+    return { success: false, error: 'Itens da venda inválidos' }
+  }
+
+  const parsed = saleBatchSchema.safeParse({
+    channel: raw.channel,
+    saleDate: raw.saleDate,
+    buyerOrPlatform: raw.buyerOrPlatform || null,
+    notes: raw.notes || null,
+    items,
+  })
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+
+  const { items: parsedItems, ...header } = parsed.data
+  const batchId = randomUUID()
   await prisma.$transaction(async (tx) => {
-    const sale = await tx.sale.create({
-      data: {
-        ...parsed.data,
-        costSnapshot: snapshot as unknown as Prisma.InputJsonValue,
-      },
-    })
-    await consumePackagingForSale(tx, sale.id, parsed.data.productId, parsed.data.quantity)
+    for (const item of parsedItems) {
+      await createSaleRow(tx, batchId, header, item)
+    }
   })
   revalidatePath('/sales')
   revalidatePath('/packaging')

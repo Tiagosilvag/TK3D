@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { randomUUID } from 'crypto'
 import { PrismaClient } from '@prisma/client'
 import {
   getRevenueByChannel,
@@ -54,8 +55,8 @@ async function createSupportRecords() {
 describe('getRevenueByChannel', () => {
   it('soma receita por canal corretamente', async () => {
     const { product } = await createSupportRecords()
-    await prisma.sale.create({ data: { channel: 'DIRETA', productId: product.id, quantity: 2, unitPrice: 10, saleDate: new Date() } })
-    await prisma.sale.create({ data: { channel: 'MARKETPLACE', productId: product.id, quantity: 1, unitPrice: 20, saleDate: new Date() } })
+    await prisma.sale.create({ data: { channel: 'DIRETA', productId: product.id, quantity: 2, unitPrice: 10, saleDate: new Date(), batchId: randomUUID() } })
+    await prisma.sale.create({ data: { channel: 'MARKETPLACE', productId: product.id, quantity: 1, unitPrice: 20, saleDate: new Date(), batchId: randomUUID() } })
 
     const result = await getRevenueByChannel()
     expect(result.DIRETA).toBeCloseTo(20, 2)
@@ -82,8 +83,8 @@ describe('getTopProducts', () => {
     const productA = await prisma.product.create({ data: { name: 'A', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0 } })
     const productB = await prisma.product.create({ data: { name: 'B', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0 } })
 
-    await prisma.sale.create({ data: { channel: 'DIRETA', productId: productA.id, quantity: 3, unitPrice: 10, saleDate: new Date() } })
-    await prisma.sale.create({ data: { channel: 'MARKETPLACE', productId: productB.id, quantity: 10, unitPrice: 10, saleDate: new Date() } })
+    await prisma.sale.create({ data: { channel: 'DIRETA', productId: productA.id, quantity: 3, unitPrice: 10, saleDate: new Date(), batchId: randomUUID() } })
+    await prisma.sale.create({ data: { channel: 'MARKETPLACE', productId: productB.id, quantity: 10, unitPrice: 10, saleDate: new Date(), batchId: randomUUID() } })
 
     const top = await getTopProducts(5)
     expect(top).toHaveLength(2)
@@ -97,7 +98,7 @@ describe('getTopProducts', () => {
     const { printer, filament } = await createSupportRecords()
     for (let i = 0; i < 7; i++) {
       const p = await prisma.product.create({ data: { name: `P${i}`, printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0 } })
-      await prisma.sale.create({ data: { channel: 'DIRETA', productId: p.id, quantity: i + 1, unitPrice: 10, saleDate: new Date() } })
+      await prisma.sale.create({ data: { channel: 'DIRETA', productId: p.id, quantity: i + 1, unitPrice: 10, saleDate: new Date(), batchId: randomUUID() } })
     }
     const top = await getTopProducts(5)
     expect(top).toHaveLength(5)

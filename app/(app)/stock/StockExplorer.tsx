@@ -17,6 +17,10 @@ export interface StockVariantRow {
   // VariantsModal cai pro texto simples de `label` nesse caso.
   attrs: VariantAttr[]
   available: number
+  // Melhoria "Modal de variações -- matriz por peça": mesmo critério de
+  // StockRow.lowStock (Settings.productLowStockThreshold), só que por
+  // variante -- alimenta a cor âmbar de "Disponível" na tabela do modal.
+  lowStock: boolean
   // null = não aplicável/não atribuível a esta variante (bucket "Sem cor
   // registrada") -- nunca 0 inventado quando na verdade é desconhecido.
   readyToAssemble: number | null

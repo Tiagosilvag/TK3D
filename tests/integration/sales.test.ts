@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { randomUUID } from 'crypto'
 import { PrismaClient } from '@prisma/client'
-import { createSale, getSaleProfit } from '@/actions/sales'
+import { createSale, createSaleBatch, getSaleProfit } from '@/actions/sales'
 import { getProductCostBreakdown } from '@/actions/products'
 import { getProductVariantStockOptions } from '@/lib/reports'
 import { createConsignmentDeliveryBatch } from '@/actions/consignmentDeliveries'
@@ -15,6 +16,10 @@ async function cleanup() {
   // accessory/supply added for the Sale cost snapshot tests below, which
   // give a product an accessory usage to mutate its price after a sale.
   await prisma.sale.deleteMany()
+  // StockConsumption (embalagem consumida por consumePackagingForSale) tem
+  // FK real pra Product -- precisa ir antes do product.deleteMany() abaixo.
+  // Nenhum teste deste arquivo lia isso antes dos testes de createSaleBatch.
+  await prisma.stockConsumption.deleteMany()
   await prisma.consignmentSaleReport.deleteMany()
   await prisma.consignmentDelivery.deleteMany()
   await prisma.consignmentPartner.deleteMany()
@@ -22,10 +27,28 @@ async function cleanup() {
   await prisma.productSupplyUsage.deleteMany()
   await prisma.productAccessoryUsage.deleteMany()
   await prisma.product.deleteMany()
+  // productPackagingUsage já foi cascade-deletado junto do Product acima --
+  // packagingItem (a tabela de catálogo) só pode ser removida DEPOIS disso,
+  // senão a FK Restrict de ProductPackagingUsage bloqueia. Criado pelos
+  // testes de createSaleBatch abaixo.
+  await prisma.packagingItem.deleteMany()
   await prisma.printer.deleteMany()
   await prisma.filament.deleteMany()
   await prisma.accessory.deleteMany()
   await prisma.supply.deleteMany()
+  // Settings é uma linha singleton compartilhada por TODO o arquivo de
+  // teste -- products.test.ts's cleanup() faz settings.deleteMany() (sem
+  // recriar) em algum ponto da suíte completa, o que deixa createSale
+  // (via getProductCostBreakdown) sem linha pra ler se products.test.ts
+  // rodar antes deste arquivo. Reforça os campos que afetam custo pro
+  // valor padrão do schema, sempre -- mesma defesa já aplicada em
+  // marketplacePlatforms.test.ts (inclusive contra o próprio teste deste
+  // arquivo que deixa laborCostPerHour em 999 de propósito, sem restaurar).
+  await prisma.settings.upsert({
+    where: { id: 1 },
+    update: { laborCostPerHour: 10, defaultMarkup: 2, energyCostPerKwh: 1, failureRatePercent: 0.1, taxPercent: 0.055 },
+    create: { id: 1 },
+  })
 }
 
 beforeAll(async () => {
@@ -219,7 +242,7 @@ describe('Sale cost snapshot (task-10 brief, new feature)', () => {
     // Simulates a pre-migration row: created directly, bypassing createSale,
     // so costSnapshot stays null (exactly what old rows look like).
     const legacySale = await prisma.sale.create({
-      data: { channel: 'DIRETA', productId: product.id, quantity: 1, unitPrice: 100, saleDate: new Date('2026-01-01') },
+      data: { channel: 'DIRETA', productId: product.id, quantity: 1, unitPrice: 100, saleDate: new Date('2026-01-01'), batchId: randomUUID() },
     })
     expect(legacySale.costSnapshot).toBeNull()
 
@@ -293,5 +316,85 @@ describe('Vendas por variante (Sale.colorComboKey)', () => {
     // Azul não foi tocado -- continua com os 30 inteiros.
     const azulOption = option.variants.find((v) => v.key === azul.id)!
     expect(azulOption.available).toBe(30)
+  })
+})
+
+// Melhoria "Vendas: múltiplos produtos numa venda": createSaleBatch cria N
+// linhas de Sale (uma por produto) numa transação só, todas compartilhando
+// um batchId -- mesmo padrão de createConsignmentDeliveryBatch. Nenhuma
+// lógica de custo/taxa/embalagem muda (createSaleRow reaproveita exatamente
+// o que createSale já fazia por linha).
+describe('createSaleBatch (Vendas: múltiplos produtos numa venda)', () => {
+  async function createProductWithPackaging(name: string, printerId: string, filamentId: string, packagingQuantity: number) {
+    const packagingItem = await prisma.packagingItem.create({ data: { name: `Embalagem ${name}`, currentStock: 100, avgUnitCost: 0.5 } })
+    const product = await prisma.product.create({
+      data: { name, category: 'Chaveiro', printerId, filamentId, weightGrams: 20, printTimeHours: 1, laborTimeHours: 0.1 },
+    })
+    await prisma.productPackagingUsage.create({ data: { productId: product.id, packagingItemId: packagingItem.id, quantity: packagingQuantity } })
+    return { product, packagingItem }
+  }
+
+  it('cria 1 linha de Sale por item, todas com o mesmo batchId, cada uma com seu próprio costSnapshot e consumo de embalagem', async () => {
+    const printer = await prisma.printer.create({ data: { name: 'P-batch', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F-batch', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const { product: productA, packagingItem: packagingA } = await createProductWithPackaging('Produto A', printer.id, filament.id, 1)
+    const { product: productB, packagingItem: packagingB } = await createProductWithPackaging('Produto B', printer.id, filament.id, 2)
+
+    const result = await createSaleBatch(fd({
+      channel: 'DIRETA',
+      saleDate: '2026-09-10',
+      buyerOrPlatform: 'João',
+      itemsJson: JSON.stringify([
+        { productId: productA.id, quantity: 2, unitPrice: 35 },
+        { productId: productB.id, quantity: 3, unitPrice: 50 },
+      ]),
+    }))
+    expect(result.success).toBe(true)
+
+    const sales = await prisma.sale.findMany({ orderBy: { unitPrice: 'asc' } })
+    expect(sales).toHaveLength(2)
+    expect(sales[0].batchId).toBe(sales[1].batchId)
+    expect(sales[0].batchId).toBeTruthy()
+    expect(sales.every((s) => s.buyerOrPlatform === 'João' && s.channel === 'DIRETA')).toBe(true)
+
+    const saleA = sales.find((s) => s.productId === productA.id)!
+    const saleB = sales.find((s) => s.productId === productB.id)!
+    expect(saleA.quantity).toBe(2)
+    expect(saleB.quantity).toBe(3)
+    const snapshotA = saleA.costSnapshot as unknown as SaleCostSnapshot
+    const snapshotB = saleB.costSnapshot as unknown as SaleCostSnapshot
+    expect(snapshotA.total).toBeCloseTo(snapshotA.unitCost.finalCost * 2, 6)
+    expect(snapshotB.total).toBeCloseTo(snapshotB.unitCost.finalCost * 3, 6)
+
+    // Embalagem consumida por item: A usa 1/un * 2 = 2; B usa 2/un * 3 = 6.
+    const updatedPackagingA = await prisma.packagingItem.findUniqueOrThrow({ where: { id: packagingA.id } })
+    const updatedPackagingB = await prisma.packagingItem.findUniqueOrThrow({ where: { id: packagingB.id } })
+    expect(updatedPackagingA.currentStock.toNumber()).toBe(100 - 2)
+    expect(updatedPackagingB.currentStock.toNumber()).toBe(100 - 6)
+  })
+
+  it('rejeita um lote sem nenhum item, sem gravar nada', async () => {
+    const result = await createSaleBatch(fd({ channel: 'DIRETA', saleDate: '2026-09-10', itemsJson: JSON.stringify([]) }))
+    expect(result.success).toBe(false)
+    expect(await prisma.sale.count()).toBe(0)
+  })
+
+  it('rejeita itemsJson malformado, sem gravar nada', async () => {
+    const result = await createSaleBatch(fd({ channel: 'DIRETA', saleDate: '2026-09-10', itemsJson: '{not valid json' }))
+    expect(result.success).toBe(false)
+    expect(await prisma.sale.count()).toBe(0)
+  })
+
+  it('createSale (venda de 1 item) continua gerando seu próprio batchId -- 2 chamadas separadas nunca compartilham lote', async () => {
+    const { product } = await createSupportRecords()
+
+    await createSale(fd({ channel: 'DIRETA', productId: product.id, quantity: '1', unitPrice: '10', saleDate: '2026-09-10' }))
+    await createSale(fd({ channel: 'DIRETA', productId: product.id, quantity: '1', unitPrice: '20', saleDate: '2026-09-11' }))
+
+    const sales = await prisma.sale.findMany({ orderBy: { unitPrice: 'asc' } })
+    expect(sales).toHaveLength(2)
+    expect(sales[0].batchId).toBeTruthy()
+    expect(sales[1].batchId).toBeTruthy()
+    expect(sales[0].batchId).not.toBe(sales[1].batchId)
   })
 })

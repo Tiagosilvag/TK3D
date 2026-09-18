@@ -809,8 +809,21 @@ model Sale {
   // Accessory/Supply purchase-history backfill). getSaleProfit() falls back
   // to a live recompute only for such legacy rows.
   costSnapshot    Json?
+  // Melhoria "Vendas: múltiplos produtos numa venda": agrupa linhas de Sale
+  // criadas na mesma submissão do formulário (uma venda com vários produtos
+  // de uma vez) via um token opaco -- não é FK pra outra tabela, só
+  // agrupamento, mesma convenção de ConsignmentDelivery.batchId/
+  // ProductionRun.batchId. Toda linha existente virou seu próprio "lote" de
+  // 1 item (batchId = seu próprio id) na migration que introduziu esta
+  // coluna, preservando exatamente o comportamento antigo (1 venda = 1
+  // produto) sem inventar agrupamento retroativo que nunca existiu de
+  // verdade. Editar/excluir continuam por LINHA, nunca pelo lote inteiro --
+  // mesmo comportamento já usado em Entregas.
+  batchId         String
   createdAt       DateTime    @default(now())
   order           Order?
+
+  @@index([batchId])
 }
 
 // 2.4 Sistema de pedidos: registra um pedido recebido (de qualquer canal)
