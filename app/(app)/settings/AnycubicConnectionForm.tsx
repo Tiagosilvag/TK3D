@@ -121,10 +121,8 @@ export function AnycubicConnectionForm({
           </li>
           <li>Pronto: o token é encontrado e a conexão é feita sozinha (nas próximas vezes a janela já abre na pasta certa).</li>
           <li>
-            <strong>Depois de conectar, feche o Slicer Next de verdade</strong> (Gerenciador de Tarefas →
-            AnycubicSlicerNext.exe; fechar só a janela não basta). Ele usa a mesma identidade de conexão do TK3D, e
-            enquanto estiver aberto e logado os dois se derrubam em loop (o monitoramento fica piscando e
-            pausar/parar falha).
+            Recomendado: depois de conectar, feche o Slicer Next (Gerenciador de Tarefas → AnycubicSlicerNext.exe).
+            Ele usa a mesma identidade de conexão do TK3D, então os dois ao mesmo tempo podem se atrapalhar.
           </li>
         </ol>
         <details className="mt-2">

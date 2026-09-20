@@ -113,6 +113,26 @@ function buildMqttSslOptions() {
   }
 }
 
+function maskKey(key: string): string {
+  return key.length > 8 ? `${key.slice(0, 4)}…${key.slice(-4)}(${key.length})` : `(${key.length})`
+}
+
+// Informação de socket pra diagnóstico: IP/família do broker (IPv4 vs IPv6 =
+// bordas diferentes da Cloudflare na frente do broker) e TLS negociado.
+function describeSocket(stream: unknown): string {
+  try {
+    const s = stream as {
+      remoteAddress?: string
+      remoteFamily?: string
+      getProtocol?: () => string | null
+      getCipher?: () => { name: string } | undefined
+    }
+    return `broker=${s.remoteAddress ?? '?'}/${s.remoteFamily ?? '?'} tls=${s.getProtocol?.() ?? '?'}/${s.getCipher?.()?.name ?? '?'}`
+  } catch {
+    return 'socket=?'
+  }
+}
+
 export async function startAnycubicListener(): Promise<void> {
   const settings = await prisma.settings.findUnique({ where: { id: 1 } })
   if (!settings?.anycubicAuthTokenEncrypted || !settings.anycubicUserEmail) {
@@ -120,10 +140,12 @@ export async function startAnycubicListener(): Promise<void> {
     return
   }
 
-  const printers = await prisma.printer.findMany({
-    where: { anycubicEnabled: true, anycubicPrinterKey: { not: null } },
-    select: { id: true, anycubicEnabled: true, anycubicPrinterKey: true },
-  })
+  const printers = (
+    await prisma.printer.findMany({
+      where: { anycubicEnabled: true, anycubicPrinterKey: { not: null } },
+      select: { id: true, anycubicEnabled: true, anycubicPrinterKey: true },
+    })
+  ).filter((p) => p.anycubicPrinterKey?.trim())
   if (printers.length === 0) {
     connectionStatus = 'no_printer'
     return
@@ -142,16 +164,15 @@ export async function startAnycubicListener(): Promise<void> {
     // encontrado em produção: a conta conectava certinho via HTTP, só o
     // MQTT que rejeitava).
     //
-    // ATENÇÃO (2026-09-20): esse client_id é FIXO por conta e é o MESMO que o
-    // Anycubic Slicer Next usa ("pcf"). Com o Slicer aberto e logado (mesmo
-    // minimizado / em segundo plano -- fechar a janela não encerra o
-    // processo), o broker aceita a nossa conexão e a derruba milissegundos
-    // depois: nos logs vira "conectado" + "close" a cada ~5s pra sempre, e
-    // pausar/parar falha. Hipóteses já testadas e DESCARTADAS: end() forçado
-    // vs. gracioso, cliente zumbi (removeAllListeners+end, testado com o
-    // mqtt real), senha RSA reaproveitada (retry com token novo dava o mesmo
-    // loop). O Slicer só é necessário pra extrair o token -- depois de
-    // conectar a conta, feche-o DE VERDADE (Gerenciador de Tarefas).
+    // Loop de reconexão visto em produção (2026-09-20): CONNACK ok e o
+    // broker/rede fecha ~ms depois, a cada ~5s. Causa AINDA NÃO identificada.
+    // Descartado por teste: end() forçado vs gracioso; cliente zumbi (mqtt
+    // 5.15.2 real); senha RSA reaproveitada (retry com token novo = mesmo
+    // loop); assinar tópicos antes/depois do connect; restart em processo
+    // reproduzido localmente; Slicer Next fechado (sem processo nem
+    // conexão) -- o loop segue. O MESMO código roda estável na máquina do
+    // dev, então a causa está no ambiente de produção. Ver o log por
+    // conexão ("MQTT fechado ... trace=[...]") adicionado abaixo.
     clientId: buildMqttClientId(email),
     username: mqttUsername,
     password: mqttPassword,
@@ -162,11 +183,41 @@ export async function startAnycubicListener(): Promise<void> {
     ...buildMqttSslOptions(),
   })
 
-  client.on('connect', () => {
-    connectionStatus = 'connected'
-    console.error(`[anycubic] MQTT conectado (pid=${process.pid})`)
+  // --- Diagnóstico + backoff (2026-09-20) ---
+  // Em produção a conexão cai ~ms depois do CONNACK, em loop de ~5s, mas o
+  // MESMO código/identidade/tópicos fica estável rodando da máquina do
+  // dev (testado com mqtt real: assinatura antes/depois do connect,
+  // restart em processo, token antigo) -- então a causa está no ambiente
+  // de produção. Cada conexão loga UMA linha ao fechar, com o que o broker
+  // e a rede fizeram: uptime, IP/família do broker, TLS e a sequência de
+  // pacotes. Backoff exponencial (5s -> 60s, como a lib de referência com
+  // reconnect_delay_set(5, 60)) tira o cliente do loop apertado e, se o
+  // broker limita taxa de conexão por origem, dá tempo da janela expirar.
+  const thisClient = client
+  console.error(
+    `[anycubic] iniciando listener (node=${process.version}, openssl=${process.versions.openssl}, impressoras=${printers.map((p) => maskKey(p.anycubicPrinterKey!)).join(',')}, pid=${process.pid})`,
+  )
+  const trace: string[] = []
+  let attemptStartedAt = Date.now()
+  let connectedAt = 0
+  let shortLivedStreak = 0
+  let remoteInfo = ''
+  const pushTrace = (label: string) => {
+    if (trace.length < 14) trace.push(`${Date.now() - attemptStartedAt}ms:${label}`)
+  }
+  thisClient.on('packetsend', (packet) => pushTrace(`>${packet.cmd}`))
+  thisClient.on('packetreceive', (packet) => pushTrace(`<${packet.cmd}`))
+  thisClient.on('reconnect', () => {
+    attemptStartedAt = Date.now()
+    trace.length = 0
   })
-  client.on('error', (err) => {
+  thisClient.on('connect', () => {
+    connectionStatus = 'connected'
+    connectedAt = Date.now()
+    remoteInfo = describeSocket(thisClient.stream)
+    console.error(`[anycubic] MQTT conectado (${remoteInfo}) (pid=${process.pid})`)
+  })
+  thisClient.on('error', (err) => {
     connectionStatus = 'expired'
     console.error(`[anycubic] erro na conexão MQTT: "${err.message}" (name=${err.name}, stack=${err.stack?.split('\n')[0]})`)
     // CONNACK negativo (credencial errada/expirada, não autorizado etc.)
@@ -177,12 +228,22 @@ export async function startAnycubicListener(): Promise<void> {
     // processo INTEIRO, inclusive o listener da Bambu, visto em produção).
     // Parar de vez aqui e exigir reconectar manual (botão em Configurações)
     // depois de corrigir a credencial.
-    if (err.message.startsWith('Connection refused:')) client?.end(true)
+    if (err.message.startsWith('Connection refused:')) thisClient.end(true)
   })
-  client.on('offline', () => console.error(`[anycubic] MQTT offline (pid=${process.pid})`))
-  client.on('disconnect', (packet) => console.error('[anycubic] pacote DISCONNECT recebido do broker:', JSON.stringify(packet)))
-  client.on('close', () => console.error(`[anycubic] MQTT desconectado (close) (pid=${process.pid})`))
-  client.on('reconnect', () => console.error(`[anycubic] tentando reconectar ao MQTT... (pid=${process.pid})`))
+  thisClient.on('disconnect', (packet) => console.error('[anycubic] pacote DISCONNECT recebido do broker:', JSON.stringify(packet)))
+  thisClient.on('close', () => {
+    const uptime = connectedAt ? Date.now() - connectedAt : 0
+    connectedAt = 0
+    // uptime 0 = nem chegou a conectar (falha de rede/TLS); 1..2999ms =
+    // conectou e caiu na hora (o sintoma); >=30s = conexão saudável.
+    shortLivedStreak = uptime >= 30_000 ? 0 : shortLivedStreak + 1
+    const nextDelay = Math.min(60_000, 5_000 * 2 ** Math.max(0, shortLivedStreak - 1))
+    thisClient.options.reconnectPeriod = nextDelay
+    console.error(
+      `[anycubic] MQTT fechado (uptime=${uptime}ms, seq_curtas=${shortLivedStreak}, proxima_tentativa=${nextDelay / 1000}s, ${remoteInfo || 'sem conexão'}, trace=[${trace.join(' ')}]) (pid=${process.pid})`,
+    )
+    trace.length = 0
+  })
 
   core = createAnycubicListenerCore({
     printers,
