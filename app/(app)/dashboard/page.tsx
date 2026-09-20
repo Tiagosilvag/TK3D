@@ -188,14 +188,14 @@ export default async function DashboardPage({
     }, {})
 
   return (
-    <div className="mx-auto max-w-5xl space-y-10 p-6">
+    <div className="mx-auto max-w-5xl space-y-8 p-0 sm:space-y-10 sm:p-6">
       <header>
         <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Visão geral</p>
         <h1 className="mt-1 font-display text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Dashboard</h1>
       </header>
 
       {/* Hero: revenue is the headline number of the business — everything else is secondary. */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900 sm:p-8">
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 sm:p-8">
         <div className="flex flex-col gap-8 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Receita total</p>
@@ -203,7 +203,7 @@ export default async function DashboardPage({
               {formatCurrency(totalRevenue)}
             </p>
           </div>
-          <dl className="flex gap-8">
+          <dl className="flex flex-wrap gap-x-6 gap-y-3 sm:gap-8">
             <div>
               <dt className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
                 <span className="h-2 w-2 rounded-full bg-emerald-500" /> Direta

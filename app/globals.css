@@ -236,6 +236,21 @@ dialog {
     white-space: nowrap;
     padding-right: 1rem;
   }
+  /* Tabela que já mora dentro de um wrapper overflow-x-auto (ex.: a de
+     filamentos da modal de produção) mantém o layout de tabela normal --
+     o wrapper é quem rola. */
+  main .overflow-x-auto > table {
+    display: table;
+    overflow: visible;
+  }
+
+  /* Barras de filtro (form.flex.flex-wrap com labels soltos): cada campo
+     ocupava só a largura do próprio conteúdo, gerando uma pilha de campos
+     com larguras diferentes (Plate estreito, datas médias...). Cada
+     filtro ocupa a linha inteira no mobile. */
+  main form.flex.flex-wrap > label {
+    flex: 1 1 100%;
+  }
 }
 
 /* Dispositivos de toque: iOS Safari dá zoom automático em qualquer campo

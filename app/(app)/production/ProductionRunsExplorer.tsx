@@ -248,7 +248,7 @@ export function ProductionRunsExplorer({
         className="w-full [--tk-dialog-cap:36rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
       >
         {plateDetail && (
-          <div className="grid gap-3 p-5">
+          <div className="grid grid-cols-1 gap-3 p-5">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="font-display text-base font-semibold">Plate — {plateDetail.printerName}</h3>

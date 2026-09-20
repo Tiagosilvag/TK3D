@@ -110,7 +110,7 @@ export function ComboSelect({
             onClick={(e) => e.stopPropagation()}
             className="max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
           >
-            <div className="grid gap-2 p-3">
+            <div className="grid grid-cols-1 gap-2 p-3">
               <div className="flex items-center justify-between px-1">
                 <h3 className="font-display text-sm font-semibold">Escolher cor</h3>
                 <button type="button" onClick={() => setOpen(false)} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>

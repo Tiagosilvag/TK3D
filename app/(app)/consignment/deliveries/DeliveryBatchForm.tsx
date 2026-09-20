@@ -181,7 +181,7 @@ export function DeliveryBatchForm({
       className="w-full [--tk-dialog-cap:28rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
       {view === 'pickProduct' && (
-        <div className="grid gap-3 p-5">
+        <div className="grid grid-cols-1 gap-3 p-5">
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => setView('form')} aria-label="Voltar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">←</button>
             <h3 className="font-display text-base font-semibold">Escolher produto</h3>
@@ -203,7 +203,7 @@ export function DeliveryBatchForm({
       )}
 
       {view === 'pickVariant' && selectedProduct && (
-        <div className="grid gap-3 p-5">
+        <div className="grid grid-cols-1 gap-3 p-5">
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => setView('pickProduct')} aria-label="Voltar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">←</button>
             <h3 className="font-display text-base font-semibold">{selectedProduct.productName}</h3>
@@ -275,7 +275,7 @@ export function DeliveryBatchForm({
       )}
 
       {view === 'form' && (
-        <form action={action} className="grid gap-3 p-5">
+        <form action={action} className="grid grid-cols-1 gap-3 p-5">
           <div className="mb-1 flex items-center justify-between">
             <h3 className="font-display text-base font-semibold">Registrar entrega</h3>
             <button type="button" onClick={() => dialogRef.current?.close()} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>

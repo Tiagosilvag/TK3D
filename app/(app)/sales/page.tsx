@@ -192,7 +192,7 @@ export default async function SalesPage({
 
       <DateRangeFilter action="/sales" from={range.from} to={range.to} hiddenParams={{ channel: activeChannel }} />
 
-      <div className="mb-3 mt-6 flex gap-1">
+      <div className="mb-3 mt-6 flex flex-wrap gap-1">
         {CHANNEL_FILTERS.map((f) => {
           const qs = new URLSearchParams()
           if (f.value) qs.set('channel', f.value)

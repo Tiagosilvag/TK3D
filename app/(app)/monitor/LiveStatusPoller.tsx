@@ -110,7 +110,7 @@ function PrintControls({
         onClose={() => setDialogOpen(false)}
         className="w-96 rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
       >
-        <div className="grid gap-3 p-4">
+        <div className="grid grid-cols-1 gap-3 p-4">
           <h3 className="font-display text-sm font-semibold">Parar impressão em &ldquo;{printerName}&rdquo;?</h3>
           <p className="text-sm text-slate-500 dark:text-slate-400">Essa ação não pode ser desfeita — a peça em andamento será perdida.</p>
           <div className="mt-2 flex items-center justify-end gap-3">

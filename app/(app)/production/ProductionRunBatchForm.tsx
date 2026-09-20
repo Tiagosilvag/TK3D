@@ -668,7 +668,7 @@ export function ProductionRunBatchForm({
       onClose={() => { onOpenChange(false); resetAll() }}
       className="w-full [--tk-dialog-cap:64rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
-      <form action={mode === 'individual' ? individualAction : plateAction} className="grid gap-4 p-5">
+      <form action={mode === 'individual' ? individualAction : plateAction} className="grid grid-cols-1 gap-4 p-5">
         <div className="flex items-center justify-between">
           <h3 className="font-display text-base font-semibold">Registrar produção</h3>
           <button type="button" onClick={() => dialogRef.current?.close()} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>

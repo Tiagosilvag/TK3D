@@ -47,7 +47,7 @@ export function RestockForm({ accessoryId, accessoryName, className = 'text-xs t
         onClose={() => { setQuantity(''); setTotalCost('') }}
         className="w-80 rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
       >
-        <form action={action} className="grid gap-3 p-4">
+        <form action={action} className="grid grid-cols-1 gap-3 p-4">
           <h3 className="font-display text-sm font-semibold">Repor estoque</h3>
           <p className="text-sm text-slate-500 dark:text-slate-400">{accessoryName}</p>
           <input type="hidden" name="accessoryId" value={accessoryId} />
