@@ -2,7 +2,7 @@
 import { prisma } from '@/lib/prisma'
 import { decryptCredential } from '@/lib/crypto'
 import { sendAnycubicOrder, ANYCUBIC_ORDER_ID } from '@/lib/anycubic/auth'
-import { getAnycubicCurrentTaskId } from '@/lib/anycubic/listener'
+import { getAnycubicCurrentTaskId, refreshAnycubicStatusNow } from '@/lib/anycubic/listener'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
@@ -30,6 +30,9 @@ async function runCommand(printerId: string, orderId: number): Promise<ActionRes
     }
     const authToken = decryptCredential(settings.anycubicAuthTokenEncrypted)
     await sendAnycubicOrder(authToken, { printerId: printer.anycubicPrinterId, projectId, orderId })
+    // A impressora leva um instante pra aplicar o comando -- confere o status
+    // por HTTP logo depois (sem bloquear a resposta ao usuário).
+    setTimeout(() => void refreshAnycubicStatusNow().catch(() => {}), 2500)
     revalidatePath('/monitor')
     return { success: true }
   } catch (err) {

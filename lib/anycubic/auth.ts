@@ -2,6 +2,7 @@
 // oficial -- ver spec 2026-09-12 §2). Sem login programático: o usuário
 // cola o token extraído manualmente do Anycubic Slicer Next (Windows).
 import { buildSignedHeadersNow } from './signing'
+import { parseLiveProject, type AnycubicLiveProject } from './liveProject'
 
 const BASE_URL = 'https://cloud-universe.anycubic.com/p/p/workbench/api'
 // Bucket S3 público onde a Anycubic guarda as thumbnails de projeto --
@@ -240,6 +241,24 @@ export async function fetchProjectInfo(authToken: string, taskId: number): Promi
   if (!projectData) return { thumbnailUrl: null, materialBreakdown: null, modelDimensions: null, printSpeedModeLabels: null }
 
   return extractThumbnailAndSliceInfo(projectData)
+}
+
+// Projetos mais recentes da conta (o primeiro é o job atual, quando há) --
+// base do status ao vivo por HTTP (ver lib/anycubic/liveProject.ts). Lança se
+// a chamada falhar OU se a API responder com erro de aplicação (code != 1,
+// ex.: token de sessão invalidado por um login novo); campo ausente/formato
+// inesperado nunca lança, só some do resultado.
+export async function fetchLiveProjects(authToken: string): Promise<{ projects: AnycubicLiveProject[]; sampleKeys: string[] }> {
+  const res = await signedFetch('/work/project/getProjects?page=1&limit=10', { authToken })
+  if (!res.ok) throw new Error(`HTTP ${res.status} ao buscar projetos da Anycubic`)
+  const body = (await res.json()) as { code?: number; msg?: string; data?: unknown }
+  if (body.code !== undefined && body.code !== 1) throw new Error(`Anycubic code=${body.code} msg=${body.msg ?? ''}`)
+  const records = Array.isArray(body.data) ? body.data : []
+  const first = records.find((r): r is Record<string, unknown> => typeof r === 'object' && r !== null)
+  return {
+    projects: records.map(parseLiveProject).filter((p): p is AnycubicLiveProject => p !== null),
+    sampleKeys: first ? Object.keys(first) : [],
+  }
 }
 
 export type AnycubicHistoryTask = {

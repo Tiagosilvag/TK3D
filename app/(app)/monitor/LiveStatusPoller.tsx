@@ -237,9 +237,9 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
           )}
           <div className="min-w-0 flex-1">
             <h3 className="font-display text-base font-semibold text-slate-900 dark:text-slate-100">{printer.name}</h3>
-            {!printer.mqtt.live && (
+            {!printer.connection.live && (
               <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                {printer.mqtt.status === 'expired'
+                {printer.connection.status === 'expired'
                   ? 'Conexão com a nuvem recusada — reconecte a conta em Impressoras. Os dados abaixo estão desatualizados.'
                   : 'Sem conexão com a nuvem no momento — os dados abaixo podem estar desatualizados.'}
               </p>

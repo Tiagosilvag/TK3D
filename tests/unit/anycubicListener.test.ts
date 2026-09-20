@@ -106,6 +106,58 @@ describe('createAnycubicListenerCore', () => {
     expect(onJobStart).not.toHaveBeenCalled()
   })
 
+  it('ingestProject (fallback HTTP) atualiza status, taskid e dispara onJobStart uma vez', () => {
+    const onJobStart = vi.fn()
+    const core = createAnycubicListenerCore({
+      printers: [{ id: 'p1', anycubicEnabled: true, anycubicPrinterKey: 'KEY1' }],
+      subscribe: vi.fn(),
+      onCapture: vi.fn(),
+      onJobStart,
+    })
+    core.start()
+    core.ingestProject('p1', 555, { printState: 'PAUSED', progressPercent: 25, currentLayer: 48, totalLayers: 451 })
+    core.ingestProject('p1', 555, { printState: 'PRINTING', progressPercent: 26 })
+
+    expect(onJobStart).toHaveBeenCalledTimes(1)
+    expect(onJobStart).toHaveBeenCalledWith('p1', 555)
+    expect(core.getCurrentTaskId('p1')).toBe(555)
+    const status = core.getLiveStatus('p1')
+    expect(status?.printState).toBe('PRINTING')
+    expect(status?.progressPercent).toBe(26)
+    // campo que o segundo patch não trouxe continua do primeiro
+    expect(status?.currentLayer).toBe(48)
+  })
+
+  it('ingestProject preserva o que o MQTT já preencheu (temperaturas)', () => {
+    const handlers: Record<string, (payload: unknown) => void> = {}
+    const core = createAnycubicListenerCore({
+      printers: [{ id: 'p1', anycubicEnabled: true, anycubicPrinterKey: 'KEY1' }],
+      subscribe: (key, handler) => {
+        handlers[key] = handler
+      },
+      onCapture: vi.fn(),
+    })
+    core.start()
+    handlers['KEY1']({ type: 'tempature', action: 'auto', state: 'done', data: { curr_nozzle_temp: 210 } })
+    core.ingestProject('p1', 1, { printState: 'PRINTING', progressPercent: 10 })
+    expect(core.getLiveStatus('p1')?.nozzleTemp).toBe(210)
+    expect(core.getLiveStatus('p1')?.progressPercent).toBe(10)
+  })
+
+  it('ingestProject ignora impressora que não está sendo monitorada', () => {
+    const onJobStart = vi.fn()
+    const core = createAnycubicListenerCore({
+      printers: [{ id: 'p1', anycubicEnabled: true, anycubicPrinterKey: 'KEY1' }],
+      subscribe: vi.fn(),
+      onCapture: vi.fn(),
+      onJobStart,
+    })
+    core.start()
+    core.ingestProject('desconhecida', 9, { printState: 'PRINTING' })
+    expect(onJobStart).not.toHaveBeenCalled()
+    expect(core.getLiveStatus('desconhecida')).toBeNull()
+  })
+
   it('getCurrentTaskId expõe o taskid do job atual (ajuste "controle de impressão Anycubic": exigido pra pausar/retomar/parar)', () => {
     const handlers: Record<string, (payload: unknown) => void> = {}
     const core = createAnycubicListenerCore({

@@ -12,9 +12,10 @@ import {
 import { createAnycubicJobTracker, type AnycubicCaptureDraft } from '@/lib/anycubic/jobTracker'
 import { encryptMqttToken, buildMqttUsername, buildMqttClientId } from '@/lib/anycubic/mqttCrypto'
 import { ANYCUBIC_MQTT_CA_CERT, ANYCUBIC_MQTT_CLIENT_CERT, ANYCUBIC_MQTT_CLIENT_KEY } from '@/lib/anycubic/certs'
-import { fetchProjectInfo, type AnycubicProjectInfo } from '@/lib/anycubic/auth'
+import { fetchProjectInfo, fetchLiveProjects, type AnycubicProjectInfo } from '@/lib/anycubic/auth'
+import { isInProgressStatus, statusPatchFromLiveProject } from '@/lib/anycubic/liveProject'
 
-type PrinterRef = { id: string; anycubicEnabled: boolean; anycubicPrinterKey: string | null }
+type PrinterRef = { id: string; anycubicEnabled: boolean; anycubicPrinterKey: string | null; anycubicPrinterId?: number | null }
 
 // Núcleo puro/testável -- mesmo formato do lib/bambu/listener.ts#createListenerCore.
 // Diferença chave: cada mensagem MQTT da Anycubic é um PATCH parcial (ver
@@ -34,30 +35,39 @@ export function createAnycubicListenerCore(opts: {
   const trackers = new Map<string, ReturnType<typeof createAnycubicJobTracker>>()
   const lastTaskId = new Map<string, number>()
 
+  // Caminho ÚNICO de atualização de status, usado pelo MQTT e pelo fallback
+  // HTTP (ingestProject) -- assim job novo/captura de fim de job se
+  // comportam igual não importa de onde o dado veio.
+  function apply(printerId: string, taskId: number | undefined, patch: Partial<AnycubicStatus>) {
+    const tracker = trackers.get(printerId)
+    if (!tracker) return
+    if (taskId !== undefined && taskId !== lastTaskId.get(printerId)) {
+      lastTaskId.set(printerId, taskId)
+      opts.onJobStart?.(printerId, taskId)
+    }
+    const prev = liveStatus.get(printerId) ?? INITIAL_ANYCUBIC_STATUS
+    const next = applyStatusPatch(prev, patch)
+    liveStatus.set(printerId, next)
+    const capture = tracker.handleStatus(next, new Date())
+    if (capture) opts.onCapture(printerId, capture)
+  }
+
   function start() {
     for (const printer of opts.printers) {
       if (!printer.anycubicEnabled || !printer.anycubicPrinterKey) continue
-      const tracker = createAnycubicJobTracker()
-      trackers.set(printer.id, tracker)
+      trackers.set(printer.id, createAnycubicJobTracker())
       opts.subscribe(printer.anycubicPrinterKey, (payload) => {
         const msg = parseAnycubicPayload(payload)
         if (!msg) return
-
-        const taskId = extractAnycubicTaskId(msg)
-        if (taskId !== undefined && taskId !== lastTaskId.get(printer.id)) {
-          lastTaskId.set(printer.id, taskId)
-          opts.onJobStart?.(printer.id, taskId)
-        }
-
-        const patch = buildStatusPatch(msg)
-        const prev = liveStatus.get(printer.id) ?? INITIAL_ANYCUBIC_STATUS
-        const next = applyStatusPatch(prev, patch)
-        liveStatus.set(printer.id, next)
-
-        const capture = tracker.handleStatus(next, new Date())
-        if (capture) opts.onCapture(printer.id, capture)
+        apply(printer.id, extractAnycubicTaskId(msg), buildStatusPatch(msg))
       })
     }
+  }
+
+  // Dado vindo do HTTP (ver lib/anycubic/liveProject.ts), quando o MQTT
+  // está mudo.
+  function ingestProject(printerId: string, taskId: number, patch: Partial<AnycubicStatus>) {
+    apply(printerId, taskId, patch)
   }
 
   function getLiveStatus(printerId: string): AnycubicStatus | null {
@@ -72,7 +82,7 @@ export function createAnycubicListenerCore(opts: {
     return lastTaskId.get(printerId) ?? null
   }
 
-  return { start, getLiveStatus, getCurrentTaskId }
+  return { start, getLiveStatus, getCurrentTaskId, ingestProject }
 }
 
 // --- Casca real (não coberta por teste automatizado -- depende da nuvem
@@ -94,6 +104,19 @@ const currentProjectInfo = new Map<string, AnycubicProjectInfo>()
 // currentProjectInfo).
 const PROJECT_INFO_REFRESH_MS = 10 * 60_000
 let projectInfoRefreshTimer: ReturnType<typeof setInterval> | null = null
+
+// Fallback HTTP (lib/anycubic/liveProject.ts): em produção o MQTT da Anycubic
+// conecta e cai ~ms depois em loop, mas o HTTP funciona -- enquanto o MQTT
+// estiver mudo o status vem de GET /work/project/getProjects.
+const HTTP_POLL_MS = 15_000
+const MQTT_SILENCE_BEFORE_POLL_MS = 30_000
+const DATA_FRESH_MS = 60_000
+let httpPollTimer: ReturnType<typeof setInterval> | null = null
+let lastMqttMessageAt = 0
+let lastDataAt = 0
+let lastPollErrorLogAt = 0
+let loggedProjectShape = false
+const lastPolledState = new Map<string, string>()
 
 const MQTT_HOST = 'mqtt-universe.anycubic.com'
 const MQTT_PORT = 8883
@@ -148,7 +171,7 @@ export async function startAnycubicListener(): Promise<void> {
   const printers = (
     await prisma.printer.findMany({
       where: { anycubicEnabled: true, anycubicPrinterKey: { not: null } },
-      select: { id: true, anycubicEnabled: true, anycubicPrinterKey: true },
+      select: { id: true, anycubicEnabled: true, anycubicPrinterKey: true, anycubicPrinterId: true },
     })
   ).filter((p) => p.anycubicPrinterKey?.trim())
   if (printers.length === 0) {
@@ -278,7 +301,10 @@ export async function startAnycubicListener(): Promise<void> {
         const parts = receivedTopic.split('/')
         if (parts[6] !== printerKey) return
         try {
-          onMessage(JSON.parse(buffer.toString()))
+          const payload = JSON.parse(buffer.toString())
+          lastMqttMessageAt = Date.now()
+          lastDataAt = lastMqttMessageAt
+          onMessage(payload)
         } catch {
           // payload malformado -- ignora esta mensagem, mantém a conexão
         }
@@ -322,6 +348,56 @@ export async function startAnycubicListener(): Promise<void> {
     }
   }, PROJECT_INFO_REFRESH_MS)
   projectInfoRefreshTimer.unref?.()
+
+  lastMqttMessageAt = 0
+  lastPolledState.clear()
+  const poll = () => pollLiveProjects(printers, authToken)
+  if (httpPollTimer) clearInterval(httpPollTimer)
+  httpPollTimer = setInterval(poll, HTTP_POLL_MS)
+  httpPollTimer.unref?.()
+  void poll()
+}
+
+// Ingere o(s) projeto(s) atual(is) vindo(s) por HTTP -- só quando o MQTT
+// está mudo (ou force=true, ex.: logo depois de pausar/retomar). Regras pra
+// não inventar estado: só entra registro EM ANDAMENTO, ou o registro do
+// próprio job que já estávamos acompanhando (pra virar Concluído/Cancelado);
+// o registro mais recente ser um job velho já concluído NÃO vira "Concluído"
+// num card de impressora ociosa.
+async function pollLiveProjects(
+  printers: { id: string; anycubicPrinterId?: number | null }[],
+  authToken: string,
+  force = false,
+): Promise<void> {
+  if (!core) return
+  if (!force && Date.now() - lastMqttMessageAt < MQTT_SILENCE_BEFORE_POLL_MS) return
+  try {
+    const { projects, sampleKeys } = await fetchLiveProjects(authToken)
+    lastDataAt = Date.now()
+    if (!loggedProjectShape) {
+      loggedProjectShape = true
+      console.error(`[anycubic] status via HTTP ativo (fallback do MQTT). Campos do registro: ${sampleKeys.join(',')}`)
+    }
+    for (const printer of printers) {
+      if (printer.anycubicPrinterId == null) continue
+      const project = projects.find((p) => p.printerId === printer.anycubicPrinterId)
+      if (!project) continue
+      const knownTask = core.getCurrentTaskId(printer.id)
+      if (!isInProgressStatus(project.printStatus) && knownTask !== project.id) continue
+      const patch = statusPatchFromLiveProject(project)
+      const signature = `${project.id}:${patch.printState}`
+      if (lastPolledState.get(printer.id) !== signature) {
+        lastPolledState.set(printer.id, signature)
+        console.error(`[anycubic] HTTP: printer=${printer.id} projeto=${project.id} estado=${patch.printState ?? '?'} progresso=${project.progressPercent ?? '?'}%`)
+      }
+      core.ingestProject(printer.id, project.id, patch)
+    }
+  } catch (err) {
+    if (Date.now() - lastPollErrorLogAt > 60_000) {
+      lastPollErrorLogAt = Date.now()
+      console.error('[anycubic] polling HTTP falhou:', err instanceof Error ? err.message : err)
+    }
+  }
 }
 
 export function getAnycubicLiveStatus(printerId: string): AnycubicStatus | null {
@@ -357,6 +433,10 @@ export async function restartAnycubicListener(reason: string = 'desconhecido'): 
     clearInterval(projectInfoRefreshTimer)
     projectInfoRefreshTimer = null
   }
+  if (httpPollTimer) {
+    clearInterval(httpPollTimer)
+    httpPollTimer = null
+  }
   currentProjectInfo.clear()
   connectionStatus = 'not_configured'
   await startAnycubicListener()
@@ -368,4 +448,22 @@ export function getAnycubicConnectionStatus(): AnycubicConnectionStatus {
 
 export function isAnycubicMqttLive(): boolean {
   return client?.connected === true
+}
+
+// Chegou dado recente (MQTT OU polling HTTP)? É isso que importa pro card
+// do Monitoramento -- não se o socket MQTT está de pé.
+export function isAnycubicDataFresh(): boolean {
+  return Date.now() - lastDataAt < DATA_FRESH_MS
+}
+
+// Atualiza o status agora via HTTP (usado logo depois de pausar/retomar/
+// parar, pra tela não esperar o próximo ciclo de polling).
+export async function refreshAnycubicStatusNow(): Promise<void> {
+  const settings = await prisma.settings.findUnique({ where: { id: 1 } })
+  if (!settings?.anycubicAuthTokenEncrypted) return
+  const printers = await prisma.printer.findMany({
+    where: { anycubicEnabled: true, anycubicPrinterId: { not: null } },
+    select: { id: true, anycubicPrinterId: true },
+  })
+  await pollLiveProjects(printers, decryptCredential(settings.anycubicAuthTokenEncrypted), true)
 }
