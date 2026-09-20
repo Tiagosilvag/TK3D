@@ -153,6 +153,18 @@ export function SaleForm({
   const [giftProductId, setGiftProductId] = useState('')
   const [giftQuantity, setGiftQuantity] = useState('1')
 
+  // Melhoria "Seleção de variações em lote": produto com MAIS DE UMA cor em
+  // estoque troca os campos únicos (Cor/Quantidade/Valor unitário) por uma
+  // tabela com 1 linha por variação, pra não repetir "escolher cor → digitar
+  // valor → adicionar produto" uma vez pra cada cor. Produto de 1 variação
+  // só (ou nenhuma) continua no fluxo simples de sempre, sem tocar neste
+  // bloco de estado.
+  const [batchAllQty, setBatchAllQty] = useState('1')
+  const [batchAllPrice, setBatchAllPrice] = useState('')
+  const [batchSelected, setBatchSelected] = useState<Record<string, boolean>>({})
+  const [batchQty, setBatchQty] = useState<Record<string, string>>({})
+  const [batchPrice, setBatchPrice] = useState<Record<string, string>>({})
+
   const selectedProduct = useMemo(() => products.find((p) => p.productId === productId), [products, productId])
 
   // Melhoria "Vendas por variante": mesma UX de DeliveryBatchForm -- venda
@@ -161,6 +173,7 @@ export function SaleForm({
   // Produto sem variante conhecida (getProductVariantBreakdown não achou
   // nenhuma) não pede cor -- mesma convenção de Entregas.
   const requiresColorChoice = Boolean(selectedProduct && selectedProduct.variants.length > 0)
+  const showBatchTable = !editingSale && Boolean(selectedProduct && selectedProduct.variants.length > 1)
 
   const quantityNum = Number(quantity) || 0
   const unitPriceNum = Number(unitPrice) || 0
@@ -242,10 +255,117 @@ export function SaleForm({
     }
   }
 
+  // Seleção em lote: linhas/checkboxes da tabela só existem pra variações
+  // do produto selecionado no momento -- trocar de produto reinicia tudo
+  // (marca por padrão as variações com estoque, replica os campos
+  // compartilhados "(todas)" pro valor/quantidade inicial de cada linha).
   function handleProductChange(newProductId: string) {
     setProductId(newProductId)
     setColorComboKey('')
+    const product = products.find((p) => p.productId === newProductId)
+    if (product && product.variants.length > 1) {
+      const selected: Record<string, boolean> = {}
+      const qty: Record<string, string> = {}
+      const price: Record<string, string> = {}
+      for (const v of product.variants) {
+        selected[v.key] = v.available > 0
+        qty[v.key] = batchAllQty
+        price[v.key] = batchAllPrice
+      }
+      setBatchSelected(selected)
+      setBatchQty(qty)
+      setBatchPrice(price)
+    } else {
+      setBatchSelected({})
+      setBatchQty({})
+      setBatchPrice({})
+    }
     void maybePrefillMarketplacePrice(newProductId, channel)
+  }
+
+  // Campos compartilhados "(todas)": sobrescrevem o valor/quantidade de
+  // TODAS as linhas da tabela no momento em que são digitados -- depois
+  // disso cada linha continua editável individualmente (edição de linha não
+  // realimenta o campo compartilhado, é via de mão única).
+  function applyAllQty(value: string) {
+    setBatchAllQty(value)
+    setBatchQty((prev) => {
+      const next = { ...prev }
+      for (const key of Object.keys(next)) next[key] = value
+      return next
+    })
+  }
+
+  function applyAllPrice(value: string) {
+    setBatchAllPrice(value)
+    setBatchPrice((prev) => {
+      const next = { ...prev }
+      for (const key of Object.keys(next)) next[key] = value
+      return next
+    })
+  }
+
+  function markAllWithStock() {
+    if (!selectedProduct) return
+    setBatchSelected((prev) => {
+      const next = { ...prev }
+      for (const v of selectedProduct.variants) {
+        if (v.available > 0) next[v.key] = true
+      }
+      return next
+    })
+  }
+
+  const batchSelectedKeys = useMemo(
+    () => (selectedProduct ? selectedProduct.variants.filter((v) => batchSelected[v.key]).map((v) => v.key) : []),
+    [selectedProduct, batchSelected],
+  )
+  const batchSelectedCount = batchSelectedKeys.length
+  const batchPreview = useMemo(() => {
+    let units = 0
+    let total = 0
+    for (const key of batchSelectedKeys) {
+      const q = Number(batchQty[key]) || 0
+      const p = Number(batchPrice[key]) || 0
+      units += q
+      total += q * p
+    }
+    return { units, total }
+  }, [batchSelectedKeys, batchQty, batchPrice])
+
+  // Adiciona 1 item por variação marcada na lista "Itens desta venda" (mesma
+  // lista que o fluxo simples de 1 produto já usa via handleAddItem), usando
+  // a quantidade/valor daquela linha específica no momento do clique. Depois
+  // de adicionar, desmarca os checkboxes mas mantém os valores preenchidos,
+  // caso o usuário queira adicionar de novo com ajustes.
+  function handleAddBatch() {
+    if (!selectedProduct || batchSelectedKeys.length === 0) return
+    const newItems: ItemDraft[] = []
+    for (const key of batchSelectedKeys) {
+      const variant = selectedProduct.variants.find((v) => v.key === key)
+      if (!variant) continue
+      const q = Number(batchQty[key]) || 0
+      const p = Number(batchPrice[key]) || 0
+      if (q <= 0) {
+        alert(`Informe uma quantidade válida para ${variant.label}`)
+        return
+      }
+      if (p <= 0) {
+        alert(`Informe um valor unitário válido para ${variant.label}`)
+        return
+      }
+      newItems.push({
+        productId: selectedProduct.productId,
+        productName: selectedProduct.productName,
+        colorComboKey: key,
+        colorLabel: variant.label,
+        colorHex: variant.colorHex,
+        quantity: q,
+        unitPrice: p,
+      })
+    }
+    setItems((prev) => [...prev, ...newItems])
+    setBatchSelected({})
   }
 
   function handleChannelChange(newChannel: string) {
@@ -344,6 +464,11 @@ export function SaleForm({
       setGiftEnabled(false)
       setGiftProductId('')
       setGiftQuantity('1')
+      setBatchAllQty('1')
+      setBatchAllPrice('')
+      setBatchSelected({})
+      setBatchQty({})
+      setBatchPrice({})
     } else {
       alert(result.error)
     }
@@ -373,7 +498,7 @@ export function SaleForm({
             ))}
           </select>
         </label>
-        {requiresColorChoice && (
+        {!showBatchTable && requiresColorChoice && (
           <label className="text-sm">
             Cor/Variação {editingSale && '*'}
             <select name="colorComboKey" value={colorComboKey} onChange={(e) => setColorComboKey(e.target.value)} className="tk-input-full" required={Boolean(editingSale)}>
@@ -386,38 +511,145 @@ export function SaleForm({
             </select>
           </label>
         )}
-        <label className="text-sm">
-          Quantidade {editingSale && '*'}
-          <input name="quantity" type="number" step="1" min="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="tk-input-full" required={Boolean(editingSale)} />
-        </label>
-        <label className="text-sm">
-          Valor unitário {editingSale && '*'} {prefilling && <span className="text-xs font-normal text-slate-400 dark:text-slate-500">(preenchendo…)</span>}
-          <input
-            name="unitPrice"
-            type="number"
-            step="0.01"
-            min="0.01"
-            value={unitPrice}
-            onChange={(e) => setUnitPrice(e.target.value)}
-            className="tk-input-full"
-            required={Boolean(editingSale)}
-          />
-          {draftFeePreview && !prefilling && (
-            <span className="mt-1 block text-xs font-normal text-slate-400 dark:text-slate-500">
-              Taxa {draftFeePreview.label}: {(draftFeePreview.feePercent * 100).toFixed(0)}% + {formatCurrency(draftFeePreview.feeFixed)} (≈{formatCurrency(draftFeePreview.feeAmountPerUnit)}/un.)
-            </span>
-          )}
-        </label>
+        {!showBatchTable && (
+          <label className="text-sm">
+            Quantidade {editingSale && '*'}
+            <input name="quantity" type="number" step="1" min="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="tk-input-full" required={Boolean(editingSale)} />
+          </label>
+        )}
+        {!showBatchTable && (
+          <label className="text-sm">
+            Valor unitário {editingSale && '*'} {prefilling && <span className="text-xs font-normal text-slate-400 dark:text-slate-500">(preenchendo…)</span>}
+            <input
+              name="unitPrice"
+              type="number"
+              step="0.01"
+              min="0.01"
+              value={unitPrice}
+              onChange={(e) => setUnitPrice(e.target.value)}
+              className="tk-input-full"
+              required={Boolean(editingSale)}
+            />
+            {draftFeePreview && !prefilling && (
+              <span className="mt-1 block text-xs font-normal text-slate-400 dark:text-slate-500">
+                Taxa {draftFeePreview.label}: {(draftFeePreview.feePercent * 100).toFixed(0)}% + {formatCurrency(draftFeePreview.feeFixed)} (≈{formatCurrency(draftFeePreview.feeAmountPerUnit)}/un.)
+              </span>
+            )}
+          </label>
+        )}
+
+        {/* Melhoria "Seleção de variações em lote": produto com mais de uma
+            cor em estoque -- 1 linha por variação em vez de repetir
+            "escolher cor → digitar valor → adicionar produto" pra cada
+            cor. */}
+        {showBatchTable && selectedProduct && (
+          <div className="col-span-full rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Selecionar variações para adicionar de uma vez</p>
+              <button type="button" onClick={markAllWithStock} className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                Marcar todas com estoque
+              </button>
+            </div>
+            <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-3">
+              <label className="text-xs">
+                Valor unitário (todas)
+                <input type="number" step="0.01" min="0.01" value={batchAllPrice} onChange={(e) => applyAllPrice(e.target.value)} className="tk-input-full" />
+              </label>
+              <label className="text-xs">
+                Quantidade (todas)
+                <input type="number" step="1" min="1" value={batchAllQty} onChange={(e) => applyAllQty(e.target.value)} className="tk-input-full" />
+              </label>
+              <p className="col-span-2 self-end text-xs text-slate-400 dark:text-slate-500 md:col-span-1">
+                Dá pra ajustar valor ou quantidade de uma variação específica direto na linha dela, se for diferente.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="tk-table-head-row">
+                    <th className="w-8"></th>
+                    <th className="py-1">Cor</th>
+                    <th className="text-center">Disponível</th>
+                    <th className="text-center">Quantidade</th>
+                    <th className="text-center">Valor unitário</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedProduct.variants.map((v) => {
+                    const outOfStock = v.available <= 0
+                    return (
+                      <tr key={v.key} className={`tk-row ${outOfStock ? 'opacity-40' : ''}`}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(batchSelected[v.key])}
+                            disabled={outOfStock}
+                            onChange={(e) => setBatchSelected((prev) => ({ ...prev, [v.key]: e.target.checked }))}
+                            className="rounded border"
+                          />
+                        </td>
+                        <td className="py-1">
+                          <span className="flex items-center gap-2">
+                            {v.colorHex && <span style={{ background: v.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                            {v.label}
+                          </span>
+                        </td>
+                        <td className="text-center text-slate-500 dark:text-slate-400">{v.available} disponível</td>
+                        <td className="text-center">
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            value={batchQty[v.key] ?? ''}
+                            disabled={outOfStock}
+                            onChange={(e) => setBatchQty((prev) => ({ ...prev, [v.key]: e.target.value }))}
+                            className="tk-input w-20 text-center"
+                          />
+                        </td>
+                        <td className="text-center">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            value={batchPrice[v.key] ?? ''}
+                            disabled={outOfStock}
+                            onChange={(e) => setBatchPrice((prev) => ({ ...prev, [v.key]: e.target.value }))}
+                            className="tk-input w-24 text-center"
+                          />
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {batchPreview.units} {batchPreview.units === 1 ? 'unidade selecionada' : 'unidades selecionadas'} · {formatCurrency(batchPreview.total)} no total
+              </p>
+              <button
+                type="button"
+                onClick={handleAddBatch}
+                disabled={batchSelectedCount === 0}
+                className="tk-btn-primary disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Adicionar {batchSelectedCount} {batchSelectedCount === 1 ? 'variação' : 'variações'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {!editingSale && (
           <div className="col-span-full">
-            <button
-              type="button"
-              onClick={handleAddItem}
-              className="w-full rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60"
-            >
-              + Adicionar produto
-            </button>
+            {!showBatchTable && (
+              <button
+                type="button"
+                onClick={handleAddItem}
+                className="w-full rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60"
+              >
+                + Adicionar produto
+              </button>
+            )}
             {items.length > 0 && (
               <div className="mt-2 space-y-1.5">
                 {items.map((item, i) => (
@@ -432,6 +664,10 @@ export function SaleForm({
                     <button type="button" onClick={() => removeItem(i)} aria-label="Remover item" className="shrink-0 text-slate-400 hover:text-red-600 dark:hover:text-red-400">🗑</button>
                   </div>
                 ))}
+                <div className="flex items-center justify-between border-t border-slate-100 pt-1.5 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                  <span>Total de quantidade: {items.reduce((sum, i) => sum + i.quantity, 0)}</span>
+                  <span>Total de valor: {formatCurrency(items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0))}</span>
+                </div>
               </div>
             )}
           </div>
