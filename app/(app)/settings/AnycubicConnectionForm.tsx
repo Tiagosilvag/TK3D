@@ -121,8 +121,9 @@ export function AnycubicConnectionForm({
           </li>
           <li>Pronto: o token é encontrado e a conexão é feita sozinha (nas próximas vezes a janela já abre na pasta certa).</li>
           <li>
-            Recomendado: depois de conectar, feche o Slicer Next (Gerenciador de Tarefas → AnycubicSlicerNext.exe).
-            Ele usa a mesma identidade de conexão do TK3D, então os dois ao mesmo tempo podem se atrapalhar.
+            Cada login novo na conta Anycubic (por exemplo, abrir o Slicer Next) invalida a sessão anterior. Se o
+            Monitoramento mostrar &ldquo;conexão recusada&rdquo;, é só repetir o passo 2 — conecte por último, depois de
+            fechar o Slicer Next.
           </li>
         </ol>
         <details className="mt-2">
@@ -136,15 +137,26 @@ export function AnycubicConnectionForm({
         </details>
       </details>
       <div className="mt-4">
+        <input ref={folderInputRef} type="file" multiple onChange={handleFolderSelect} className="hidden" />
         {connectedEmail ? (
           <div className="text-sm">
             <p>
               Conectado como <strong>{connectedEmail}</strong>
             </p>
             <p className={`mt-1 text-xs font-medium ${STATUS_BADGE[connectionStatus].className}`}>{STATUS_BADGE[connectionStatus].label}</p>
-            <div className="mt-2 flex gap-3">
+            {fileError && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{fileError}</p>}
+            {error && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>}
+            <div className="mt-2 flex flex-wrap gap-3">
               <button type="button" onClick={handleReconnect} className="text-sm text-violet-600 hover:underline dark:text-violet-400">
                 Reconectar
+              </button>
+              <button
+                type="button"
+                onClick={handleLogConnectClick}
+                disabled={connecting}
+                className="text-sm text-violet-600 hover:underline disabled:opacity-60 dark:text-violet-400"
+              >
+                {connecting ? 'Renovando…' : 'Renovar token pelo log do Slicer Next'}
               </button>
               <button type="button" onClick={handleDisconnect} className="text-sm text-red-600 hover:underline dark:text-red-400">
                 Desconectar
@@ -153,7 +165,6 @@ export function AnycubicConnectionForm({
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            <input ref={folderInputRef} type="file" multiple onChange={handleFolderSelect} className="hidden" />
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"

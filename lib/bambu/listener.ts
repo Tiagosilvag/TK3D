@@ -75,6 +75,12 @@ let client: MqttClient | null = null
 // pelo usuário: a Bambu cria o registro de task no INÍCIO do job (não só
 // no fim), então a task "mais recente" já é a que está imprimindo agora.
 const currentThumbnails = new Map<string, string | null>()
+// A URL da capa vem assinada/temporária da nuvem e vence no meio de
+// impressões longas (imagem quebrada "às vezes") -- renovada periodicamente
+// enquanto o job está em andamento (currentThumbnails só tem entrada de job
+// ativo: preenchida no início, apagada ao capturar o fim).
+const THUMBNAIL_REFRESH_MS = 5 * 60_000
+let thumbnailRefreshTimer: ReturnType<typeof setInterval> | null = null
 
 const BROKER_BY_REGION: Record<string, string> = {
   US: 'mqtts://us.mqtt.bambulab.com:8883',
@@ -215,6 +221,20 @@ export async function startBambuListener(): Promise<void> {
     },
   })
   core.start()
+
+  if (thumbnailRefreshTimer) clearInterval(thumbnailRefreshTimer)
+  thumbnailRefreshTimer = setInterval(async () => {
+    for (const printer of printers) {
+      if (!printer.bambuSerial || !currentThumbnails.has(printer.id)) continue
+      try {
+        const task = await fetchLatestTask(token, printer.bambuSerial)
+        if (task?.thumbnailUrl) currentThumbnails.set(printer.id, task.thumbnailUrl)
+      } catch (err) {
+        console.error('[bambu] falha ao renovar thumbnail do job atual:', err)
+      }
+    }
+  }, THUMBNAIL_REFRESH_MS)
+  thumbnailRefreshTimer.unref?.()
 }
 
 export function getLiveStatus(printerId: string): BambuStatus | null {
@@ -248,6 +268,10 @@ export async function restartBambuListener(reason: string = 'desconhecido'): Pro
     client = null
   }
   core = null
+  if (thumbnailRefreshTimer) {
+    clearInterval(thumbnailRefreshTimer)
+    thumbnailRefreshTimer = null
+  }
   currentThumbnails.clear()
   connectionStatus = 'not_configured'
   await startBambuListener()
@@ -255,6 +279,13 @@ export async function restartBambuListener(reason: string = 'desconhecido'): Pro
 
 export function getConnectionStatus(): BambuConnectionStatus {
   return connectionStatus
+}
+
+// Estado REAL do socket agora (connectionStatus só muda em connect/error e
+// fica 'connected' depois de uma queda silenciosa) -- usado pra avisar no
+// Monitoramento que os números na tela podem estar velhos.
+export function isBambuMqttLive(): boolean {
+  return client?.connected === true
 }
 
 // Publica um comando de controle (pause/resume/stop) pro tópico

@@ -196,6 +196,11 @@ const ANYCUBIC_STATE_LABELS: Record<string, string> = {
 export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveStatuses }) {
   const [printers, setPrinters] = useState(initialPrinters)
   const [enlargedImage, setEnlargedImage] = useState<string | null>(null)
+  // URLs de thumbnail que falharam ao carregar (a URL da nuvem é assinada e
+  // vence no meio da impressão) -- some com a imagem quebrada em vez de
+  // mostrar o texto do alt; o servidor renova a URL e, sendo uma string
+  // nova, ela volta a ser tentada no próximo poll.
+  const [brokenThumbs, setBrokenThumbs] = useState<Set<string>>(new Set())
   const imageDialogRef = useRef<HTMLDialogElement>(null)
 
   useEffect(() => {
@@ -214,7 +219,7 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       {printers.map((printer) => (
         <div key={printer.printerId} className="tk-panel flex gap-3 p-4">
-          {printer.thumbnailUrl && (
+          {printer.thumbnailUrl && !brokenThumbs.has(printer.thumbnailUrl) && (
             <button
               type="button"
               onClick={() => openImage(printer.thumbnailUrl!)}
@@ -226,11 +231,19 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                 src={printer.thumbnailUrl}
                 alt="Modelo em impressão"
                 className="h-28 w-28 rounded-lg object-cover"
+                onError={() => setBrokenThumbs((prev) => new Set(prev).add(printer.thumbnailUrl!))}
               />
             </button>
           )}
           <div className="min-w-0 flex-1">
             <h3 className="font-display text-base font-semibold text-slate-900 dark:text-slate-100">{printer.name}</h3>
+            {!printer.mqtt.live && (
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                {printer.mqtt.status === 'expired'
+                  ? 'Conexão com a nuvem recusada — reconecte a conta em Impressoras. Os dados abaixo estão desatualizados.'
+                  : 'Sem conexão com a nuvem no momento — os dados abaixo podem estar desatualizados.'}
+              </p>
+            )}
             {printer.brand === 'bambu' ? (
               !printer.status ? (
                 <p className="mt-2 text-sm text-slate-400">Sem dados ainda</p>
@@ -261,7 +274,13 @@ export function LiveStatusPoller({ initialPrinters }: { initialPrinters: LiveSta
                   {printer.status.hmsCodes.length > 0 && (
                     <p className="text-red-600 dark:text-red-400">Alerta HMS: {printer.status.hmsCodes.join(', ')}</p>
                   )}
-                  {printer.status.printErrorCode && <p className="text-red-600 dark:text-red-400">Erro: {printer.status.printErrorCode}</p>}
+                  {/* A A1/P1 continua mandando o print_error do ÚLTIMO erro mesmo
+                      imprimindo normal (só limpa no próximo erro/reinício) --
+                      só é relevante com a impressora pausada/falha. Alertas HMS
+                      acima se limpam sozinhos e seguem sempre visíveis. */}
+                  {printer.status.printErrorCode && ['PAUSE', 'FAILED'].includes(printer.status.gcodeState) && (
+                    <p className="text-red-600 dark:text-red-400">Erro: {printer.status.printErrorCode}</p>
+                  )}
 
                   <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
                     {printer.status.layerNum !== null && printer.status.totalLayerNum !== null && (

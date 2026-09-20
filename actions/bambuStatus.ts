@@ -1,7 +1,7 @@
 'use server'
 import { prisma } from '@/lib/prisma'
-import { getLiveStatus, getConnectionStatus, restartBambuListener, getCurrentThumbnail } from '@/lib/bambu/listener'
-import { getAnycubicLiveStatus, getAnycubicProjectInfo } from '@/lib/anycubic/listener'
+import { getLiveStatus, getConnectionStatus, restartBambuListener, getCurrentThumbnail, isBambuMqttLive } from '@/lib/bambu/listener'
+import { getAnycubicLiveStatus, getAnycubicProjectInfo, getAnycubicConnectionStatus, isAnycubicMqttLive } from '@/lib/anycubic/listener'
 import { decryptCredential } from '@/lib/crypto'
 import { fetchBoundDevices, fetchTaskHistory, type BambuDevice, type BambuCloudTaskFull } from '@/lib/bambu/auth'
 import { revalidatePath } from 'next/cache'
@@ -51,6 +51,7 @@ export async function getAllLiveStatuses() {
         brand: 'bambu' as const,
         status: getLiveStatus(printer.id),
         thumbnailUrl: getCurrentThumbnail(printer.id),
+        mqtt: { live: isBambuMqttLive(), status: getConnectionStatus() },
       }
     }
     const projectInfo = getAnycubicProjectInfo(printer.id)
@@ -59,6 +60,7 @@ export async function getAllLiveStatuses() {
       name: printer.nickname ?? printer.name,
       brand: 'anycubic' as const,
       status: getAnycubicLiveStatus(printer.id),
+      mqtt: { live: isAnycubicMqttLive(), status: getAnycubicConnectionStatus() },
       thumbnailUrl: projectInfo?.thumbnailUrl ?? null,
       modelDimensions: projectInfo?.modelDimensions ?? null,
       materialBreakdown: projectInfo?.materialBreakdown ?? null,

@@ -89,6 +89,11 @@ let client: MqttClient | null = null
 // em memória separado do status ao vivo, porque vem de uma chamada HTTP
 // assíncrona, não do tick do MQTT.
 const currentProjectInfo = new Map<string, AnycubicProjectInfo>()
+// Mesma razão da Bambu: a thumbnail (img) do project/info é uma URL S3
+// assinada temporária -- renova enquanto há job ativo (entrada em
+// currentProjectInfo).
+const PROJECT_INFO_REFRESH_MS = 10 * 60_000
+let projectInfoRefreshTimer: ReturnType<typeof setInterval> | null = null
 
 const MQTT_HOST = 'mqtt-universe.anycubic.com'
 const MQTT_PORT = 8883
@@ -228,6 +233,15 @@ export async function startAnycubicListener(): Promise<void> {
     // processo INTEIRO, inclusive o listener da Bambu, visto em produção).
     // Parar de vez aqui e exigir reconectar manual (botão em Configurações)
     // depois de corrigir a credencial.
+    //
+    // CONFIRMADO por teste (2026-09-20): cada login novo em
+    // /v3/public/loginWithAccessToken INVALIDA o token de sessão anterior da
+    // conta -- conectar com o token velho dá "Connection refused: Not
+    // authorized" e o novo conecta normal. O token de sessão guardado em
+    // Settings morre sempre que qualquer outra coisa loga nessa conta (o
+    // Slicer Next ao abrir, um script de teste...). A tela de Monitoramento
+    // mostra "conexão recusada" nesse caso; a correção é reconectar a conta
+    // (botão "Conectar pelo log do Slicer Next").
     if (err.message.startsWith('Connection refused:')) thisClient.end(true)
   })
   thisClient.on('disconnect', (packet) => console.error('[anycubic] pacote DISCONNECT recebido do broker:', JSON.stringify(packet)))
@@ -294,6 +308,20 @@ export async function startAnycubicListener(): Promise<void> {
     },
   })
   core.start()
+
+  if (projectInfoRefreshTimer) clearInterval(projectInfoRefreshTimer)
+  projectInfoRefreshTimer = setInterval(async () => {
+    for (const printer of printers) {
+      const taskId = core?.getCurrentTaskId(printer.id)
+      if (!taskId || !currentProjectInfo.has(printer.id)) continue
+      try {
+        currentProjectInfo.set(printer.id, await fetchProjectInfo(authToken, taskId))
+      } catch (err) {
+        console.error('[anycubic] falha ao renovar info do job atual:', err)
+      }
+    }
+  }, PROJECT_INFO_REFRESH_MS)
+  projectInfoRefreshTimer.unref?.()
 }
 
 export function getAnycubicLiveStatus(printerId: string): AnycubicStatus | null {
@@ -325,6 +353,10 @@ export async function restartAnycubicListener(reason: string = 'desconhecido'): 
     client = null
   }
   core = null
+  if (projectInfoRefreshTimer) {
+    clearInterval(projectInfoRefreshTimer)
+    projectInfoRefreshTimer = null
+  }
   currentProjectInfo.clear()
   connectionStatus = 'not_configured'
   await startAnycubicListener()
@@ -332,4 +364,8 @@ export async function restartAnycubicListener(reason: string = 'desconhecido'): 
 
 export function getAnycubicConnectionStatus(): AnycubicConnectionStatus {
   return connectionStatus
+}
+
+export function isAnycubicMqttLive(): boolean {
+  return client?.connected === true
 }
