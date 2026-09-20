@@ -31,7 +31,7 @@ export function AnycubicConnectionForm({
   const [error, setError] = useState<string | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
   const [pathCopied, setPathCopied] = useState(false)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [connecting, setConnecting] = useState(false)
   const folderInputRef = useRef<HTMLInputElement>(null)
 
   // webkitdirectory/directory não têm tipo no JSX do React -- setados via
@@ -43,15 +43,20 @@ export function AnycubicConnectionForm({
     folderInputRef.current?.setAttribute('directory', 'true')
   }, [])
 
-  async function handleCopyPath() {
-    try {
-      await navigator.clipboard.writeText(SLICER_LOG_FOLDER_PATH)
-      setPathCopied(true)
-      setTimeout(() => setPathCopied(false), 2000)
-    } catch {
-      // clipboard pode falhar sem permissão/contexto seguro -- sem problema,
-      // o caminho já está escrito na tela pra copiar manualmente
-    }
+  // Um clique só: copia o caminho da pasta e abre a seleção de pasta no MESMO
+  // gesto do usuário (o navegador só libera o seletor de arquivo dentro dele
+  // -- por isso o clipboard não é aguardado). Um site não consegue ler o
+  // AppData do Windows sem o usuário escolher a pasta, então esse é o
+  // mínimo possível; o resto (achar o token e conectar) é automático.
+  function handleLogConnectClick() {
+    setFileError(null)
+    setError(null)
+    navigator.clipboard?.writeText(SLICER_LOG_FOLDER_PATH).catch(() => {
+      // sem permissão/contexto seguro -- o caminho continua escrito na tela
+    })
+    setPathCopied(true)
+    setTimeout(() => setPathCopied(false), 4000)
+    folderInputRef.current?.click()
   }
 
   async function handleFolderSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -71,7 +76,12 @@ export function AnycubicConnectionForm({
       setFileError('Não achei um token em nenhum arquivo dessa pasta — confira se você fez login no Slicer Next recentemente')
       return
     }
-    if (textareaRef.current) textareaRef.current.value = token
+
+    setConnecting(true)
+    const formData = new FormData()
+    formData.set('slicerToken', token)
+    await handleConnect(formData)
+    setConnecting(false)
   }
 
   async function handleConnect(formData: FormData) {
@@ -106,17 +116,18 @@ export function AnycubicConnectionForm({
         <ol className="mt-1 list-decimal space-y-1 pl-4">
           <li>Abra o Anycubic Slicer Next no Windows e deixe logado.</li>
           <li>
-            Clique em <strong>&ldquo;Copiar caminho da pasta&rdquo;</strong> abaixo, depois em{' '}
-            <strong>&ldquo;Selecionar pasta de log&rdquo;</strong> — cole o caminho (Ctrl+V) na barra de endereço da
-            janela que abrir e aperte Enter.
+            Clique em <strong>&ldquo;Conectar pelo log do Slicer Next&rdquo;</strong> — o caminho da pasta já vai
+            copiado: na janela que abrir, cole (Ctrl+V) na barra de endereço, aperte Enter e confirme a pasta.
           </li>
-          <li>Selecione a pasta e confirme — o token é encontrado e preenchido sozinho.</li>
+          <li>Pronto: o token é encontrado e a conexão é feita sozinha (nas próximas vezes a janela já abre na pasta certa).</li>
         </ol>
         <details className="mt-2">
           <summary className="tk-summary cursor-pointer">Alternativa avançada (PowerShell)</summary>
           <pre className="mt-1 overflow-x-auto rounded bg-slate-100 p-2 dark:bg-slate-800">
-            {`$log = Get-ChildItem "$env:AppData\\AnycubicSlicerNext\\log" -Filter "debug_*.log" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-Select-String -Path $log.FullName -Pattern 'accessToken = ([^,\\s]+)' | Select-Object -Last 1`}
+            {`foreach ($f in (Get-ChildItem "$env:AppData\\AnycubicSlicerNext\\log" -Filter "debug_*.log" | Sort-Object LastWriteTime -Descending)) {
+  $m = Select-String -Path $f.FullName -Pattern 'accessToken = ([^,\\s]+)|id_token=(eyJ[\\w-]+\\.[\\w-]+\\.[\\w-]+)' | Select-Object -Last 1
+  if ($m) { $g = $m.Matches[0].Groups; "$($g[1].Value)$($g[2].Value)"; break }
+}`}
           </pre>
         </details>
       </details>
@@ -137,35 +148,34 @@ Select-String -Path $log.FullName -Pattern 'accessToken = ([^,\\s]+)' | Select-O
             </div>
           </div>
         ) : (
-          <form action={handleConnect} className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col gap-3">
+            <input ref={folderInputRef} type="file" multiple onChange={handleFolderSelect} className="hidden" />
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                onClick={handleCopyPath}
-                className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                onClick={handleLogConnectClick}
+                disabled={connecting}
+                className="tk-btn-primary disabled:opacity-60"
               >
-                {pathCopied ? 'Copiado!' : 'Copiar caminho da pasta'}
+                {connecting ? 'Conectando…' : 'Conectar pelo log do Slicer Next'}
               </button>
-              <code className="text-xs text-slate-500 dark:text-slate-400">{SLICER_LOG_FOLDER_PATH}</code>
+              <code className="text-xs text-slate-500 dark:text-slate-400">
+                {pathCopied ? 'Caminho copiado — cole (Ctrl+V) na barra de endereço da janela' : SLICER_LOG_FOLDER_PATH}
+              </code>
             </div>
-            <label className="text-sm">
-              Selecionar pasta de log do Slicer Next (opcional — preenche o token sozinho)
-              <input
-                ref={folderInputRef}
-                type="file"
-                multiple
-                onChange={handleFolderSelect}
-                className="tk-input flex-1 file:mr-3 file:rounded-md file:border-0 file:bg-violet-600 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white dark:file:bg-violet-500 dark:file:text-slate-950"
-              />
-            </label>
             {fileError && <p className="text-xs text-red-600 dark:text-red-400">{fileError}</p>}
-            <label className="text-sm">
-              Token do Slicer Next
-              <textarea ref={textareaRef} name="slicerToken" className="tk-input-full" rows={3} required placeholder="eyJhbGciOi..." />
-            </label>
             {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-            <SubmitButton pendingLabel="Conectando…">Conectar</SubmitButton>
-          </form>
+            <details className="text-xs text-slate-500 dark:text-slate-400">
+              <summary className="tk-summary cursor-pointer">Não deu certo? Colar o token manualmente</summary>
+              <form action={handleConnect} className="mt-2 flex flex-col gap-3">
+                <label className="text-sm">
+                  Token do Slicer Next
+                  <textarea name="slicerToken" className="tk-input-full" rows={3} required placeholder="eyJhbGciOi..." />
+                </label>
+                <SubmitButton pendingLabel="Conectando…">Conectar</SubmitButton>
+              </form>
+            </details>
+          </div>
         )}
       </div>
     </div>

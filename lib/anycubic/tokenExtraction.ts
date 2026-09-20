@@ -6,6 +6,11 @@
 // possíveis (log novo do Slicer Next 1.4.1.2+, .conf antigo em JSON).
 const LOG_TOKEN_PATTERN = /accessToken\s*=\s*([^,\s]+)/g
 const CONF_TOKEN_PATTERN = /"access_token"\s*:\s*"([^"]+)"/g
+// Slicer Next 2.0.x parou de logar "accessToken = ..." -- o mesmo JWT
+// (tokenType "access-token", aceito por /v3/public/loginWithAccessToken,
+// confirmado contra a API real em 2026-09-20) agora só aparece como
+// parâmetro id_token de uma URL no debug_*.log.
+const URL_ID_TOKEN_PATTERN = /[?&]id_token=(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/g
 
 function lastMatch(text: string, pattern: RegExp): string | null {
   let match: RegExpExecArray | null
@@ -17,7 +22,9 @@ function lastMatch(text: string, pattern: RegExp): string | null {
 }
 
 export function extractSlicerTokenFromText(text: string): string | null {
-  return lastMatch(text, LOG_TOKEN_PATTERN) ?? lastMatch(text, CONF_TOKEN_PATTERN)
+  return (
+    lastMatch(text, LOG_TOKEN_PATTERN) ?? lastMatch(text, URL_ID_TOKEN_PATTERN) ?? lastMatch(text, CONF_TOKEN_PATTERN)
+  )
 }
 
 export type LogFileCandidate = { name: string; lastModified: number; text: string }

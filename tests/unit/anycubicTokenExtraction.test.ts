@@ -13,6 +13,16 @@ describe('extractSlicerTokenFromText', () => {
     expect(extractSlicerTokenFromText(confText)).toBe('eyJhbGciOiJSUzI1NiJ9.payload.signature')
   })
 
+  it('extrai o token do formato Slicer Next 2.0.x (id_token= numa URL do debug log)', () => {
+    const jwt = 'eyJhbGciOiJSUzI1NiJ9.eyJpZCI6IjEyMyJ9.c2lnbmF0dXJl'
+    const logLine = `[info] load url: https://example.com/login?isDark=0&account=1&pcid=ABC&seed=123&id_token=${jwt}&lang=pt`
+    expect(extractSlicerTokenFromText(logLine)).toBe(jwt)
+  })
+
+  it('ignora id_token que não tem cara de JWT (3 segmentos)', () => {
+    expect(extractSlicerTokenFromText('x?id_token=abc123&y=1')).toBeNull()
+  })
+
   it('usa a ÚLTIMA ocorrência quando o arquivo tem múltiplas linhas de login', () => {
     const logText = [
       'accessToken = token-antigo-123',
