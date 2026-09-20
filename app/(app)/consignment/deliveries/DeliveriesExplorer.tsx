@@ -141,7 +141,7 @@ export function DeliveriesExplorer({
       >
         {selected && (
           <div className="grid gap-3 p-5">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-3">
               <div>
                 <h3 className="font-display text-base font-semibold">{selected.partnerName}</h3>
                 <p className="text-xs text-slate-400 dark:text-slate-500">{new Date(selected.deliveryDate).toLocaleDateString('pt-BR')}</p>

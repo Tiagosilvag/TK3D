@@ -25,7 +25,7 @@ export function PartnerDetailHeader({ partner }: { partner: EditingPartner }) {
   }
 
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex items-center justify-between flex-wrap gap-3">
       <div className="flex items-center gap-3">
         <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-200 text-base font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
           {initials(partner.name)}

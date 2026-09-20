@@ -73,8 +73,8 @@ export function PackagingForm({
       onClose={() => { onOpenChange(false); resetFields() }}
       className="w-full [--tk-dialog-cap:28rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
-      <form ref={formRef} action={action} className="grid grid-cols-2 gap-3 p-5">
-        <div className="col-span-2 mb-1 flex items-center justify-between">
+      <form ref={formRef} action={action} className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:p-5">
+        <div className="col-span-full mb-1 flex items-center justify-between">
           <h3 className="font-display text-base font-semibold">{editingItem ? 'Editar embalagem' : 'Nova embalagem'}</h3>
           <button
             type="button"
@@ -86,7 +86,7 @@ export function PackagingForm({
           </button>
         </div>
 
-        <label className="col-span-2 text-sm">
+        <label className="col-span-full text-sm">
           Nome *
           <input name="name" placeholder="Ex: Caixa Grande" className="tk-input-full" required defaultValue={editingItem?.name} />
         </label>
@@ -124,14 +124,14 @@ export function PackagingForm({
           </>
         )}
 
-        <label className="col-span-2 text-sm">
+        <label className="col-span-full text-sm">
           Estoque mínimo (un) *
           <input name="minStock" type="number" step="1" min="0" placeholder="0" className="tk-input-full" required defaultValue={editingItem?.minStock ?? 0} />
           <span className="mt-1 block text-xs text-slate-400 dark:text-slate-500">Abaixo desse valor, o item aparece como estoque baixo.</span>
         </label>
 
         {!editingItem && (
-          <div className="col-span-2 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
+          <div className="col-span-full rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Preview</p>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
@@ -146,7 +146,7 @@ export function PackagingForm({
           </div>
         )}
 
-        <div className="col-span-2 mt-1 flex items-center justify-end gap-3">
+        <div className="col-span-full mt-1 flex items-center justify-end gap-3">
           <button type="button" onClick={() => dialogRef.current?.close()} className="text-sm text-slate-500 hover:underline dark:text-slate-400">
             Cancelar
           </button>

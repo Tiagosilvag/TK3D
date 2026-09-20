@@ -285,7 +285,7 @@ export function StockExplorer({ rows }: { rows: StockRow[] }) {
       )}
 
       {filteredRows.length > 0 && (
-        <div className="mt-4 flex items-center justify-between text-sm text-slate-500 dark:text-slate-400">
+        <div className="mt-4 flex items-center justify-between text-sm text-slate-500 dark:text-slate-400 flex-wrap gap-3">
           <span>Mostrando {(currentPage - 1) * PAGE_SIZE + 1}-{Math.min(currentPage * PAGE_SIZE, filteredRows.length)} de {filteredRows.length}</span>
           <div className="flex gap-2">
             <button type="button" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)} className="rounded-lg px-3 py-1.5 font-medium text-violet-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-300 disabled:no-underline dark:text-violet-400 dark:disabled:text-slate-600">

@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -83,7 +84,7 @@ function ProtagonistLink({ href, label, icon: Icon, active }: NavLink & { active
   return (
     <Link
       href={href}
-      className={`flex items-center gap-2.5 rounded-lg px-3 py-2.5 font-display text-base font-semibold transition-colors ${
+      className={`flex items-center gap-2.5 rounded-lg px-3 py-2.5 font-display text-base font-semibold transition-colors max-md:py-3 ${
         active
           ? 'bg-gradient-to-r from-violet-600 to-blue-600 text-white dark:from-violet-500 dark:to-blue-500 dark:text-slate-950'
           : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100'
@@ -102,7 +103,7 @@ function SecondaryLink({ href, label, icon: Icon, active, badge }: NavLink & { a
   return (
     <Link
       href={href}
-      className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+      className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors max-md:py-3 ${
         active
           ? 'bg-gradient-to-r from-violet-600 to-blue-600 text-white dark:from-violet-500 dark:to-blue-500 dark:text-slate-950'
           : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
@@ -127,7 +128,7 @@ function NavSection({ title, links, pathname, badges }: { title: string; links: 
   return (
     <details className="mt-4 group" open={sectionActive}>
       <summary
-        className={`flex cursor-pointer list-none items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wide transition-colors ${
+        className={`flex cursor-pointer list-none items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wide transition-colors max-md:py-3 ${
           sectionActive
             ? 'text-violet-700 dark:text-violet-400'
             : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'
@@ -158,6 +159,21 @@ export function AppLayoutClient({
 }) {
   const pathname = usePathname()
   const router = useRouter()
+  // Mobile (< md): o menu lateral vira uma gaveta off-canvas aberta pelo
+  // botão hambúrguer da barra superior -- antes o <aside> fixo de 15rem
+  // ocupava quase a tela toda de um celular e deixava o conteúdo espremido.
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  useEffect(() => setMenuOpen(false), [pathname])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMenuOpen(false)
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [menuOpen])
 
   async function handleLogout() {
     await fetch('/api/logout', { method: 'POST' })
@@ -182,7 +198,25 @@ export function AppLayoutClient({
   // encolher até o espaço disponível de verdade em vez de crescer com o
   // próprio conteúdo.
   return (
-    <div className="tk-gradient-bg flex h-screen overflow-hidden">
+    <div className="tk-gradient-bg flex h-dvh flex-col overflow-hidden md:flex-row">
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-slate-300 bg-white/90 px-2 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90 md:hidden">
+        <button
+          type="button"
+          onClick={() => setMenuOpen(true)}
+          aria-label="Abrir menu"
+          aria-expanded={menuOpen}
+          aria-controls="app-sidebar"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-6 w-6" aria-hidden>
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
+        <Logo size={28} />
+      </header>
+
+      {menuOpen && <div className="fixed inset-0 z-30 bg-slate-950/50 md:hidden" onClick={() => setMenuOpen(false)} aria-hidden />}
+
       {/* Degradê vertical roxo->azul no tema claro -- ecoa as cores reais
           da logo (que fica bem no topo, ver <Logo /> abaixo), não mais um
           tom sólido só. Tema escuro sem gradiente (fica bg-slate-900
@@ -194,10 +228,29 @@ export function AppLayoutClient({
           cima da cor sólida em QUALQUER tema (gradiente opaco sempre cobre a
           background-color por baixo). `dark:bg-none` remove essa imagem no
           tema escuro, deixando o `dark:bg-slate-900` finalmente aparecer. */}
-      <aside className="flex w-60 shrink-0 flex-col border-r border-slate-300 bg-gradient-to-b from-violet-100 via-violet-50 to-blue-50 shadow-[2px_0_10px_-2px_rgba(15,23,42,0.10)] dark:border-slate-800 dark:bg-none dark:bg-slate-900 dark:shadow-none">
-        <div className="border-b border-slate-200 px-4 py-5 dark:border-slate-800">
-          <Logo />
-          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Controle de Produção</p>
+      <aside
+        id="app-sidebar"
+        onClick={(e) => {
+          if ((e.target as HTMLElement).closest('a')) setMenuOpen(false)
+        }}
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] flex-col transition-[transform,visibility] duration-200 ease-out md:static md:z-auto md:w-60 md:max-w-none md:shrink-0 md:translate-x-0 md:transition-none ${
+          menuOpen ? 'translate-x-0' : 'max-md:invisible max-md:-translate-x-full'
+        } border-r border-slate-300 bg-gradient-to-b from-violet-100 via-violet-50 to-blue-50 shadow-[2px_0_10px_-2px_rgba(15,23,42,0.10)] dark:border-slate-800 dark:bg-none dark:bg-slate-900 dark:shadow-none`}>
+        <div className="flex items-start justify-between border-b border-slate-200 px-4 py-5 dark:border-slate-800">
+          <div>
+            <Logo />
+            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Controle de Produção</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMenuOpen(false)}
+            aria-label="Fechar menu"
+            className="-mr-2 -mt-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 md:hidden"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-5 w-5" aria-hidden>
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
         </div>
 
         <nav className="min-h-0 flex-1 overscroll-contain space-y-1 overflow-y-auto px-2 py-4 font-display">
@@ -234,14 +287,14 @@ export function AppLayoutClient({
               onClick={handleLogout}
               aria-label="Sair"
               title="Sair"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors max-md:h-11 max-md:w-11 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
             >
               <NavLogoutIcon className="h-4 w-4" />
             </button>
           </div>
         </div>
       </aside>
-      <main className="min-h-0 min-w-0 flex-1 overscroll-contain overflow-y-auto p-6">
+      <main className="min-h-0 min-w-0 flex-1 overscroll-contain overflow-y-auto p-4 md:p-6">
         <LogoWatermark />
         {children}
       </main>

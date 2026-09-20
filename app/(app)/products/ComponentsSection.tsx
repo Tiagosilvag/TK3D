@@ -205,7 +205,7 @@ export function ComponentsSection({
       )}
 
       {adding ? (
-        <div className="mt-4 grid grid-cols-3 gap-2">
+        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
           <label className="text-xs">
             Tipo
             <select value={type} onChange={(e) => handleTypeChange(e.target.value as ComponentType)} className="tk-input-full mt-1">

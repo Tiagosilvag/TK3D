@@ -360,7 +360,7 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
                         const isLast = i === SHOPEE_TIER_COUNT
                         const tier = tiers[idx]
                         return (
-                          <div key={i} className="grid grid-cols-3 items-end gap-2">
+                          <div key={i} className="grid grid-cols-2 items-end gap-2 sm:grid-cols-3">
                             <Field label={isLast ? 'Acima de' : 'Até R$'}>
                               {isLast ? (
                                 <p className="mt-1 rounded-lg border border-transparent px-2.5 py-1.5 text-sm text-slate-500 dark:text-slate-400">
@@ -458,7 +458,7 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
                         const isLast = i === ML_TIER_COUNT
                         const effectivePercent = mlCommission + (isFirst ? 50 : 0)
                         return (
-                          <div key={i} className="grid grid-cols-3 items-end gap-2">
+                          <div key={i} className="grid grid-cols-2 items-end gap-2 sm:grid-cols-3">
                             <Field label={isLast ? 'Acima de' : 'Até R$'}>
                               {isLast ? (
                                 <p className="mt-1 rounded-lg border border-transparent px-2.5 py-1.5 text-sm text-slate-500 dark:text-slate-400">

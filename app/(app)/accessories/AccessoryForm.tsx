@@ -131,8 +131,8 @@ export function AccessoryForm({
           <TypeManagerPanel types={accessoryTypes} onBack={() => setView('form')} />
         </div>
       ) : (
-        <form ref={formRef} action={action} className="grid grid-cols-2 gap-3 p-5">
-          <div className="col-span-2 mb-1 flex items-center justify-between">
+        <form ref={formRef} action={action} className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:p-5">
+          <div className="col-span-full mb-1 flex items-center justify-between">
             <h3 className="font-display text-base font-semibold">{editingAccessory ? 'Editar acessório' : 'Novo acessório'}</h3>
             <button
               type="button"
@@ -144,7 +144,7 @@ export function AccessoryForm({
             </button>
           </div>
 
-          <label className="col-span-2 text-sm">
+          <label className="col-span-full text-sm">
             Nome *
             <input name="name" placeholder="Ex: Correntinha" className="tk-input-full" required defaultValue={editingAccessory?.name} />
           </label>
@@ -155,13 +155,13 @@ export function AccessoryForm({
               QUALQUER botão dentro do label é clicado -- reabre o dropdown
               no instante seguinte a escolher um tipo. <div> não tem essa
               semântica de ativação, sem perder o texto/estilo do rótulo. */}
-          <div className="col-span-2 text-sm">
+          <div className="col-span-full text-sm">
             <span className="block">Tipo *</span>
             <TypeSelect types={accessoryTypes} value={type} onChange={setType} onManage={() => setView('manageTypes')} />
           </div>
 
           {editingAccessory ? (
-            <label className="col-span-2 text-sm">
+            <label className="col-span-full text-sm">
               Cor (opcional)
               <div className="mt-1 flex items-center gap-2">
                 <input
@@ -189,13 +189,13 @@ export function AccessoryForm({
               )}
 
               {hasColor && (
-                <label className="col-span-2 text-sm">
+                <label className="col-span-full text-sm">
                   Valor total pago (todas as cores) *
                   <input name="totalCost" type="number" step="0.01" min="0.01" placeholder="0,00" className="tk-input-full" value={totalCost} onChange={(e) => setTotalCost(e.target.value)} required />
                 </label>
               )}
 
-              <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+              <label className="col-span-full flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
                 <input type="checkbox" checked={hasColor} onChange={(e) => setHasColor(e.target.checked)} className="rounded border" />
                 Este acessório tem uma ou mais cores
               </label>
@@ -203,7 +203,7 @@ export function AccessoryForm({
               {!hasColor && <input type="hidden" name="colorName" value="" />}
 
               {hasColor && (
-                <div className="col-span-2 space-y-2">
+                <div className="col-span-full space-y-2">
                   {colorRows.map((row, i) => (
                     <div key={i} className="flex items-center gap-2">
                       <input
@@ -254,7 +254,7 @@ export function AccessoryForm({
                 <input name="notes" className="tk-input-full" />
               </label>
 
-              <div className="col-span-2 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
+              <div className="col-span-full rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Preview</p>
                 {hasColor ? (
                   <div className="space-y-1 text-sm">
@@ -287,7 +287,7 @@ export function AccessoryForm({
             </>
           )}
 
-          <div className="col-span-2 mt-1 flex items-center justify-end gap-3">
+          <div className="col-span-full mt-1 flex items-center justify-end gap-3">
             <button type="button" onClick={() => dialogRef.current?.close()} className="text-sm text-slate-500 hover:underline dark:text-slate-400">
               Cancelar
             </button>

@@ -18,7 +18,7 @@ export function InfoTooltip({ text }: { text: string }) {
         i
       </button>
       {open && (
-        <span className="absolute left-0 top-7 z-10 w-72 rounded-lg border border-slate-200 bg-white p-3 text-xs font-normal text-slate-600 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+        <span className="absolute left-0 top-7 z-10 w-72 max-w-[calc(100vw-3rem)] rounded-lg border border-slate-200 bg-white p-3 text-xs font-normal text-slate-600 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
           {text}
         </span>
       )}

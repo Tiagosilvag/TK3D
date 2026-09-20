@@ -160,8 +160,8 @@ export function PrinterForm({
       onClose={() => { onOpenChange(false); resetFields() }}
       className="w-full [--tk-dialog-cap:44rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
-      <form ref={formRef} action={action} className="grid grid-cols-2 gap-3 p-5">
-        <div className="col-span-2 mb-1 flex items-center justify-between">
+      <form ref={formRef} action={action} className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:p-5">
+        <div className="col-span-full mb-1 flex items-center justify-between">
           <h3 className="font-display text-base font-semibold">{editingPrinter ? 'Editar impressora' : 'Nova impressora'}</h3>
           <button
             type="button"
@@ -173,11 +173,11 @@ export function PrinterForm({
           </button>
         </div>
 
-        <label className="col-span-2 text-sm">
+        <label className="col-span-full text-sm">
           Nome *
           <input name="name" placeholder="Ex: Anycubic Kobra X" className="tk-input-full" required defaultValue={editingPrinter?.name} />
         </label>
-        <label className="col-span-2 text-sm">
+        <label className="col-span-full text-sm">
           Apelido (opcional)
           <input name="nickname" placeholder="Ex: Cassiopeia" className="tk-input-full" defaultValue={editingPrinter?.nickname ?? ''} />
         </label>
@@ -240,7 +240,7 @@ export function PrinterForm({
           />
         </label>
 
-        <label className="col-span-2 text-sm">
+        <label className="col-span-full text-sm">
           Manutenção estimada (R$/h) *
           <input
             name="maintenanceCostPerHour"
@@ -255,11 +255,11 @@ export function PrinterForm({
           />
         </label>
 
-        <label className="col-span-2 flex items-center gap-2 text-sm">
+        <label className="col-span-full flex items-center gap-2 text-sm">
           <input type="checkbox" name="bambuEnabled" defaultChecked={editingPrinter?.bambuEnabled ?? false} />
           Integração Bambu Lab (monitoramento)
         </label>
-        <label className="col-span-2 text-sm">
+        <label className="col-span-full text-sm">
           Número de série Bambu (opcional)
           <input
             name="bambuSerial"
@@ -269,7 +269,7 @@ export function PrinterForm({
             onChange={(e) => setBambuSerial(e.target.value)}
           />
         </label>
-        <div className="col-span-2 -mt-2">
+        <div className="col-span-full -mt-2">
           <button
             type="button"
             onClick={handleSearchBambuDevices}
@@ -304,11 +304,11 @@ export function PrinterForm({
           )}
         </div>
 
-        <label className="col-span-2 flex items-center gap-2 text-sm">
+        <label className="col-span-full flex items-center gap-2 text-sm">
           <input type="checkbox" name="anycubicEnabled" defaultChecked={editingPrinter?.anycubicEnabled ?? false} />
           Integração Anycubic (monitoramento)
         </label>
-        <label className="col-span-2 text-sm">
+        <label className="col-span-full text-sm">
           Key da impressora Anycubic (opcional)
           <input
             name="anycubicPrinterKey"
@@ -323,7 +323,7 @@ export function PrinterForm({
             (digitar a key manualmente deixa esse id desatualizado até
             escolher de novo pela lista). */}
         <input type="hidden" name="anycubicPrinterId" value={anycubicPrinterId ?? ''} />
-        <div className="col-span-2 -mt-2">
+        <div className="col-span-full -mt-2">
           <button
             type="button"
             onClick={handleSearchAnycubicPrinters}
@@ -355,7 +355,7 @@ export function PrinterForm({
           )}
         </div>
 
-        <div className="col-span-2 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
+        <div className="col-span-full rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Preview de custo</p>
           <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             <div>
@@ -377,7 +377,7 @@ export function PrinterForm({
           </div>
         </div>
 
-        <div className="col-span-2 mt-1 flex items-center justify-end gap-3">
+        <div className="col-span-full mt-1 flex items-center justify-end gap-3">
           <button type="button" onClick={() => dialogRef.current?.close()} className="text-sm text-slate-500 hover:underline dark:text-slate-400">
             Cancelar
           </button>

@@ -32,7 +32,7 @@ export function PartnersExplorer({ partners, avgCommissionPercent }: { partners:
 
   return (
     <div>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="tk-page-title mb-0">Parceiros de consignação</h1>
         <button type="button" onClick={() => setModalOpen(true)} className="tk-btn-primary px-4">
           + Novo parceiro

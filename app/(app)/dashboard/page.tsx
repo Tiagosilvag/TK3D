@@ -237,7 +237,7 @@ export default async function DashboardPage({
 
       {criticalSupplies.length > 0 && (
         <section className="rounded-2xl border border-red-200 bg-red-50 p-5 dark:border-red-900/50 dark:bg-red-500/10">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-3">
             <h2 className="font-display text-sm font-semibold text-red-800 dark:text-red-300">
               ⚠️ Insumos esgotados ou em estoque crítico
             </h2>
@@ -277,7 +277,7 @@ export default async function DashboardPage({
           <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Unidades entregues a parceiros, ainda não vendidas</p>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-3">
             <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Vendido em consignação</p>
             <Link href="/consignment/reports" className="text-xs font-medium text-violet-600 underline-offset-2 hover:underline dark:text-violet-400">
               Ver relatórios de venda &rarr;

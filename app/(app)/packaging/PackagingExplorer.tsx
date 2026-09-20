@@ -102,7 +102,7 @@ export function PackagingExplorer({ rows, editingItem }: { rows: PackagingRow[];
 
   return (
     <div>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="tk-page-title mb-0">Embalagens</h1>
         <button type="button" onClick={openNew} className="tk-btn-primary px-4">
           + Nova embalagem

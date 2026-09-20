@@ -276,7 +276,7 @@ export default async function ProductionPage({
       />
 
       {totalPages > 1 && (
-        <div className="mt-4 flex items-center justify-between text-sm text-slate-500 dark:text-slate-400">
+        <div className="mt-4 flex items-center justify-between text-sm text-slate-500 dark:text-slate-400 flex-wrap gap-3">
           <span>Página {currentPage} de {totalPages} ({totalRuns} registros)</span>
           <div className="flex gap-2">
             {currentPage > 1 && (

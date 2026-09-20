@@ -86,7 +86,7 @@ export function PriceSimulation({
       <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
         Ajuste markup, margem e desconto para simular — nada é gravado até clicar em &quot;Aplicar preço calculado&quot;.
       </p>
-      <div className="grid grid-cols-3 gap-3 text-sm">
+      <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
         <label>
           Markup
           <input

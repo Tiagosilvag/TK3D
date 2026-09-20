@@ -82,7 +82,7 @@ export function ProductionRunsExplorer({
 
   return (
     <>
-      <div className="mt-6 flex items-center justify-between">
+      <div className="mt-6 flex items-center justify-between flex-wrap gap-3">
         <div className="flex gap-1 rounded-lg bg-slate-100 p-1 text-sm dark:bg-slate-800">
           {TABS.map((t) => (
             <button

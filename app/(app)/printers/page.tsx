@@ -98,7 +98,7 @@ export default async function PrintersPage({
 
   return (
     <div className="tk-page">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="tk-page-title mb-0">Impressoras</h1>
         <NewPrinterButton editingPrinter={editingPrinter} />
       </div>

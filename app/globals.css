@@ -120,6 +120,7 @@ dialog {
   margin: auto;
   max-width: min(var(--tk-dialog-cap, 24rem), calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
   overflow-y: auto;
 }
 
@@ -205,5 +206,58 @@ dialog {
 
   .tk-menu-item-danger {
     @apply block w-full rounded-md bg-transparent px-3 py-1.5 text-left text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950/40;
+  }
+}
+
+
+/* ---------------------------------------------------------------------- */
+/* Mobile (revisão "modo mobile cheio de problema")                        */
+/* Regras SEM @layer de propósito: no Tailwind v4 uma regra sem layer      */
+/* sempre vence as utilitárias/componentes dentro de @layer, então isto    */
+/* sobrescreve `text-sm`/`.tk-input` etc. só em tela pequena/toque, sem    */
+/* precisar editar cada tela.                                              */
+/* ---------------------------------------------------------------------- */
+
+/* Tabelas largas (8+ colunas em Produção/Vendas/Estoque...) não cabem em
+   360px: antes vazavam pra fora do painel ou eram cortadas por um ancestral
+   overflow-hidden, sem nenhum jeito de ver as colunas da direita. Cada
+   tabela vira ela mesma o contêiner rolável (display:block + overflow-x),
+   com células sem quebra de linha pra rolar de verdade em vez de espremer
+   o texto em colunas de 2 palavras por linha. */
+@media (max-width: 767px) {
+  main table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  main table th,
+  main table td {
+    white-space: nowrap;
+    padding-right: 1rem;
+  }
+}
+
+/* Dispositivos de toque: iOS Safari dá zoom automático em qualquer campo
+   com fonte < 16px ao focar (a página "pula" e não volta sozinha), e alvos
+   de toque abaixo de ~44px são difíceis de acertar com o polegar. */
+@media (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden']),
+  select,
+  .tk-btn-primary,
+  .tk-menu-item,
+  .tk-menu-item-success,
+  .tk-menu-item-danger {
+    min-height: 44px;
+  }
+  input[type='checkbox'],
+  input[type='radio'] {
+    width: 1.25rem;
+    height: 1.25rem;
   }
 }

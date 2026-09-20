@@ -212,7 +212,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
 
   return (
     <div className="tk-page">
-      <div className="mb-4 mt-1 flex items-center justify-between">
+      <div className="mb-4 mt-1 flex items-center justify-between flex-wrap gap-3">
         <div>
           <Link href="/products" className="text-sm text-slate-500 hover:underline dark:text-slate-400">&larr; Produtos</Link>
           <h1 className="mt-1 font-display text-lg font-semibold text-slate-900 dark:text-slate-100">{product.name}</h1>
@@ -380,7 +380,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
                           </tbody>
                         </table>
                       )}
-                      <form action={async (formData: FormData) => { 'use server'; await addProductAccessoryColorUsage(formData) }} className="mt-3 grid grid-cols-3 gap-2">
+                      <form action={async (formData: FormData) => { 'use server'; await addProductAccessoryColorUsage(formData) }} className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
                         <input type="hidden" name="productId" value={product.id} />
                         <input type="hidden" name="colorComboKey" value={variant.key} />
                         <select name="accessoryId" className="tk-input" required defaultValue="">
