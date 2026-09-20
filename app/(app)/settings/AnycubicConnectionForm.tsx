@@ -120,6 +120,12 @@ export function AnycubicConnectionForm({
             copiado: na janela que abrir, cole (Ctrl+V) na barra de endereço, aperte Enter e confirme a pasta.
           </li>
           <li>Pronto: o token é encontrado e a conexão é feita sozinha (nas próximas vezes a janela já abre na pasta certa).</li>
+          <li>
+            <strong>Depois de conectar, feche o Slicer Next de verdade</strong> (Gerenciador de Tarefas →
+            AnycubicSlicerNext.exe; fechar só a janela não basta). Ele usa a mesma identidade de conexão do TK3D, e
+            enquanto estiver aberto e logado os dois se derrubam em loop (o monitoramento fica piscando e
+            pausar/parar falha).
+          </li>
         </ol>
         <details className="mt-2">
           <summary className="tk-summary cursor-pointer">Alternativa avançada (PowerShell)</summary>

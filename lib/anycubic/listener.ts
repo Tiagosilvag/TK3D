@@ -83,11 +83,6 @@ export type AnycubicConnectionStatus = 'connected' | 'expired' | 'not_configured
 let connectionStatus: AnycubicConnectionStatus = 'not_configured'
 let core: ReturnType<typeof createAnycubicListenerCore> | null = null
 let client: MqttClient | null = null
-// Timer do reconnect manual (ver startAnycubicListener) -- precisa ser
-// cancelável em restartAnycubicListener() pra não empilhar reconexões
-// duplicadas quando o usuário reinicia manualmente enquanto um retry
-// automático já está agendado.
-let manualReconnectTimer: ReturnType<typeof setTimeout> | null = null
 // Info do job atual por impressora (thumbnail + consumo por cor +
 // dimensões) -- preenchida quando um job novo começa (onJobStart), via
 // GET /v2/project/info. Mesmo padrão do currentThumbnails da Bambu: cache
@@ -147,40 +142,25 @@ export async function startAnycubicListener(): Promise<void> {
     // encontrado em produção: a conta conectava certinho via HTTP, só o
     // MQTT que rejeitava).
     //
-    // Investigação em andamento (2026-09-14): visto em produção reconectando
-    // a cada ~5-6s sem nunca estabilizar, causando "pausar/parar" falhar
-    // quase sempre (client fica null durante a troca). Hipótese inicial de
-    // que esse client_id fixo por conta colidia com o Anycubic Slicer Next
-    // aberto ao mesmo tempo foi TESTADA E DESCARTADA -- usuário confirmou
-    // que o loop continua mesmo com todos os apps oficiais fechados, e que
-    // abrir os apps em múltiplos dispositivos normalmente funciona sem
-    // conflito. Causa raiz real ainda não identificada -- ver logs
-    // 'close'/'reconnect'/'offline'/'disconnect' adicionados logo abaixo.
+    // ATENÇÃO (2026-09-20): esse client_id é FIXO por conta e é o MESMO que o
+    // Anycubic Slicer Next usa ("pcf"). Com o Slicer aberto e logado (mesmo
+    // minimizado / em segundo plano -- fechar a janela não encerra o
+    // processo), o broker aceita a nossa conexão e a derruba milissegundos
+    // depois: nos logs vira "conectado" + "close" a cada ~5s pra sempre, e
+    // pausar/parar falha. Hipóteses já testadas e DESCARTADAS: end() forçado
+    // vs. gracioso, cliente zumbi (removeAllListeners+end, testado com o
+    // mqtt real), senha RSA reaproveitada (retry com token novo dava o mesmo
+    // loop). O Slicer só é necessário pra extrair o token -- depois de
+    // conectar a conta, feche-o DE VERDADE (Gerenciador de Tarefas).
     clientId: buildMqttClientId(email),
     username: mqttUsername,
     password: mqttPassword,
-    // Hipótese testada em produção (2026-09-14): reconnectPeriod nativo do
-    // mqtt.js reconecta reusando essa MESMA senha/username já computados --
-    // mas mqttPassword vem de encryptMqttToken, um RSA com padding
-    // ALEATÓRIO (PKCS1v15), então cada chamada gera um valor diferente
-    // mesmo pro mesmo authToken. Se o broker trata esse valor como um
-    // token de uso único (aceita uma vez, invalida depois), toda
-    // reconexão automática reusando o valor antigo seria aceita e
-    // derrubada no mesmo instante -- exatamente o padrão visto (conecta,
-    // cai, reconecta 5s depois, cai nesse mesmo instante, para sempre,
-    // nunca estabiliza). reconnectPeriod:0 desliga o reconnect nativo; o
-    // handler de 'close' abaixo agenda um restart COMPLETO (recomputando
-    // tudo, inclusive um mqttPassword novo) em vez de deixar a lib
-    // reenviar a senha já gasta.
-    reconnectPeriod: 0,
+    // Reconnect nativo do mqtt.js: mantém o mesmo client/core (e portanto o
+    // último status ao vivo) entre quedas. Um retry que recria o listener
+    // inteiro apagava o status a cada tentativa (card piscando "Ocioso").
+    reconnectPeriod: 5000,
     ...buildMqttSslOptions(),
   })
-
-  // Credencial rejeitada (ver handler de 'error' abaixo) não deve entrar
-  // no retry automático do 'close' -- regenerar o token não resolve uma
-  // conta com credencial inválida de verdade, só o usuário reconectando
-  // manualmente depois de corrigir resolve isso.
-  let blockAutoRetry = false
 
   client.on('connect', () => {
     connectionStatus = 'connected'
@@ -197,29 +177,12 @@ export async function startAnycubicListener(): Promise<void> {
     // processo INTEIRO, inclusive o listener da Bambu, visto em produção).
     // Parar de vez aqui e exigir reconectar manual (botão em Configurações)
     // depois de corrigir a credencial.
-    if (err.message.startsWith('Connection refused:')) {
-      blockAutoRetry = true
-      client?.end(true)
-    }
+    if (err.message.startsWith('Connection refused:')) client?.end(true)
   })
   client.on('offline', () => console.error(`[anycubic] MQTT offline (pid=${process.pid})`))
   client.on('disconnect', (packet) => console.error('[anycubic] pacote DISCONNECT recebido do broker:', JSON.stringify(packet)))
-  client.on('close', () => {
-    console.error(`[anycubic] MQTT desconectado (close) (pid=${process.pid})`)
-    // reconnectPeriod:0 (ver mqtt.connect acima) -- sem isso o mqtt.js
-    // reconectaria sozinho reusando a MESMA senha já computada. Agenda um
-    // restart COMPLETO daqui a 5s, recomputando settings/printers/token do
-    // zero (mqttPassword novo a cada tentativa). Só agenda se não houver
-    // um retry já pendente (evita empilhar timers em closes repetidos) e
-    // se não foi um "Connection refused:" (ver blockAutoRetry acima).
-    if (!manualReconnectTimer && !blockAutoRetry) {
-      manualReconnectTimer = setTimeout(() => {
-        manualReconnectTimer = null
-        console.error(`[anycubic] reconectando (retry manual, token novo) (pid=${process.pid})`)
-        startAnycubicListener().catch((err) => console.error('[anycubic] falha no retry manual:', err))
-      }, 5000)
-    }
-  })
+  client.on('close', () => console.error(`[anycubic] MQTT desconectado (close) (pid=${process.pid})`))
+  client.on('reconnect', () => console.error(`[anycubic] tentando reconectar ao MQTT... (pid=${process.pid})`))
 
   core = createAnycubicListenerCore({
     printers,
@@ -289,14 +252,6 @@ export async function restartAnycubicListener(reason: string = 'desconhecido'): 
   // quem chamou o restart, pra confirmar se os dois listeners estão sendo
   // reiniciados repetidamente pela mesma causa.
   console.error(`[anycubic] restartAnycubicListener chamado (motivo: ${reason}, pid=${process.pid})`)
-  // Cancela qualquer retry automático pendente (ver 'close' em
-  // startAnycubicListener) -- sem isso ele dispararia depois, criando uma
-  // SEGUNDA conexão concorrente com a que este restart manual está prestes
-  // a abrir.
-  if (manualReconnectTimer) {
-    clearTimeout(manualReconnectTimer)
-    manualReconnectTimer = null
-  }
   if (client) {
     client.removeAllListeners()
     // end(false) manda o DISCONNECT limpo antes de fechar (testado como
