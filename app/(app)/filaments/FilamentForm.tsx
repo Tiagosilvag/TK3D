@@ -36,21 +36,37 @@ export type EditingFilament = {
 // `key={editingFilament?.id ?? 'new'}` no ponto de uso remonta o form (e
 // reresseta os campos controlados) toda vez que alterna entre "novo" e
 // "editando X", ou entre dois X diferentes.
+//
+// Melhoria "Repor estoque em Filamentos": cada linha de Filament já é 1
+// rolo físico específico (rollNumber único por marca+material+cor, preço
+// fixo daquele rolo) -- não um item fungível com custo médio como
+// Acessório/Insumo/Embalagem. "Repor estoque" aqui não soma gramas numa
+// linha existente: pré-preenche este MESMO formulário de criação com a
+// marca/material/cor de um rolo já cadastrado (travados, não editáveis --
+// é o que faz createFilament incrementar rollNumber automaticamente pra
+// essa combinação) e pede só peso/preço do rolo novo, criando uma 2ª
+// linha (Rolo #002, #003...) com seu próprio custo/g. Nenhuma mudança em
+// createFilament/schema -- é o mesmo fluxo de "Novo filamento" de sempre,
+// só com 3 campos pré-preenchidos e travados.
 export function FilamentForm({
   open,
   onOpenChange,
   editingFilament,
+  restockFrom,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   editingFilament?: EditingFilament
+  restockFrom?: EditingFilament
 }) {
   const router = useRouter()
   const formRef = useRef<HTMLFormElement>(null)
   const dialogRef = useRef<HTMLDialogElement>(null)
-  const [spoolWeightKg, setSpoolWeightKg] = useState(editingFilament ? String(editingFilament.spoolWeightKg) : '1')
+  const source = editingFilament ?? restockFrom
+  const isRestock = Boolean(restockFrom && !editingFilament)
+  const [spoolWeightKg, setSpoolWeightKg] = useState(source ? String(source.spoolWeightKg) : '1')
   const [spoolPrice, setSpoolPrice] = useState(editingFilament ? String(editingFilament.spoolPrice) : '')
-  const [colorHex, setColorHex] = useState(editingFilament?.colorHex ?? '#ff0000')
+  const [colorHex, setColorHex] = useState(source?.colorHex ?? '#ff0000')
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -73,9 +89,9 @@ export function FilamentForm({
 
   function resetFields() {
     formRef.current?.reset()
-    setSpoolWeightKg(editingFilament ? String(editingFilament.spoolWeightKg) : '1')
+    setSpoolWeightKg(source ? String(source.spoolWeightKg) : '1')
     setSpoolPrice(editingFilament ? String(editingFilament.spoolPrice) : '')
-    setColorHex(editingFilament?.colorHex ?? '#ff0000')
+    setColorHex(source?.colorHex ?? '#ff0000')
   }
 
   const weight = parseFloat(spoolWeightKg)
@@ -93,7 +109,9 @@ export function FilamentForm({
     >
       <form ref={formRef} action={action} className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 sm:p-5">
         <div className="col-span-full mb-1 flex items-center justify-between">
-          <h3 className="font-display text-base font-semibold">{editingFilament ? 'Editar filamento' : 'Novo filamento'}</h3>
+          <h3 className="font-display text-base font-semibold">
+            {editingFilament ? 'Editar filamento' : isRestock ? 'Repor estoque' : 'Novo filamento'}
+          </h3>
           <button
             type="button"
             onClick={() => dialogRef.current?.close()}
@@ -104,32 +122,49 @@ export function FilamentForm({
           </button>
         </div>
 
-        <label className="text-sm">
-          Marca/fabricante *
-          <input name="manufacturer" placeholder="Ex: Multifila" className="tk-input-full" required defaultValue={editingFilament?.manufacturer} />
-        </label>
-        <label className="text-sm">
-          Material
-          <select name="material" defaultValue={editingFilament?.material ?? 'PLA'} className="tk-input-full" required>
-            {MATERIALS.map((m) => (
-              <option key={m.value} value={m.value}>{m.label}</option>
-            ))}
-          </select>
-        </label>
+        {isRestock && restockFrom && (
+          <p className="col-span-full -mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Novo rolo de <span className="font-medium text-slate-700 dark:text-slate-300">{restockFrom.manufacturer} {restockFrom.colorName}</span> ({restockFrom.material}) -- vira o próximo rolo dessa cor, com seu próprio custo.
+          </p>
+        )}
 
-        <label className="text-sm">
-          Cor *
-          <div className="mt-1 flex items-center gap-2">
-            <input
-              name="colorHex"
-              type="color"
-              value={colorHex}
-              onChange={(e) => setColorHex(e.target.value)}
-              className="h-9 w-10 shrink-0 rounded border border-slate-300 dark:border-slate-700"
-            />
-            <input name="colorName" placeholder="Nome da cor" className="tk-input flex-1" required defaultValue={editingFilament?.colorName} />
-          </div>
-        </label>
+        {isRestock && restockFrom ? (
+          <>
+            <input type="hidden" name="manufacturer" value={restockFrom.manufacturer} />
+            <input type="hidden" name="material" value={restockFrom.material} />
+            <input type="hidden" name="colorName" value={restockFrom.colorName} />
+            <input type="hidden" name="colorHex" value={restockFrom.colorHex} />
+          </>
+        ) : (
+          <>
+            <label className="text-sm">
+              Marca/fabricante *
+              <input name="manufacturer" placeholder="Ex: Multifila" className="tk-input-full" required defaultValue={editingFilament?.manufacturer} />
+            </label>
+            <label className="text-sm">
+              Material
+              <select name="material" defaultValue={editingFilament?.material ?? 'PLA'} className="tk-input-full" required>
+                {MATERIALS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="text-sm">
+              Cor *
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  name="colorHex"
+                  type="color"
+                  value={colorHex}
+                  onChange={(e) => setColorHex(e.target.value)}
+                  className="h-9 w-10 shrink-0 rounded border border-slate-300 dark:border-slate-700"
+                />
+                <input name="colorName" placeholder="Nome da cor" className="tk-input flex-1" required defaultValue={editingFilament?.colorName} />
+              </div>
+            </label>
+          </>
+        )}
         <label className="text-sm">
           Peso do rolo (kg) *
           <input
@@ -182,7 +217,7 @@ export function FilamentForm({
           <button type="button" onClick={() => dialogRef.current?.close()} className="text-sm text-slate-500 hover:underline dark:text-slate-400">
             Cancelar
           </button>
-          <SubmitButton pendingLabel="Salvando…">{editingFilament ? 'Salvar alterações' : 'Adicionar'}</SubmitButton>
+          <SubmitButton pendingLabel="Salvando…">{editingFilament ? 'Salvar alterações' : isRestock ? 'Repor estoque' : 'Adicionar'}</SubmitButton>
         </div>
       </form>
     </dialog>
