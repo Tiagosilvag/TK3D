@@ -108,7 +108,17 @@ export const productSchema = z
     // verdade (na validação, não no banco): omitido vira 0 antes mesmo de
     // chegar em actions/products.ts, que continua recebendo sempre um
     // number.
-    laborTimeHours: z.coerce.number().nonnegative('Tempo de mão de obra não pode ser negativo').optional().default(0),
+    //
+    // Pedido do usuário: todo produto NOVO (criado via "+Novo produto",
+    // onde este campo fica escondido -- ver acima) já nasce com 5min de
+    // mão de obra em vez de 0h, então a 1ª vez que "Campos opcionais" é
+    // aberto na tela de edição já mostra "00:05" pronto pra ajustar, em
+    // vez de "00:00". Só afeta produto NOVO (omitido = usa este default);
+    // produto já existente sempre manda seu laborTimeHours de verdade no
+    // FormData (defaultValue do campo em ProductForm.tsx), então editar
+    // um produto já salvo nunca reescreve um valor real (inclusive um 0
+    // explícito) por este default.
+    laborTimeHours: z.coerce.number().nonnegative('Tempo de mão de obra não pode ser negativo').optional().default(5 / 60),
     // Acabamento/Usa cola saíram do formulário (nunca mais submetidos) --
     // opcionais aqui só pra não quebrar a validação; actions/products.ts
     // não usa mais nenhum dos dois na escrita (omite dos dois `data:` de

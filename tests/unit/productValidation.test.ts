@@ -48,7 +48,7 @@ describe('productPartFilamentSchema.weightGrams (vírgula decimal)', () => {
 })
 
 describe('productSchema laborTimeHours (bug "Expected number, received nan" ao criar produto)', () => {
-  it('aceita a criação sem laborTimeHours no FormData (campo só aparece na edição) e default pra 0', () => {
+  it('aceita a criação sem laborTimeHours no FormData (campo só aparece na edição) e default pra 5min', () => {
     const result = productSchema.safeParse({
       name: 'Bandeja fofa',
       category: 'Decoração',
@@ -63,7 +63,7 @@ describe('productSchema laborTimeHours (bug "Expected number, received nan" ao c
     })
     expect(result.success).toBe(true)
     if (result.success) {
-      expect(result.data.laborTimeHours).toBe(0)
+      expect(result.data.laborTimeHours).toBeCloseTo(5 / 60, 5)
     }
   })
 

@@ -158,7 +158,7 @@ export function ProductForm({
   const [filamentId, setFilamentId] = useState(product?.filamentId ?? '')
   const [weightGrams, setWeightGrams] = useState(product ? String(product.weightGrams) : '')
   const [printTimeHours, setPrintTimeHours] = useState(product ? String(product.printTimeHours) : '')
-  const [laborTimeHours, setLaborTimeHours] = useState(product ? String(product.laborTimeHours) : '0')
+  const [laborTimeHours, setLaborTimeHours] = useState(product ? String(product.laborTimeHours) : String(5 / 60))
   const [parts, setParts] = useState<PartRow[]>(
     existingParts && existingParts.length > 0
       ? existingParts.map((p) => ({
@@ -292,7 +292,7 @@ export function ProductForm({
         setFilamentId('')
         setWeightGrams('')
         setPrintTimeHours('')
-        setLaborTimeHours('0')
+        setLaborTimeHours(String(5 / 60))
         setIsGift(false)
         setGiftMaterials([emptyGiftMaterialRow()])
         setGiftEquipment([emptyGiftEquipmentRow()])
