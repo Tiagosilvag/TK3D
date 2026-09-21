@@ -101,10 +101,15 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [modalOpen, setModalOpen] = useState(false)
   const [modalTarget, setModalTarget] = useState<EditingFilament | undefined>(undefined)
+  // Melhoria "Repor estoque em Filamentos": estado separado de modalTarget
+  // (edição) -- só um dos dois fica setado por vez, controla qual modo o
+  // FilamentForm abre em (ver comentário lá).
+  const [restockTarget, setRestockTarget] = useState<EditingFilament | undefined>(undefined)
 
   useEffect(() => {
     if (editingFilament) {
       setModalTarget(editingFilament)
+      setRestockTarget(undefined)
       setModalOpen(true)
     }
   }, [editingFilament])
@@ -118,6 +123,13 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
 
   function openNew() {
     setModalTarget(undefined)
+    setRestockTarget(undefined)
+    setModalOpen(true)
+  }
+
+  function openRestock(row: FilamentRow) {
+    setModalTarget(undefined)
+    setRestockTarget(row)
     setModalOpen(true)
   }
 
@@ -281,6 +293,9 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
                       <Link href={`/filaments?editId=${r.id}`} className="tk-menu-item">
                         Editar
                       </Link>
+                      <button type="button" onClick={() => openRestock(r)} className="tk-menu-item">
+                        Repor estoque
+                      </button>
                       <AdjustStockButton
                         resourceType="FILAMENT"
                         resourceId={r.id}
@@ -305,10 +320,11 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
       )}
 
       <FilamentForm
-        key={modalTarget?.id ?? 'new'}
+        key={modalTarget ? `edit-${modalTarget.id}` : restockTarget ? `restock-${restockTarget.id}` : 'new'}
         open={modalOpen}
         onOpenChange={(open) => (open ? setModalOpen(true) : closeModal())}
         editingFilament={modalTarget}
+        restockFrom={restockTarget}
       />
     </div>
   )
