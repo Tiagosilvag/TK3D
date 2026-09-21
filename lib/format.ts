@@ -36,13 +36,23 @@ export function getProductionStatusBadge(status: ProductionStatus): StatusBadge 
 }
 
 // 2.4 Sistema de pedidos: badge de status (mesmo padrão de
-// getProductionStatusBadge) e labels de canal.
+// getProductionStatusBadge) e labels de canal. Melhoria "Pedidos com
+// reserva de estoque": RECEBIDO/EM_PRODUCAO/PRONTO/DESPACHADO/CONCLUIDO
+// viram legado (nunca mais escritos, ver schema.prisma) -- mantidos aqui
+// só pra pedido antigo ainda renderizar algo sensato caso a
+// reconciliação ainda não tenha corrigido o status dele.
 const ORDER_STATUS_BADGES: Record<OrderStatus, StatusBadge> = {
   RECEBIDO: { label: 'Recebido', className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' },
   EM_PRODUCAO: { label: 'Em produção', className: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' },
   PRONTO: { label: 'Pronto', className: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400' },
   DESPACHADO: { label: 'Despachado', className: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400' },
   CONCLUIDO: { label: 'Concluído', className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' },
+  AGUARDANDO_PRODUCAO: { label: 'Aguardando produção', className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' },
+  PARCIAL_AGUARDANDO_PRODUCAO: { label: 'Parcial — aguardando produção', className: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' },
+  AGUARDANDO_MONTAGEM: { label: 'Aguardando montagem', className: 'bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400' },
+  PRONTO_RESERVADO: { label: 'Pronto — reservado', className: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400' },
+  ENTREGUE: { label: 'Entregue', className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' },
+  CANCELADO: { label: 'Cancelado', className: 'bg-slate-100 text-slate-400 line-through dark:bg-slate-800 dark:text-slate-500' },
 }
 
 export function getOrderStatusBadge(status: OrderStatus): StatusBadge {
@@ -55,6 +65,38 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   PRONTO: 'Pronto',
   DESPACHADO: 'Despachado',
   CONCLUIDO: 'Concluído',
+  AGUARDANDO_PRODUCAO: 'Aguardando produção',
+  PARCIAL_AGUARDANDO_PRODUCAO: 'Parcial — aguardando produção',
+  AGUARDANDO_MONTAGEM: 'Aguardando montagem',
+  PRONTO_RESERVADO: 'Pronto — reservado',
+  ENTREGUE: 'Entregue',
+  CANCELADO: 'Cancelado',
+}
+
+// Melhoria "Pedidos com reserva de estoque": etiqueta de prazo com cor por
+// urgência -- verde (folga), amarelo (≤3 dias), vermelho (atrasado).
+// Pedido terminal (ENTREGUE/CANCELADO) nunca mostra "atrasado" (prazo
+// deixou de importar pra ele).
+export interface DeadlineBadge extends StatusBadge {
+  daysUntil: number
+}
+
+export function getDeadlineBadge(deliveryDate: Date, status: OrderStatus): DeadlineBadge {
+  const msPerDay = 1000 * 60 * 60 * 24
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const delivery = new Date(deliveryDate)
+  delivery.setHours(0, 0, 0, 0)
+  const daysUntil = Math.round((delivery.getTime() - today.getTime()) / msPerDay)
+  const isTerminal = status === 'ENTREGUE' || status === 'CANCELADO'
+
+  if (!isTerminal && daysUntil < 0) {
+    return { daysUntil, label: `Atrasado ${Math.abs(daysUntil)}d`, className: 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400' }
+  }
+  if (!isTerminal && daysUntil <= 3) {
+    return { daysUntil, label: daysUntil === 0 ? 'Hoje' : `Em ${daysUntil}d`, className: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' }
+  }
+  return { daysUntil, label: daysUntil >= 0 ? `Em ${daysUntil}d` : `Atrasado ${Math.abs(daysUntil)}d`, className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' }
 }
 
 export const ORDER_CHANNEL_LABELS: Record<OrderChannel, string> = {

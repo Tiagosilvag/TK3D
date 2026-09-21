@@ -21,12 +21,40 @@ import { revalidatePath } from 'next/cache'
 import { Prisma, type ProductionStatus, type SupplyUnit } from '@prisma/client'
 import { productNeedsAssembly } from '@/lib/products'
 import { getAssemblyStatus, reverseExcessAssemblyForRun } from '@/actions/assembly'
+import { reconcileOrderReservations } from '@/lib/orderReservations'
 
 // `reversedFrom` (só cancelProductionRun/deleteProductionRun preenchem):
 // produtos cuja ProductAssembly foi desfeita em cascata por esta ação --
 // ver actions/assembly.ts#reverseExcessAssemblyForRun. Usado pelo botão
 // "Excluir" de /stock pra "sinalizar quais peças ficaram incompletas".
 type ActionResult = { success: boolean; error?: string; reversedFrom?: { productName: string; unitsReversed: number }[] }
+
+// Melhoria "Pedidos com reserva de estoque": ProductionRun de uma PEÇA
+// (productPartId presente) nunca vira estoque vendável sozinha -- quem
+// reconcilia é confirmAssembly, não aqui. ProductionRun DIRETA do produto
+// (productPartId nulo) só é estoque vendável de verdade quando o produto
+// não precisa de montagem nenhuma (sem insumo/acessório/componente
+// cadastrado, ver productNeedsAssembly) -- produto simples-com-acessório
+// também usa productPartId nulo mas ainda passa por confirmAssembly antes
+// de virar estoque, então reconcilia só no caso realmente direto.
+// colorComboKey = filamentId (produto simples de 1 filamento -- mesma
+// convenção de getProductVariantBreakdown pra produto sem montagem).
+async function maybeReconcileAfterProduction(productId: string, productPartId: string | null, filamentId: string): Promise<void> {
+  if (productPartId) return
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+    include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
+  })
+  if (!product) return
+  const needsAssembly = productNeedsAssembly({
+    isComposite: product.isComposite,
+    accessoryUsagesCount: product._count.accessoryUsages,
+    supplyUsagesCount: product._count.supplyUsages,
+    componentUsagesCount: product._count.componentUsages,
+  })
+  if (needsAssembly) return
+  await reconcileOrderReservations(productId, filamentId)
+}
 
 // Ajuste "peça multi-filamento": quando a peça produzida tem >1 componente
 // de filamento, ProductionRunForm submete um filamentUsagesJson (1 entrada
@@ -378,6 +406,7 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
   if (!result.success) return result
 
   await prisma.$transaction(result.ops)
+  await maybeReconcileAfterProduction(data.productId, data.productPartId ?? null, data.filamentId)
 
   revalidatePath('/production')
   revalidatePath('/filaments')
@@ -391,6 +420,7 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
   // antiga (RSC cacheada) até algo MAIS revalidar por acidente.
   revalidatePath('/assembly')
   revalidatePath('/stock')
+  revalidatePath('/orders')
   return { success: true }
 }
 
@@ -423,6 +453,7 @@ export async function createProductionRunBatch(formData: FormData): Promise<Acti
   const batchId = randomUUID()
   const allOps: Prisma.PrismaPromise<unknown>[] = []
   const reservedGramsByFilament = new Map<string, number>()
+  const directFilamentIds = new Set<string>()
 
   for (const item of parsed.data.items) {
     // "Falhas (auto)" (spec §3): nunca confiado do cliente -- sempre
@@ -465,9 +496,13 @@ export async function createProductionRunBatch(formData: FormData): Promise<Acti
     )
     if (!result.success) return result
     allOps.push(...result.ops)
+    if (!item.productPartId) directFilamentIds.add(first.filamentId)
   }
 
   await prisma.$transaction(allOps)
+  for (const filamentId of directFilamentIds) {
+    await maybeReconcileAfterProduction(parsed.data.productId, null, filamentId)
+  }
 
   revalidatePath('/production')
   revalidatePath('/filaments')
@@ -477,6 +512,7 @@ export async function createProductionRunBatch(formData: FormData): Promise<Acti
   // "excluir/cancelar produção não atualiza Montagem/Estoque").
   revalidatePath('/assembly')
   revalidatePath('/stock')
+  revalidatePath('/orders')
   return { success: true }
 }
 
@@ -582,6 +618,16 @@ export async function createPlate(formData: FormData): Promise<ActionResult> {
     ...(printerCaptureId ? [prisma.printerCapture.update({ where: { id: printerCaptureId }, data: { linkedPlateId: plateId } })] : []),
   ])
 
+  const directPairs = new Set<string>()
+  for (const item of parsed.data.items) {
+    if (item.productPartId) continue
+    directPairs.add(`${item.productId}::${item.filaments[0].filamentId}`)
+  }
+  for (const pair of directPairs) {
+    const [prodId, filId] = pair.split('::')
+    await maybeReconcileAfterProduction(prodId, null, filId)
+  }
+
   revalidatePath('/production')
   revalidatePath('/filaments')
   revalidatePath('/accessories')
@@ -589,6 +635,7 @@ export async function createPlate(formData: FormData): Promise<ActionResult> {
   // Ver comentário no primeiro revalidatePath('/assembly') acima (bug
   // "excluir/cancelar produção não atualiza Montagem/Estoque").
   revalidatePath('/assembly')
+  revalidatePath('/orders')
   revalidatePath('/stock')
   return { success: true }
 }

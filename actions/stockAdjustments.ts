@@ -2,6 +2,7 @@
 import { prisma } from '@/lib/prisma'
 import { stockAdjustmentSchema } from '@/lib/validation/stockAdjustment'
 import { getOwnStockSummary } from '@/lib/reports'
+import { reconcileOrderReservations } from '@/lib/orderReservations'
 import { revalidatePath } from 'next/cache'
 import type { StockAdjustmentResourceType } from '@prisma/client'
 
@@ -62,6 +63,18 @@ export async function adjustStock(formData: FormData): Promise<ActionResult> {
       data: { resourceType, resourceId, previousQty, newQty, difference, reason, reasonNote },
     })
   })
+
+  // Melhoria "Pedidos com reserva de estoque": ajuste de PRODUTO pode subir
+  // "Disponível" -- reconcilia (colorComboKey null porque ajuste nunca foi
+  // rastreado por variante, mesma limitação aceita de
+  // getProductVariantStockOptions) pra dar a peça liberada a um pedido
+  // pendente sem variação escolhida.
+  if (resourceType === 'PRODUCT') {
+    await reconcileOrderReservations(resourceId, null)
+    revalidatePath('/orders')
+    revalidatePath('/production')
+    revalidatePath('/assembly')
+  }
 
   revalidatePath('/filaments')
   revalidatePath('/accessories')

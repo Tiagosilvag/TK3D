@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache'
 import { productNeedsAssembly } from '@/lib/products'
 import { getProductVariantBreakdown, getOwnStockSummary, serializeColorChoices } from '@/lib/reports'
 import { getProductAverageProductionCost } from '@/actions/products'
+import { reconcileOrderReservations } from '@/lib/orderReservations'
 
 type ActionResult = { success: boolean; error?: string }
 
@@ -975,10 +976,21 @@ export async function confirmAssembly(formData: FormData): Promise<ActionResult>
     }
   })
 
+  // Melhoria "Pedidos com reserva de estoque": produto que precisa de
+  // montagem só vira estoque vendável de verdade AQUI (não na
+  // ProductionRun da peça) -- reconcilia a variação recém-montada pra
+  // dar a pedido pendente que esteja esperando. colorComboKey usa a
+  // MESMA serialização que getProductVariantBreakdown grava (é o que o
+  // seletor de variação de Pedidos também usa), null quando a montagem
+  // não tem cor variável nenhuma associada.
+  const assembledComboKey = Object.keys(colorChoicesToStore).length > 0 ? serializeColorChoices(colorChoicesToStore) : null
+  await reconcileOrderReservations(productId, assembledComboKey)
+
   revalidatePath('/assembly')
   revalidatePath('/stock')
   revalidatePath('/accessories')
   revalidatePath('/supplies')
+  revalidatePath('/orders')
   return { success: true }
 }
 

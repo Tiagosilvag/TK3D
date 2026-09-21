@@ -328,6 +328,10 @@ export interface OwnStockRow {
   // Mosquetão consumido pela montagem de Chaveiro Café) -- 0 pra produto
   // que nunca é usado como componente. Já descontado de `available` abaixo.
   consumedAsComponent: number
+  // Melhoria "Pedidos com reserva de estoque": quantas unidades algum
+  // pedido não-terminal já garantiu pra si (reconcileOrderReservations),
+  // já descontado de `available` abaixo.
+  reserved: number
   available: number
 }
 
@@ -616,9 +620,13 @@ export async function getProductVariantStockOptions(): Promise<ProductVariantSto
   })
   if (products.length === 0) return []
 
-  const [alreadyDelivered, alreadySold] = await Promise.all([
+  const [alreadyDelivered, alreadySold, alreadyReserved] = await Promise.all([
     prisma.consignmentDelivery.groupBy({ by: ['productId', 'colorComboKey'], _sum: { quantityDelivered: true } }),
     prisma.sale.groupBy({ by: ['productId', 'colorComboKey'], _sum: { quantity: true } }),
+    // Melhoria "Pedidos com reserva de estoque": mesmo raciocínio de
+    // getOwnStockSummary -- pedido não-terminal já reservou a variante
+    // pra si, desconta de "available" abaixo.
+    prisma.order.groupBy({ by: ['productId', 'colorComboKey'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { reservedQuantity: true } }),
   ])
   const deliveredByProductAndKey = new Map<string, number>()
   for (const d of alreadyDelivered) {
@@ -629,6 +637,11 @@ export async function getProductVariantStockOptions(): Promise<ProductVariantSto
   for (const s of alreadySold) {
     if (!s.colorComboKey) continue
     soldByProductAndKey.set(`${s.productId}::${s.colorComboKey}`, s._sum.quantity ?? 0)
+  }
+  const reservedByProductAndKey = new Map<string, number>()
+  for (const r of alreadyReserved) {
+    if (!r.colorComboKey) continue
+    reservedByProductAndKey.set(`${r.productId}::${r.colorComboKey}`, r._sum.reservedQuantity ?? 0)
   }
 
   return Promise.all(products.map(async (p) => {
@@ -647,7 +660,7 @@ export async function getProductVariantStockOptions(): Promise<ProductVariantSto
         key: v.key,
         label: v.label,
         colorHex: v.colorHex,
-        available: Math.max(0, v.quantity - (deliveredByProductAndKey.get(`${p.id}::${v.key}`) ?? 0) - (soldByProductAndKey.get(`${p.id}::${v.key}`) ?? 0)),
+        available: Math.max(0, v.quantity - (deliveredByProductAndKey.get(`${p.id}::${v.key}`) ?? 0) - (soldByProductAndKey.get(`${p.id}::${v.key}`) ?? 0) - (reservedByProductAndKey.get(`${p.id}::${v.key}`) ?? 0)),
         attrs: v.attrs,
       })),
     }
@@ -657,7 +670,7 @@ export async function getProductVariantStockOptions(): Promise<ProductVariantSto
 export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
   // Brinde nunca é produzido/estocado -- excluído (alimenta Estoque e
   // Dashboard).
-  const [products, producedByProduct, assembledByProduct, soldByProduct, deliveries, openOrdersByProduct] = await Promise.all([
+  const [products, producedByProduct, assembledByProduct, soldByProduct, deliveries, openOrdersByProduct, reservedByProduct] = await Promise.all([
     prisma.product.findMany({
       where: { active: true, isGift: false },
       orderBy: { name: 'asc' },
@@ -671,7 +684,16 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
     prisma.productAssembly.groupBy({ by: ['productId'], _sum: { quantity: true } }),
     prisma.sale.groupBy({ by: ['productId'], _sum: { quantity: true } }),
     prisma.consignmentDelivery.findMany({ include: { saleReports: true } }),
-    prisma.order.groupBy({ by: ['productId'], where: { status: { not: 'CONCLUIDO' } }, _sum: { quantity: true } }),
+    // ENTREGUE assumiu o papel de status terminal que CONCLUIDO tinha
+    // (melhoria "Pedidos com reserva de estoque") -- CANCELADO é o outro
+    // terminal, também fora da conta de "em produção".
+    prisma.order.groupBy({ by: ['productId'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { quantity: true } }),
+    // Melhoria "Pedidos com reserva de estoque": peça já reservada por um
+    // pedido não-terminal some do Disponível -- mesmo raciocínio de Sale/
+    // ConsignmentDelivery, só que reservedQuantity é recalculado por
+    // lib/orderReservations.ts#reconcileOrderReservations, não um fato
+    // permanente gravado direto.
+    prisma.order.groupBy({ by: ['productId'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { reservedQuantity: true } }),
   ])
 
   // Melhoria "Produto-como-componente": quanto de cada produto já foi
@@ -713,6 +735,7 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
   const assembledMap = new Map(assembledByProduct.map((a) => [a.productId, a._sum.quantity ?? 0]))
   const soldMap = new Map(soldByProduct.map((s) => [s.productId, s._sum.quantity ?? 0]))
   const openOrdersMap = new Map(openOrdersByProduct.map((o) => [o.productId, o._sum.quantity ?? 0]))
+  const reservedMap = new Map(reservedByProduct.map((o) => [o.productId, o._sum.reservedQuantity ?? 0]))
   const deliveredMap = new Map<string, { delivered: number; consignmentSold: number }>()
   for (const d of deliveries) {
     const entry = deliveredMap.get(d.productId) ?? { delivered: 0, consignmentSold: 0 }
@@ -737,6 +760,7 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
     const delivery = deliveredMap.get(p.id) ?? { delivered: 0, consignmentSold: 0 }
     const adjustment = adjustmentMap.get(p.id) ?? 0
     const consumedAsComponent = consumedAsComponentMap.get(p.id) ?? 0
+    const reserved = reservedMap.get(p.id) ?? 0
     return {
       productId: p.id,
       productName: p.name,
@@ -756,11 +780,17 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
       consignmentRemaining: Math.max(0, delivery.delivered - delivery.consignmentSold),
       inProduction: openOrdersMap.get(p.id) ?? 0,
       consumedAsComponent,
+      reserved,
       // Melhoria "Produto-como-componente": desconta também o que já foi
       // usado como ingrediente de outro produto -- sem isso, Mosquetão
       // continuaria aparecendo com estoque "disponível" mesmo depois de já
-      // ter virado Chaveiro Café.
-      available: Math.max(0, produced - soldDirect - delivery.delivered + adjustment - consumedAsComponent),
+      // ter virado Chaveiro Café. Melhoria "Pedidos com reserva de
+      // estoque": desconta também o que algum pedido não-terminal já
+      // garantiu pra si (reservedQuantity, recalculado por
+      // reconcileOrderReservations) -- sem isso, a mesma peça apareceria
+      // como "disponível" pra vender de novo mesmo já estando prometida
+      // a um pedido.
+      available: Math.max(0, produced - soldDirect - delivery.delivered + adjustment - consumedAsComponent - reserved),
     }
   })
 }

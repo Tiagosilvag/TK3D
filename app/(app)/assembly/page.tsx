@@ -1,7 +1,9 @@
 import { prisma } from '@/lib/prisma'
 import { getAssemblyStatus, getAssemblyOverview } from '@/actions/assembly'
+import { getOrderDemandQueue } from '@/actions/orders'
 import { AssemblyOverview } from './AssemblyOverview'
 import { AssemblyDetailModal } from './AssemblyDetailModal'
+import { AssemblyDemandPanel } from './AssemblyDemandPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,17 +14,20 @@ export default async function AssemblyPage({
 }) {
   const { productId } = await searchParams
 
-  const [overview, status, allAccessories, allSupplies, allPackaging] = await Promise.all([
+  const [overview, status, allAccessories, allSupplies, allPackaging, demandQueue] = await Promise.all([
     getAssemblyOverview(),
     productId ? getAssemblyStatus(productId) : Promise.resolve(null),
     prisma.accessory.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.supply.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+    getOrderDemandQueue(),
   ])
 
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Montagem</h1>
+
+      <AssemblyDemandPanel rows={demandQueue.assemblyRows} />
 
       <AssemblyOverview rows={overview} />
 

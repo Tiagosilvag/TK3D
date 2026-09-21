@@ -387,6 +387,7 @@ model Product {
   consignmentDeliveries ConsignmentDelivery[]
   photos                ProductPhoto[]
   orders                Order[]
+  orderReallocations    OrderReallocation[]
   stockConsumptions     StockConsumption[]
   // Melhoria "Produto-como-componente": o que ESTE produto usa como
   // ingrediente de outros produtos (ex.: Chaveiro Café usa Mosquetão) --
@@ -913,29 +914,101 @@ enum OrderChannel {
   MERCADO_LIVRE
 }
 
+// Melhoria "Pedidos com reserva de estoque": RECEBIDO/EM_PRODUCAO/PRONTO/
+// DESPACHADO/CONCLUIDO viram legado -- nunca mais escritos por código
+// novo, mas ficam no enum porque Postgres não permite remover valor de
+// enum sem recriar o tipo (mesmo precedente de SaleChannel.MARKETPLACE,
+// ver CLAUDE.md). ENTREGUE assume o papel que CONCLUIDO tinha (só ele
+// cria a Sale, em updateOrderStatus). Os 4 primeiros status novos
+// (AGUARDANDO_PRODUCAO até PRONTO_RESERVADO) são majoritariamente
+// DERIVADOS -- escritos só por reconcileOrderReservations
+// (lib/orderReservations.ts), nunca editados à mão pelo usuário.
+// CANCELADO e ENTREGUE são os 2 únicos que o usuário define manualmente,
+// e os 2 únicos excluídos de toda reconciliação/soma de "reservado".
 enum OrderStatus {
   RECEBIDO
   EM_PRODUCAO
   PRONTO
   DESPACHADO
   CONCLUIDO
+  AGUARDANDO_PRODUCAO
+  PARCIAL_AGUARDANDO_PRODUCAO
+  AGUARDANDO_MONTAGEM
+  PRONTO_RESERVADO
+  ENTREGUE
+  CANCELADO
 }
 
 model Order {
-  id          String       @id @default(cuid())
-  channel     OrderChannel
-  productId   String
-  product     Product      @relation(fields: [productId], references: [id])
-  quantity    Int
-  unitPrice   Decimal      @db.Decimal(10, 2)
-  orderDate   DateTime
-  status      OrderStatus  @default(RECEBIDO)
-  orderNumber String?
-  notes       String?
-  saleId      String?      @unique
-  sale        Sale?        @relation(fields: [saleId], references: [id])
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id              String       @id @default(cuid())
+  channel         OrderChannel
+  productId       String
+  product         Product      @relation(fields: [productId], references: [id])
+  // Melhoria "Pedidos com reserva de estoque": mesma convenção de
+  // Sale.colorComboKey/ConsignmentDelivery.colorComboKey -- qual
+  // combinação de cor foi pedida, nulo pra produto sem variante
+  // conhecida. Usado pra reservar a variante certa, não só o produto.
+  colorComboKey   String?
+  quantity        Int
+  unitPrice       Decimal      @db.Decimal(10, 2)
+  orderDate       DateTime
+  // Quando precisa estar pronto/entregue -- separado de orderDate (quando
+  // foi feito). É o campo que decide prioridade entre pedidos disputando
+  // a mesma peça (reconcileOrderReservations ordena por este campo, mais
+  // próximo primeiro). NOT NULL sem default -- pedido antigo (anterior a
+  // este campo existir) é backfillado com orderDate na migration
+  // seguinte (mesmo padrão de Sale.batchId, ver CLAUDE.md), única data
+  // que existia pra aproximar.
+  deliveryDate    DateTime
+  // Mesmo nome de campo que Sale.buyerOrPlatform, pro mesmo conceito.
+  buyerOrPlatform String?
+  // Quanto de `quantity` já está garantido do estoque físico agora --
+  // NUNCA editado à mão nem incrementado por uma action isolada, sempre
+  // recalculado do zero por reconcileOrderReservations toda vez que o
+  // estoque ou a fila daquele produto+variação muda (mesma filosofia
+  // "estoque derivado, não contador redundante" do resto do app,
+  // aplicada a uma alocação por prioridade em vez de uma soma simples).
+  reservedQuantity Int         @default(0)
+  status          OrderStatus  @default(AGUARDANDO_PRODUCAO)
+  orderNumber     String?
+  notes           String?
+  saleId          String?      @unique
+  sale            Sale?        @relation(fields: [saleId], references: [id])
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  // Toda vez que este pedido PERDEU peça reservada pra outro mais urgente
+  // (reallocationsLost) ou GANHOU peça que era de outro (reallocationsWon)
+  // -- log permanente escrito por reconcileOrderReservations, nunca
+  // editado à mão. Alimenta a etiqueta "⚠ N peça(s) realocada(s)..." na
+  // tela de Pedidos (sempre visível, em qualquer tela que listar o
+  // pedido) -- o aviso PASSAGEIRO (banner que aparece e some) é
+  // diferente disso: só existe no retorno de createOrder/cancelOrder/
+  // deleteOrder pra aquela chamada específica, nunca lido de volta do
+  // banco.
+  reallocationsLost OrderReallocation[] @relation("ReallocationFrom")
+  reallocationsWon  OrderReallocation[] @relation("ReallocationTo")
+}
+
+// Log permanente de toda realocação de peça entre pedidos por prioridade
+// de prazo -- só existe reconciliação "roubando" peça de alguém quando um
+// pedido novo/editado tem prazo mais urgente que um pedido que já tinha
+// reserva pro mesmo produto+variação (produção/montagem só ADICIONAM
+// estoque, nunca tomam de ninguém -- ver comentário em
+// lib/orderReservations.ts).
+model OrderReallocation {
+  id            String   @id @default(cuid())
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id])
+  colorComboKey String?
+  quantity      Int
+  fromOrderId   String
+  fromOrder     Order    @relation("ReallocationFrom", fields: [fromOrderId], references: [id])
+  toOrderId     String
+  toOrder       Order    @relation("ReallocationTo", fields: [toOrderId], references: [id])
+  createdAt     DateTime @default(now())
+
+  @@index([fromOrderId])
+  @@index([toOrderId])
 }
 
 model ConsignmentPartner {

@@ -1,71 +1,66 @@
 import { prisma } from '@/lib/prisma'
-import { formatCurrency, getOrderStatusBadge, ORDER_CHANNEL_LABELS } from '@/lib/format'
-import { OrderForm } from './OrderForm'
-import { OrderStatusForm } from './OrderStatusForm'
-import { deleteOrder } from '@/actions/orders'
-import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
-import { StatusBadge } from '@/components/StatusBadge'
+import { getProductVariantStockOptions } from '@/lib/reports'
+import { OrdersExplorer, type OrderRow } from './OrdersExplorer'
 
 export const dynamic = 'force-dynamic'
 
 export default async function OrdersPage() {
-  const [orders, products] = await Promise.all([
-    prisma.order.findMany({ orderBy: { orderDate: 'desc' }, include: { product: true } }),
-    // Brinde nunca é vendido sozinho -- excluído do seletor de produto.
-    prisma.product.findMany({ where: { active: true, isGift: false }, orderBy: { name: 'asc' } }),
+  const [orders, variantProducts] = await Promise.all([
+    prisma.order.findMany({
+      orderBy: { deliveryDate: 'asc' },
+      include: {
+        product: true,
+        reallocationsLost: { include: { toOrder: { select: { orderNumber: true } } }, orderBy: { createdAt: 'desc' } },
+      },
+    }),
+    // Brinde nunca é vendido sozinho -- excluído do seletor (já filtrado
+    // dentro de getProductVariantStockOptions).
+    getProductVariantStockOptions(),
   ])
+
+  // Mesmo dado (variantes por produto) alimenta o seletor do OrderForm E
+  // a resolução de label/cor de cada pedido já registrado na tabela --
+  // um único fetch, dois usos.
+  const variantByKey = new Map<string, { label: string; colorHex: string | null }>()
+  for (const p of variantProducts) {
+    for (const v of p.variants) variantByKey.set(`${p.productId}::${v.key}`, { label: v.label, colorHex: v.colorHex })
+  }
+
+  const products = variantProducts.map((p) => ({
+    productId: p.productId,
+    productName: p.productName,
+    variants: p.variants.map((v) => ({ key: v.key, label: v.label, colorHex: v.colorHex, available: v.available })),
+  }))
+
+  const rows: OrderRow[] = orders.map((o) => {
+    const variant = o.colorComboKey ? variantByKey.get(`${o.productId}::${o.colorComboKey}`) : undefined
+    return {
+      id: o.id,
+      orderDate: o.orderDate.toISOString(),
+      deliveryDate: o.deliveryDate.toISOString(),
+      channel: o.channel,
+      productName: o.product.name,
+      colorLabel: variant?.label ?? null,
+      colorHex: variant?.colorHex ?? null,
+      quantity: o.quantity,
+      reservedQuantity: o.reservedQuantity,
+      unitPrice: o.unitPrice.toNumber(),
+      buyerOrPlatform: o.buyerOrPlatform,
+      orderNumber: o.orderNumber,
+      status: o.status,
+      saleId: o.saleId,
+      reallocationsLost: o.reallocationsLost.map((r) => ({
+        quantity: r.quantity,
+        toOrderNumber: r.toOrder.orderNumber,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    }
+  })
 
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Pedidos</h1>
-      <OrderForm products={products} />
-
-      <table className="mt-6 w-full text-sm">
-        <thead>
-          <tr className="tk-table-head-row">
-            <th className="py-2">Data</th>
-            <th>Canal</th>
-            <th>Produto</th>
-            <th className="text-center">Qtd.</th>
-            <th className="text-center">Valor unit.</th>
-            <th>Nº pedido</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((o) => {
-            const badge = getOrderStatusBadge(o.status)
-            return (
-              <tr key={o.id} className="tk-row">
-                <td className="py-2">{o.orderDate.toLocaleDateString('pt-BR')}</td>
-                <td>{ORDER_CHANNEL_LABELS[o.channel]}</td>
-                <td>{o.product.name}</td>
-                <td className="text-center">{o.quantity}</td>
-                <td className="text-center">{formatCurrency(o.unitPrice.toNumber())}</td>
-                <td className="text-slate-500 dark:text-slate-400">{o.orderNumber ?? '—'}</td>
-                <td>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge badge={badge} />
-                    <OrderStatusForm orderId={o.id} status={o.status} locked={o.status === 'CONCLUIDO'} />
-                  </div>
-                </td>
-                <td>
-                  {!o.saleId && (
-                    <ConfirmDeleteForm action={async () => { 'use server'; return await deleteOrder(o.id) }} />
-                  )}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-
-      {orders.length === 0 && (
-        <div className="mt-6 rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400 dark:border-slate-700 dark:text-slate-500">
-          Nenhum pedido registrado ainda.
-        </div>
-      )}
+      <OrdersExplorer rows={rows} products={products} />
     </div>
   )
 }
