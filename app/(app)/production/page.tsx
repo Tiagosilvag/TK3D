@@ -28,9 +28,12 @@ export default async function ProductionPage({
     printerId?: string
     plateId?: string
     status?: string
+    newRunProductId?: string
+    newRunPartId?: string
+    newRunQty?: string
   }>
 }) {
-  const { editId, from, to, page, productId, printerId, plateId, status } = await searchParams
+  const { editId, from, to, page, productId, printerId, plateId, status, newRunProductId, newRunPartId, newRunQty } = await searchParams
   const range = resolveDateRange({ from, to })
   const currentPage = Math.max(1, parseInt(page ?? '1', 10) || 1)
 
@@ -267,6 +270,9 @@ export default async function ProductionPage({
         runs={runs}
         byProduct={byProduct}
         plates={plates}
+        newRunProductId={newRunProductId}
+        newRunPartId={newRunPartId}
+        newRunQty={newRunQty ? parseInt(newRunQty, 10) || undefined : undefined}
         products={products.map((p) => ({ id: p.id, name: p.name }))}
         printers={printers.map((p) => {
           const purchasePrice = p.purchasePrice.toNumber()

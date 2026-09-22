@@ -270,12 +270,23 @@ export function ProductionRunBatchForm({
   products,
   printers,
   filaments,
+  initialProductId,
+  initialPartId,
+  initialQuantity,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   products: Option[]
   printers: PrinterOption[]
   filaments: FilamentOption[]
+  // Melhoria "Pedidos com reserva de estoque" §3 (fix): quando o modal é
+  // aberto a partir do painel "Peças pendentes de encomenda"
+  // (DemandQueuePanel), vem com o produto (e, se for peça de um produto
+  // composto, só aquela peça marcada) e a quantidade que falta produzir
+  // já pré-preenchidos -- ver handleProductChange/useEffect abaixo.
+  initialProductId?: string
+  initialPartId?: string
+  initialQuantity?: number
 }) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -330,6 +341,22 @@ export function ProductionRunBatchForm({
     if (!open && dialog.open) dialog.close()
   }, [open])
 
+  // Melhoria "Pedidos com reserva de encomenda" §3 (fix): dispara o mesmo
+  // carregamento de handleProductChange assim que o modal abre com um
+  // initialProductId (vindo do painel de fila de demanda), pré-marcando só
+  // a peça pendente (initialPartId) quando o produto é composto e
+  // preenchendo a Quantidade padrão com o que falta produzir
+  // (initialQuantity). Depende só de `open` -- o pai (ProductionRunsExplorer)
+  // limpa os params de trigger da URL logo em seguida, então
+  // initialProductId volta a `undefined` num próximo render sem reacionar
+  // este efeito de novo.
+  useEffect(() => {
+    if (open && initialProductId) {
+      void handleProductChange(initialProductId, { onlyPartId: initialPartId, quantity: initialQuantity })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só na abertura inicial, não a cada render
+  }, [open])
+
   useEffect(() => {
     if (!platePrinterId) {
       setAvailableCapture(null)
@@ -360,16 +387,22 @@ export function ProductionRunBatchForm({
     setUsedCaptureId(null)
   }
 
-  async function handleProductChange(newProductId: string) {
+  async function handleProductChange(newProductId: string, prefill?: { onlyPartId?: string; quantity?: number }) {
     latestProductIdRef.current = newProductId
     setProductId(newProductId)
     setRows([])
     if (!newProductId) return
+    const qty = prefill?.quantity !== undefined ? String(prefill.quantity) : globalQty
+    if (prefill?.quantity !== undefined) setGlobalQty(qty)
     try {
       const defaults = await getProductProductionDefaults(newProductId)
       if (latestProductIdRef.current !== newProductId) return
       if (defaults.isComposite) {
-        setRows(buildRowsFromParts(defaults.parts ?? [], globalQty))
+        let newRows = buildRowsFromParts(defaults.parts ?? [], qty)
+        // Peça específica vinda da fila de demanda -- só ela vem marcada,
+        // pra registrar direto sem precisar desmarcar as outras na mão.
+        if (prefill?.onlyPartId) newRows = newRows.map((r) => ({ ...r, checked: r.partId === prefill.onlyPartId }))
+        setRows(newRows)
       } else {
         const product = products.find((p) => p.id === newProductId)
         setRows([
@@ -382,8 +415,8 @@ export function ProductionRunBatchForm({
             printerId: defaults.printerId ?? '',
             printTimeHoursPerUnit: defaults.printTimeHours ?? 0,
             filaments: [{ filamentId: defaults.filamentId ?? '', weightGramsPerUnit: String(defaults.weightGrams ?? 0), gramsWasted: '0' }],
-            quantityPlanned: globalQty,
-            quantitySuccess: globalQty,
+            quantityPlanned: qty,
+            quantitySuccess: qty,
             timeWastedHours: '0',
             wasteReason: '',
             notes: '',

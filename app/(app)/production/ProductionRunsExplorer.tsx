@@ -1,5 +1,5 @@
 'use client'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
@@ -47,6 +47,9 @@ export function ProductionRunsExplorer({
   products,
   printers,
   filaments,
+  newRunProductId,
+  newRunPartId,
+  newRunQty,
 }: {
   runs: ProductionRunRow[]
   byProduct: ProductionByProductRow[]
@@ -54,12 +57,34 @@ export function ProductionRunsExplorer({
   products: Option[]
   printers: PrinterOption[]
   filaments: FilamentOption[]
+  newRunProductId?: string
+  newRunPartId?: string
+  newRunQty?: number
 }) {
   const router = useRouter()
   const plateDialogRef = useRef<HTMLDialogElement>(null)
   const [newRunOpen, setNewRunOpen] = useState(false)
   const [tab, setTab] = useState<'lista' | 'produto' | 'plates'>('lista')
   const [plateDetail, setPlateDetail] = useState<PlateDetail | null>(null)
+
+  // Melhoria "Pedidos com reserva de estoque" §3 (fix): o botão "Registrar
+  // produção" do painel "Peças pendentes de encomenda" (DemandQueuePanel)
+  // é renderizado por um Server Component irmão -- não tem como chamar
+  // setNewRunOpen diretamente. Ele navega com ?newRunProductId=/
+  // newRunPartId=/newRunQty=, lidos aqui como props vindas do server; ao
+  // detectar newRunProductId, abre o MESMO modal do botão isolado "+
+  // Registrar produção" (não um fluxo separado), pré-preenchido, e limpa
+  // os parâmetros da URL pra não reabrir ao navegar de volta/atualizar.
+  useEffect(() => {
+    if (!newRunProductId) return
+    setNewRunOpen(true)
+    const params = new URLSearchParams(window.location.search)
+    params.delete('newRunProductId')
+    params.delete('newRunPartId')
+    params.delete('newRunQty')
+    router.replace(`/production${params.toString() ? `?${params.toString()}` : ''}`, { scroll: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só quando os params de trigger mudam, não a cada render
+  }, [newRunProductId, newRunPartId, newRunQty])
 
   async function handleRemoveItem(id: string) {
     const result = await deleteProductionRun(id)
@@ -240,7 +265,16 @@ export function ProductionRunsExplorer({
         )
       )}
 
-      <ProductionRunBatchForm open={newRunOpen} onOpenChange={setNewRunOpen} products={products} printers={printers} filaments={filaments} />
+      <ProductionRunBatchForm
+        open={newRunOpen}
+        onOpenChange={setNewRunOpen}
+        products={products}
+        printers={printers}
+        filaments={filaments}
+        initialProductId={newRunProductId}
+        initialPartId={newRunPartId}
+        initialQuantity={newRunQty}
+      />
 
       <dialog
         ref={plateDialogRef}
