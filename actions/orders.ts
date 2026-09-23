@@ -89,7 +89,7 @@ export async function updateOrderStatus(id: string, formData: FormData): Promise
 
   const breakdown = await getProductCostBreakdown(order.productId)
   const saleChannel = ORDER_CHANNEL_TO_SALE_CHANNEL[order.channel]
-  const platformFee = await resolveSalePlatformFee(saleChannel, order.unitPrice.toNumber())
+  const platformFee = await resolveSalePlatformFee(saleChannel, order.unitPrice.toNumber(), order.productId)
   const snapshot = buildSaleCostSnapshot(
     breakdown,
     order.quantity,

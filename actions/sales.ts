@@ -82,7 +82,7 @@ type SaleItemInput = { productId: string; quantity: number; unitPrice: number; c
 
 async function createSaleRow(tx: TxClient, batchId: string, header: SaleHeader, item: SaleItemInput): Promise<void> {
   const breakdown = await getProductCostBreakdown(item.productId)
-  const platformFee = await resolveSalePlatformFee(header.channel, item.unitPrice)
+  const platformFee = await resolveSalePlatformFee(header.channel, item.unitPrice, item.productId)
   const snapshot = buildSaleCostSnapshot(
     breakdown,
     item.quantity,
@@ -184,7 +184,7 @@ export async function updateSale(id: string, formData: FormData): Promise<Action
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
   const breakdown = await getProductCostBreakdown(parsed.data.productId)
-  const platformFee = await resolveSalePlatformFee(parsed.data.channel, parsed.data.unitPrice)
+  const platformFee = await resolveSalePlatformFee(parsed.data.channel, parsed.data.unitPrice, parsed.data.productId)
   const snapshot = buildSaleCostSnapshot(
     breakdown,
     parsed.data.quantity,

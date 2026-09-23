@@ -50,6 +50,16 @@ export function NavProductsIcon({ className }: { className?: string }) {
   )
 }
 
+export function NavListingsIcon({ className }: { className?: string }) {
+  return (
+    <svg {...common} className={className} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.5 5.5h11l1.5 3v7a1 1 0 01-1 1h-12a1 1 0 01-1-1v-7l1.5-3z" />
+      <path d="M4.5 8.5h11" />
+      <path d="M8 8.5v1.2a2 2 0 004 0V8.5" />
+    </svg>
+  )
+}
+
 export function NavProductionIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 20 20" aria-hidden className={className} fill="currentColor">

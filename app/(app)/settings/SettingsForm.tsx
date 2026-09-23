@@ -54,6 +54,9 @@ type PlatformValues = {
   // faixas configuradas ainda (a seção de Mercado Livre abaixo também
   // passou a usar feeTiers, ver kind === 'MERCADO_LIVRE' no render).
   feeTiers: PlatformFeeTier[] | null
+  // Anúncios: 2ª tabela de taxa do Mercado Livre (Premium) -- feeTiers
+  // acima passa a representar "Clássico". Sempre null pra Shopee.
+  feeTiersPremium: PlatformFeeTier[] | null
   // Melhoria "Mercado Livre: taxa por faixa de preço" -- nota livre da
   // categoria a que a comissão se refere, só usada nesse branch.
   categoryReference: string | null
@@ -323,6 +326,12 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
   const [mlTiers, setMlTiers] = useState<PlatformFeeTier[]>(
     platformByKind.get('MERCADO_LIVRE')?.feeTiers ?? buildMlDefaultTiers(ML_COMMISSION_PRESETS.CLASSICO),
   )
+  // Anúncios: 2ª tabela de taxa do Mercado Livre (Premium) -- mesmo
+  // mecanismo de seed (default só na 1ª vez, sem feeTiersPremium salvo
+  // ainda) que mlTiers (Clássico) já tinha.
+  const [mlTiersPremium, setMlTiersPremium] = useState<PlatformFeeTier[]>(
+    platformByKind.get('MERCADO_LIVRE')?.feeTiersPremium ?? buildMlDefaultTiers(ML_COMMISSION_PRESETS.PREMIUM),
+  )
   const [shopeeTiers, setShopeeTiers] = useState<PlatformFeeTier[]>(
     platformByKind.get('SHOPEE')?.feeTiers ?? SHOPEE_DEFAULT_TIERS,
   )
@@ -359,6 +368,7 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
           pfd.set('feePercent', String(mlTiers[0].feePercent))
           pfd.set('feeFixed', String(mlTiers[0].feeFixed))
           pfd.set('feeTiersJson', JSON.stringify(mlTiers))
+          pfd.set('feeTiersPremiumJson', JSON.stringify(mlTiersPremium))
           pfd.set('categoryReference', String(formData.get('platform_MERCADO_LIVRE_categoryReference') ?? ''))
         } else {
           pfd.set('feePercent', String(Number(formData.get(`platform_${kind}_feePercent`)) / 100))
@@ -455,7 +465,7 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
                   <div key={kind} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
                     <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{PLATFORM_LABELS[kind]}</p>
                     <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
-                      Comissão + custo fixo por faixa de preço da venda. Cada faixa tem sua própria taxa — ajuste livremente conforme o tipo de anúncio/categoria (ex.: Clássico ou Premium).
+                      Comissão + custo fixo por faixa de preço da venda. Anúncios (/listings) escolhem entre as 2 tabelas abaixo conforme o Tipo (Clássico/Premium) daquele anúncio.
                     </p>
                     <div className="mt-3">
                       <Field label="Categoria de referência">
@@ -468,9 +478,14 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
                       </Field>
                     </div>
 
-                    <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-300">Faixas de preço</p>
+                    <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-300">Faixas de preço — Clássico</p>
                     <div className="mt-2">
                       <TierEditor tiers={mlTiers} onChange={setMlTiers} />
+                    </div>
+
+                    <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-300">Faixas de preço — Premium</p>
+                    <div className="mt-2">
+                      <TierEditor tiers={mlTiersPremium} onChange={setMlTiersPremium} />
                     </div>
 
                     <p className="mt-4 rounded-lg bg-slate-50 p-2.5 text-xs text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">

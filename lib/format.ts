@@ -1,4 +1,4 @@
-import type { ProductionStatus, WasteReason, SupplyUnit, OrderStatus, OrderChannel, StockAdjustmentReason, SaleChannel } from '@prisma/client'
+import type { ProductionStatus, WasteReason, SupplyUnit, OrderStatus, OrderChannel, StockAdjustmentReason, SaleChannel, ListingStatus, ListingFreightType, ListingType, MarketplacePlatformKind } from '@prisma/client'
 import type { StockStatus } from '@/lib/costing'
 import { todayInBrasilia } from '@/lib/timezone'
 
@@ -124,6 +124,37 @@ const SALE_CHANNEL_BADGES: Record<SaleChannel, StatusBadge> = {
 export function getSaleChannelBadge(channel: SaleChannel): StatusBadge {
   return SALE_CHANNEL_BADGES[channel]
 }
+
+// Anúncios: mesmas cores de SALE_CHANNEL_BADGES pra Shopee/Mercado Livre
+// (consistência visual -- é a mesma plataforma em telas diferentes).
+const MARKETPLACE_PLATFORM_BADGES: Record<MarketplacePlatformKind, StatusBadge> = {
+  SHOPEE: { label: 'Shopee', className: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400' },
+  MERCADO_LIVRE: { label: 'Mercado Livre', className: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-400' },
+}
+
+export function getMarketplacePlatformBadge(kind: MarketplacePlatformKind): StatusBadge {
+  return MARKETPLACE_PLATFORM_BADGES[kind]
+}
+
+const LISTING_STATUS_BADGES: Record<ListingStatus, StatusBadge> = {
+  ONLINE: { label: 'Online', className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' },
+  PAUSADO: { label: 'Pausado', className: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' },
+  RASCUNHO: { label: 'Rascunho', className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' },
+}
+
+export function getListingStatusBadge(status: ListingStatus): StatusBadge {
+  return LISTING_STATUS_BADGES[status]
+}
+
+export const LISTING_STATUS_LABELS: Record<ListingStatus, string> = { RASCUNHO: 'Rascunho', ONLINE: 'Online', PAUSADO: 'Pausado' }
+
+export const LISTING_FREIGHT_TYPE_LABELS: Record<ListingFreightType, string> = {
+  GRATIS_SUBSIDIADO: 'Grátis (subsidiado)',
+  PAGO_COMPRADOR: 'Pago pelo comprador',
+  PERSONALIZADO: 'Personalizado',
+}
+
+export const LISTING_TYPE_LABELS: Record<ListingType, string> = { CLASSICO: 'Clássico', PREMIUM: 'Premium' }
 
 // 5.3: status de estoque (Filamentos/Acessórios/Insumos) virava só
 // "emoji + texto", sem o mesmo pill colorido usado em Produção/Pedidos/

@@ -769,7 +769,11 @@ export function SaleForm({
                 ? p.feeTiers.map((t, i) => (
                     <span key={i}>
                       {i > 0 && ' · '}
-                      {t.maxPrice === null ? `acima de R$${p.feeTiers![i - 1].maxPrice?.toFixed(2)}` : `até R$${t.maxPrice.toFixed(2)}`}: {(t.feePercent * 100).toFixed(0)}%+{formatCurrency(t.feeFixed)}
+                      {/* Bug "crash com só 1 faixa": TierEditor (Configurações) permite
+                          reduzir até 1 faixa só -- nesse caso ela é a última (maxPrice
+                          null) E a primeira (i===0) ao mesmo tempo, sem faixa anterior
+                          pra citar em "acima de". */}
+                      {t.maxPrice === null ? (i > 0 ? `acima de R$${p.feeTiers![i - 1].maxPrice?.toFixed(2)}` : 'qualquer valor') : `até R$${t.maxPrice.toFixed(2)}`}: {(t.feePercent * 100).toFixed(0)}%+{formatCurrency(t.feeFixed)}
                     </span>
                   ))
                 : `${(p.feePercent * 100).toFixed(0)}% + ${formatCurrency(p.feeFixed)}`}

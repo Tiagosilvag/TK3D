@@ -25,6 +25,8 @@ import {
   resolvePlatformPrice,
   calculateGiftEquipmentCostPerUnit,
   calculateGiftProductCost,
+  resolveListingFee,
+  calculateListingProfit,
   type ProductionCostSnapshotInput,
   type ProductCostBreakdown,
   type ProductionCostSnapshot,
@@ -1276,6 +1278,50 @@ describe('resolvePlatformPrice', () => {
   it('feeTiers vazio ([]) se comporta como null -- cai no par flat', () => {
     const result = resolvePlatformPrice(100, 0.055, 0.16, 6, [])
     expect(result.price).toBeCloseTo(calculatePlatformPrice(100, 0.055, 0.16, 6), 4)
+  })
+})
+
+// Anúncios: ao contrário de resolvePlatformPrice (que "engorda" um custo
+// até um preço de venda, com o ponto fixo de calculateTieredPlatformPrice
+// porque a faixa depende do preço ainda inexistente), aqui o preço JÁ é
+// um fato -- o vendedor digitou o preço real do anúncio -- então é só
+// resolver a faixa certa pra ele, sem gross-up.
+describe('resolveListingFee', () => {
+  it('com tiers: resolve a faixa certa pro preço real do anúncio (sem gross-up)', () => {
+    const result = resolveListingFee(50, shopeeTiers, 0.20, 4)
+    expect(result).toEqual({ feePercent: 0.20, feeFixed: 4, feeAmount: 50 * 0.20 + 4 })
+  })
+
+  it('com tiers, preço mais alto: cai numa faixa diferente', () => {
+    const result = resolveListingFee(600, shopeeTiers, 0.20, 4)
+    expect(result).toEqual({ feePercent: 0.14, feeFixed: 26, feeAmount: 600 * 0.14 + 26 })
+  })
+
+  it('sem tiers (null): usa o par flat direto no preço informado', () => {
+    const result = resolveListingFee(100, null, 0.16, 6)
+    expect(result).toEqual({ feePercent: 0.16, feeFixed: 6, feeAmount: 100 * 0.16 + 6 })
+  })
+
+  it('tiers vazio ([]) se comporta como null', () => {
+    const result = resolveListingFee(100, [], 0.16, 6)
+    expect(result).toEqual({ feePercent: 0.16, feeFixed: 6, feeAmount: 100 * 0.16 + 6 })
+  })
+})
+
+describe('calculateListingProfit', () => {
+  it('lucro = preço − custo − taxa − frete, sem brinde', () => {
+    const profit = calculateListingProfit({ price: 38, productionCost: 8.42, feeAmount: 11.6, freightCost: 4, giftCost: 0 })
+    expect(profit).toBeCloseTo(38 - 8.42 - 11.6 - 4, 4)
+  })
+
+  it('subtrai o custo do brinde quando informado', () => {
+    const profit = calculateListingProfit({ price: 38, productionCost: 8.42, feeAmount: 11.6, freightCost: 4, giftCost: 0.9 })
+    expect(profit).toBeCloseTo(38 - 8.42 - 11.6 - 4 - 0.9, 4)
+  })
+
+  it('pode dar negativo (anúncio no prejuízo)', () => {
+    const profit = calculateListingProfit({ price: 10, productionCost: 8.42, feeAmount: 5, freightCost: 4, giftCost: 0 })
+    expect(profit).toBeLessThan(0)
   })
 })
 

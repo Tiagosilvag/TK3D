@@ -397,6 +397,9 @@ model Product {
   // Mosquetão sendo usado por Chaveiro Café E Chaveiro Presente ao mesmo
   // tempo, com um único estoque compartilhado entre os dois).
   usedAsComponentIn     ProductComponentUsage[] @relation("ComponentUsageComponent")
+  // Anúncios: onde este produto está realmente publicado (preço real,
+  // frete, brinde, lucro) -- ver comentário completo em Listing abaixo.
+  listings              Listing[]
 }
 
 // Composição de um Brinde (Product.isGift=true): peça/material de custo
@@ -821,7 +824,72 @@ model MarketplacePlatform {
   // já que a comissão varia por categoria) -- puramente informativo, nunca
   // usado em cálculo. Opcional/nulo em qualquer plataforma que não use.
   categoryReference String?
+  // Anúncios: Mercado Livre tem 2 tabelas de taxa reais (o vendedor decide
+  // por anúncio se lista como Clássico ou Premium, cada um com sua própria
+  // comissão/faixa) -- feeTiers acima passa a representar "Clássico"
+  // (nome mantido por compatibilidade, era a única tabela antes desta
+  // melhoria) e feeTiersPremium é a 2ª tabela, mesmo formato, só usada pela
+  // linha MERCADO_LIVRE (Shopee não tem Tipo de anúncio, fica sempre null).
+  // Listing.listingType decide qual das duas entra no cálculo de taxa
+  // daquele anúncio (ver lib/costing.ts#resolveListingFee e
+  // actions/marketplacePlatforms.ts#resolveListingTiers).
+  feeTiersPremium Json?
   updatedAt  DateTime                @updatedAt
+  listings   Listing[]
+}
+
+enum ListingStatus {
+  RASCUNHO
+  ONLINE
+  PAUSADO
+}
+
+enum ListingFreightType {
+  GRATIS_SUBSIDIADO
+  PAGO_COMPRADOR
+  PERSONALIZADO
+}
+
+// Só relevante quando platform.platform === MERCADO_LIVRE -- Shopee não
+// tem tipo de anúncio, Listing.listingType fica sempre null nesse caso.
+enum ListingType {
+  CLASSICO
+  PREMIUM
+}
+
+// Anúncios: vínculo Produto × Plataforma com o preço REAL publicado (que o
+// vendedor decide e frequentemente difere do `suggestedPrice`/
+// `marketplacePrice` teóricos de Product), frete que o vendedor banca
+// nesse anúncio específico, brinde incluso e o lucro líquido resultante --
+// camada que faltava entre "Produtos" (ficha técnica/custo) e
+// "Configurações > Marketplaces" (regra de taxa genérica por plataforma).
+// Tabela de vínculo pura (mesmo precedente de ProductAccessoryUsage/
+// ProductSupplyUsage) -- hard delete, sem `active`, sem dependente
+// histórico (Sale não referencia Listing, só faz lookup pontual no
+// prefill de preço, ver actions/marketplacePlatforms.ts#getPlatformSalePrice).
+model Listing {
+  id          String              @id @default(cuid())
+  productId   String
+  product     Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  platformId  String
+  platform    MarketplacePlatform @relation(fields: [platformId], references: [id], onDelete: Restrict)
+  listingType ListingType?
+  status      ListingStatus       @default(RASCUNHO)
+  price       Decimal             @db.Decimal(10, 2)
+  freightType ListingFreightType  @default(GRATIS_SUBSIDIADO)
+  freightCost Decimal             @default(0) @db.Decimal(10, 2)
+  hasGift     Boolean             @default(false)
+  // Custo livre digitado pelo vendedor (o brinde incluso nesse anúncio
+  // específico) -- não integra com o sistema de Product.isGift (produto-
+  // brinde com ficha técnica própria), são conceitos separados.
+  giftCost    Decimal             @default(0) @db.Decimal(10, 2)
+  listingUrl  String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  // Um anúncio por produto+plataforma -- trocar o Tipo (Clássico/Premium)
+  // edita o mesmo anúncio, não cria um segundo.
+  @@unique([productId, platformId])
 }
 
 model Sale {

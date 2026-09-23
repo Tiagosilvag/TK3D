@@ -370,6 +370,52 @@ export function resolvePlatformPrice(
   return { price, feePercent: flatFeePercent, feeFixed: flatFeeFixed, feeAmount: price * flatFeePercent + flatFeeFixed }
 }
 
+// Anúncios: decide qual das 2 tabelas de taxa do Mercado Livre usar
+// (feeTiers = "Clássico", feeTiersPremium = "Premium") -- Shopee ou
+// listingType null/CLASSICO caem em feeTiers, único ponto de decisão
+// reaproveitado por getPlatformSalePrice/resolveSalePlatformFee
+// (actions/marketplacePlatforms.ts) e pelas actions de Listing
+// (actions/listings.ts). Tipo estrutural (não importa MarketplacePlatform
+// do Prisma) pra manter este arquivo sem dependências externas.
+export function resolveListingTiers(
+  platform: { feeTiers: unknown; feeTiersPremium: unknown },
+  listingType: 'CLASSICO' | 'PREMIUM' | null | undefined,
+): PlatformFeeTier[] | null {
+  if (listingType === 'PREMIUM') return (platform.feeTiersPremium as PlatformFeeTier[] | null) ?? null
+  return (platform.feeTiers as PlatformFeeTier[] | null) ?? null
+}
+
+// Anúncios: ao contrário de resolvePlatformPrice acima (que "engorda" um
+// custo até um preço de venda, precisando do ponto fixo porque a faixa
+// depende do preço que ainda não existe), aqui o preço JÁ É um fato -- o
+// vendedor digitou o preço real do anúncio -- então só resolve a taxa da
+// faixa certa pra esse preço, sem gross-up. Mesmo espírito de
+// resolveSalePlatformFee (actions/marketplacePlatforms.ts), só que puro/
+// testável aqui e reaproveitado por ele.
+export function resolveListingFee(
+  price: number,
+  tiers: PlatformFeeTier[] | null,
+  flatFeePercent: number,
+  flatFeeFixed: number,
+): { feePercent: number; feeFixed: number; feeAmount: number } {
+  const { feePercent, feeFixed } =
+    tiers && tiers.length > 0 ? resolveTieredPlatformFee(tiers, price) : { feePercent: flatFeePercent, feeFixed: flatFeeFixed }
+  return { feePercent, feeFixed, feeAmount: price * feePercent + feeFixed }
+}
+
+// lucro líquido de 1 anúncio: preço real − custo de produção − taxa da
+// plataforma − frete que o vendedor banca − brinde incluso (se houver).
+// Exibido por extenso na UI (não só o resultado), ver ListingRow.tsx.
+export function calculateListingProfit(input: {
+  price: number
+  productionCost: number
+  feeAmount: number
+  freightCost: number
+  giftCost: number
+}): number {
+  return input.price - input.productionCost - input.feeAmount - input.freightCost - input.giftCost
+}
+
 export function combineProductCost(terms: ProductCostTerms, flags: ProductCostFlags, settings: Settings): ProductCostBreakdown {
   const subtotal =
     terms.filamentCost * on(flags.includeFilamentCost) +

@@ -11,6 +11,7 @@ import {
   NavOrdersIcon,
   NavSalesIcon,
   NavProductsIcon,
+  NavListingsIcon,
   NavProductionIcon,
   NavAssemblyIcon,
   NavStockIcon,
@@ -39,6 +40,7 @@ const PROTAGONIST_LINKS: NavLink[] = [
   { href: '/orders', label: 'Pedidos', icon: NavOrdersIcon },
   { href: '/sales', label: 'Vendas', icon: NavSalesIcon },
   { href: '/products', label: 'Produtos', icon: NavProductsIcon },
+  { href: '/listings', label: 'Anúncios', icon: NavListingsIcon },
 ]
 
 const PRODUCTION_NAV_LINKS: NavLink[] = [
