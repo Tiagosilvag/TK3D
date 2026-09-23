@@ -61,17 +61,35 @@ type PlatformValues = {
 
 const PLATFORM_LABELS: Record<MarketplacePlatformKind, string> = { MERCADO_LIVRE: 'Mercado Livre', SHOPEE: 'Shopee' }
 const PLATFORM_ORDER: MarketplacePlatformKind[] = ['MERCADO_LIVRE', 'SHOPEE']
-// Faixas de taxa da Shopee são sempre estas 5, fixas na UI (ver plano) --
-// nenhum editor de adicionar/remover, só os valores de cada faixa mudam.
-const SHOPEE_TIER_COUNT = 5
 
-// Melhoria "Mercado Livre: taxa por faixa de preço": mesma ideia de 5
-// faixas fixas, mas aqui a comissão é ÚNICA (um campo só, não por faixa) e
-// só a faixa 1 tem o componente extra "50% do valor" -- ver o branch
-// kind === 'MERCADO_LIVRE' em action() e no render abaixo.
-const ML_TIER_COUNT = 5
-const ML_DEFAULT_MAX_PRICES = [12.5, 29.99, 49.99, 78.99]
-const ML_COMMISSION_PRESETS: Record<'CLASSICO' | 'PREMIUM', number> = { CLASSICO: 12, PREMIUM: 17 }
+// Bug "só dá pra editar valor, não editar/apagar/adicionar faixa": as
+// faixas de taxa (Shopee e Mercado Livre) eram sempre um número FIXO de
+// linhas renderizadas em loop -- resolveTieredPlatformFee (lib/costing.ts)
+// e updateMarketplacePlatformFees (validação Zod) sempre aceitaram um
+// array de tamanho qualquer, só a UI que travava em 5. TierEditor abaixo
+// vira uma lista de verdade (editar cada campo, remover, adicionar),
+// única regra mantida: a ÚLTIMA faixa não tem teto (maxPrice null) --
+// mesma exigência que o servidor já validava.
+// Usados só como PONTO DE PARTIDA quando a plataforma ainda não tem
+// nenhuma faixa salva (feeTiers null) -- depois disso o usuário edita
+// livremente, sem mais nenhum número fixo de linhas.
+const SHOPEE_DEFAULT_TIERS: PlatformFeeTier[] = [
+  { maxPrice: 0, feePercent: 0, feeFixed: 0 },
+  { maxPrice: 0, feePercent: 0, feeFixed: 0 },
+  { maxPrice: 0, feePercent: 0, feeFixed: 0 },
+  { maxPrice: 0, feePercent: 0, feeFixed: 0 },
+  { maxPrice: null, feePercent: 0, feeFixed: 0 },
+]
+const ML_COMMISSION_PRESETS: Record<'CLASSICO' | 'PREMIUM', number> = { CLASSICO: 0.12, PREMIUM: 0.17 }
+function buildMlDefaultTiers(commission: number): PlatformFeeTier[] {
+  return [
+    { maxPrice: 12.5, feePercent: commission + 0.5, feeFixed: 0 },
+    { maxPrice: 29.99, feePercent: commission, feeFixed: 0 },
+    { maxPrice: 49.99, feePercent: commission, feeFixed: 0 },
+    { maxPrice: 78.99, feePercent: commission, feeFixed: 0 },
+    { maxPrice: null, feePercent: commission, feeFixed: 0 },
+  ]
+}
 
 // Campos que o usuário digita como porcentagem "de verdade" (0 a 100, ex.
 // "10" pra 10%) -- convertidos pra fração (0 a 1) só no momento do submit,
@@ -198,22 +216,115 @@ function ToggleField({ name, label, defaultChecked }: { name: string; label: str
   )
 }
 
+// Bug "só dá pra editar valor, não editar/apagar/adicionar faixa": editor
+// genérico de PlatformFeeTier[] (Shopee e Mercado Livre) -- lista de
+// verdade em vez do loop de N linhas fixas que existia antes. Estado
+// 100% controlado (sem `name`/FormData nos inputs -- action() lê os
+// arrays de tiers direto do estado do componente pai, não do form
+// nativo), única regra imposta na UI (espelhando a validação do
+// servidor em updateMarketplacePlatformFees): a ÚLTIMA faixa nunca tem
+// teto -- por isso ela nunca mostra o campo "Até R$" (fica sempre
+// "Sem limite"), e não dá pra remover quando só sobra 1 faixa.
+function TierEditor({ tiers, onChange }: { tiers: PlatformFeeTier[]; onChange: (tiers: PlatformFeeTier[]) => void }) {
+  function updateTier(index: number, patch: Partial<PlatformFeeTier>) {
+    onChange(tiers.map((t, i) => (i === index ? { ...t, ...patch } : t)))
+  }
+  function removeTier(index: number) {
+    if (tiers.length <= 1) return
+    const next = tiers.filter((_, i) => i !== index)
+    next[next.length - 1] = { ...next[next.length - 1], maxPrice: null }
+    onChange(next)
+  }
+  function addTier() {
+    const last = tiers[tiers.length - 1]
+    const prevMax = tiers.length >= 2 ? (tiers[tiers.length - 2].maxPrice ?? 0) : 0
+    const inserted: PlatformFeeTier = { maxPrice: prevMax + 10, feePercent: last.feePercent, feeFixed: last.feeFixed }
+    onChange([...tiers.slice(0, -1), inserted, { ...last }])
+  }
+  return (
+    <div className="space-y-2">
+      {tiers.map((tier, idx) => {
+        const isLast = idx === tiers.length - 1
+        return (
+          <div key={idx} className="grid grid-cols-2 items-end gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
+            <Field label={isLast ? 'Sem limite' : 'Até R$'}>
+              {isLast ? (
+                <p className="mt-1 rounded-lg border border-transparent px-2.5 py-1.5 text-sm text-slate-500 dark:text-slate-400">Última faixa</p>
+              ) : (
+                <div className="mt-1 flex items-center rounded-lg border border-slate-300 bg-white px-2.5 transition-colors focus-within:border-violet-500 focus-within:ring-2 focus-within:ring-violet-500/30 dark:border-slate-700 dark:bg-slate-800">
+                  <span className="mr-1 shrink-0 text-sm text-slate-400 dark:text-slate-500">R$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={tier.maxPrice ?? 0}
+                    onChange={(e) => updateTier(idx, { maxPrice: Number(e.target.value) || 0 })}
+                    className="w-full bg-transparent py-1.5 text-sm text-slate-900 focus:outline-none dark:text-slate-100"
+                  />
+                </div>
+              )}
+            </Field>
+            <Field label="Taxa">
+              <div className="mt-1 flex items-center rounded-lg border border-slate-300 bg-white px-2.5 transition-colors focus-within:border-violet-500 focus-within:ring-2 focus-within:ring-violet-500/30 dark:border-slate-700 dark:bg-slate-800">
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  value={toPercentDisplay(tier.feePercent)}
+                  onChange={(e) => updateTier(idx, { feePercent: (Number(e.target.value) || 0) / 100 })}
+                  className="w-full bg-transparent py-1.5 text-sm text-slate-900 focus:outline-none dark:text-slate-100"
+                />
+                <span className="ml-1 shrink-0 text-sm text-slate-400 dark:text-slate-500">%</span>
+              </div>
+            </Field>
+            <Field label="Taxa fixa">
+              <div className="mt-1 flex items-center rounded-lg border border-slate-300 bg-white px-2.5 transition-colors focus-within:border-violet-500 focus-within:ring-2 focus-within:ring-violet-500/30 dark:border-slate-700 dark:bg-slate-800">
+                <span className="mr-1 shrink-0 text-sm text-slate-400 dark:text-slate-500">R$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={tier.feeFixed}
+                  onChange={(e) => updateTier(idx, { feeFixed: Number(e.target.value) || 0 })}
+                  className="w-full bg-transparent py-1.5 text-sm text-slate-900 focus:outline-none dark:text-slate-100"
+                />
+              </div>
+            </Field>
+            <button
+              type="button"
+              onClick={() => removeTier(idx)}
+              disabled={tiers.length <= 1}
+              className="tk-link-danger mb-1.5 justify-self-start text-xs disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Remover
+            </button>
+          </div>
+        )
+      })}
+      <button type="button" onClick={addTier} className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+        + Adicionar faixa
+      </button>
+    </div>
+  )
+}
+
 export function SettingsForm({ settings, platforms }: { settings: SettingsValues; platforms: PlatformValues[] }) {
   const [message, setMessage] = useState<string | null>(null)
   const [roundingMode, setRoundingMode] = useState<RoundingMode>(settings.roundingMode)
   const platformByKind = new Map(platforms.map((p) => [p.platform, p]))
 
-  // Melhoria "Mercado Livre: taxa por faixa de preço": comissão é um campo
-  // controlado (precisa mudar de valor quando o toggle Clássico/Premium é
-  // clicado, `defaultValue` sozinho não reage a isso) -- mesmo padrão do
-  // `unitPrice` controlado em SaleForm.tsx. Valor inicial vem da faixa 2
-  // (única faixa que já é só a comissão pura, sem o +50% da faixa 1).
-  // Toggle em si nunca é persistido (não tem coluna pra isso, nem precisa
-  // -- é só um atalho de preenchimento), sempre reseta pra "Clássico".
-  const mlTiers = platformByKind.get('MERCADO_LIVRE')?.feeTiers ?? null
-  const [mlListingType, setMlListingType] = useState<'CLASSICO' | 'PREMIUM'>('CLASSICO')
-  const [mlCommission, setMlCommission] = useState<number>(
-    mlTiers && mlTiers[1] ? toPercentDisplay(mlTiers[1].feePercent) : ML_COMMISSION_PRESETS.CLASSICO,
+  // Bug "só dá pra editar valor, não editar/apagar/adicionar faixa": as
+  // faixas de cada plataforma viram estado controlado de verdade aqui --
+  // TierEditor lê/escreve nesses arrays, action() lê eles direto (não
+  // depende mais de nomes de campo por índice fixo no FormData). Seed a
+  // partir do que já está salvo; só cai no default (5 faixas "modelo") na
+  // primeira vez, quando a plataforma ainda não tem feeTiers nenhum.
+  const [mlTiers, setMlTiers] = useState<PlatformFeeTier[]>(
+    platformByKind.get('MERCADO_LIVRE')?.feeTiers ?? buildMlDefaultTiers(ML_COMMISSION_PRESETS.CLASSICO),
+  )
+  const [shopeeTiers, setShopeeTiers] = useState<PlatformFeeTier[]>(
+    platformByKind.get('SHOPEE')?.feeTiers ?? SHOPEE_DEFAULT_TIERS,
   )
 
   async function action(formData: FormData) {
@@ -231,44 +342,23 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
       PLATFORM_ORDER.map((kind) => {
         const pfd = new FormData()
         if (kind === 'SHOPEE') {
-          // Melhoria "Shopee: taxa por faixa de preço": monta as 5 faixas a
-          // partir dos inputs individuais -- feePercent/feeFixed "achatados"
-          // (colunas NOT NULL) recebem a 1ª faixa como espelho, nunca lidos
-          // de verdade depois que feeTiers existe (ver getPlatformSalePrice).
-          const tiers: { maxPrice: number | null; feePercent: number; feeFixed: number }[] = []
-          for (let i = 1; i <= SHOPEE_TIER_COUNT; i++) {
-            const isLast = i === SHOPEE_TIER_COUNT
-            const maxPriceRaw = formData.get(`platform_SHOPEE_tier${i}_maxPrice`)
-            tiers.push({
-              maxPrice: isLast ? null : Number(maxPriceRaw),
-              feePercent: Number(formData.get(`platform_SHOPEE_tier${i}_feePercent`)) / 100,
-              feeFixed: Number(formData.get(`platform_SHOPEE_tier${i}_feeFixed`)),
-            })
-          }
-          pfd.set('feePercent', String(tiers[0].feePercent))
-          pfd.set('feeFixed', String(tiers[0].feeFixed))
-          pfd.set('feeTiersJson', JSON.stringify(tiers))
+          // Bug "só dá pra editar valor": faixas agora vêm do estado
+          // controlado (shopeeTiers, editado via TierEditor) -- não mais
+          // reconstruídas a partir de N campos de índice fixo no
+          // FormData. feePercent/feeFixed "achatados" (colunas NOT NULL)
+          // recebem a 1ª faixa como espelho, nunca lidos de verdade
+          // depois que feeTiers existe (ver getPlatformSalePrice).
+          pfd.set('feePercent', String(shopeeTiers[0].feePercent))
+          pfd.set('feeFixed', String(shopeeTiers[0].feeFixed))
+          pfd.set('feeTiersJson', JSON.stringify(shopeeTiers))
         } else if (kind === 'MERCADO_LIVRE') {
-          // Melhoria "Mercado Livre: taxa por faixa de preço": uma comissão
-          // só (não por faixa, diferente da Shopee) -- a faixa 1 soma +50%
-          // (o componente "50% do valor" que o ML cobra só nela), as
-          // faixas 2-5 usam a mesma comissão com taxa fixa própria (faixa
-          // 5 sempre isenta). Ver prisma/schema.prisma#MarketplacePlatform
-          // e ML_TIER_COUNT/ML_DEFAULT_MAX_PRICES acima.
-          const commission = Number(formData.get('platform_MERCADO_LIVRE_commissionPercent')) / 100
-          const maxPrices = Array.from({ length: ML_TIER_COUNT - 1 }, (_, idx) =>
-            Number(formData.get(`platform_MERCADO_LIVRE_tier${idx + 1}_maxPrice`)),
-          )
-          const tiers: { maxPrice: number | null; feePercent: number; feeFixed: number }[] = [
-            { maxPrice: maxPrices[0], feePercent: commission + 0.5, feeFixed: 0 },
-            { maxPrice: maxPrices[1], feePercent: commission, feeFixed: Number(formData.get('platform_MERCADO_LIVRE_tier2_feeFixed')) },
-            { maxPrice: maxPrices[2], feePercent: commission, feeFixed: Number(formData.get('platform_MERCADO_LIVRE_tier3_feeFixed')) },
-            { maxPrice: maxPrices[3], feePercent: commission, feeFixed: Number(formData.get('platform_MERCADO_LIVRE_tier4_feeFixed')) },
-            { maxPrice: null, feePercent: commission, feeFixed: 0 },
-          ]
-          pfd.set('feePercent', String(tiers[0].feePercent))
-          pfd.set('feeFixed', String(tiers[0].feeFixed))
-          pfd.set('feeTiersJson', JSON.stringify(tiers))
+          // Mesma ideia: mlTiers já tem cada faixa com sua própria
+          // feePercent/feeFixed (deixou de ser "1 comissão única aplicada
+          // a todas as faixas" -- cada linha agora é livre, ver
+          // TierEditor/buildMlDefaultTiers acima).
+          pfd.set('feePercent', String(mlTiers[0].feePercent))
+          pfd.set('feeFixed', String(mlTiers[0].feeFixed))
+          pfd.set('feeTiersJson', JSON.stringify(mlTiers))
           pfd.set('categoryReference', String(formData.get('platform_MERCADO_LIVRE_categoryReference') ?? ''))
         } else {
           pfd.set('feePercent', String(Number(formData.get(`platform_${kind}_feePercent`)) / 100))
@@ -335,12 +425,12 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
             {PLATFORM_ORDER.map((kind) => {
               const p = platformByKind.get(kind)
               if (!p) return null
-              // Melhoria "Shopee: taxa por faixa de preço": só a Shopee tem
-              // feeTiers -- vira uma tabelinha de 5 faixas fixas em vez do
-              // par único Taxa/Taxa fixa. Mercado Livre continua com o
-              // layout de sempre, sem faixas.
+              // Bug "só dá pra editar valor, não editar/apagar/adicionar
+              // faixa": Shopee e Mercado Livre agora usam o mesmo
+              // TierEditor genérico -- lista de verdade (editar cada
+              // campo, remover, adicionar quantas faixas quiser), em vez
+              // do loop de N linhas fixas de antes.
               if (kind === 'SHOPEE') {
-                const tiers = p.feeTiers ?? []
                 return (
                   <div key={kind} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
                     <div className="flex flex-wrap items-end justify-between gap-2">
@@ -354,91 +444,20 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
                     <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
                       Taxa por faixa de preço da venda (taxa cheia, sem o subsídio Pix -- varia por transação, tratado como margem extra eventual).
                     </p>
-                    <div className="mt-2 space-y-2">
-                      {Array.from({ length: SHOPEE_TIER_COUNT }, (_, idx) => {
-                        const i = idx + 1
-                        const isLast = i === SHOPEE_TIER_COUNT
-                        const tier = tiers[idx]
-                        return (
-                          <div key={i} className="grid grid-cols-2 items-end gap-2 sm:grid-cols-3">
-                            <Field label={isLast ? 'Acima de' : 'Até R$'}>
-                              {isLast ? (
-                                <p className="mt-1 rounded-lg border border-transparent px-2.5 py-1.5 text-sm text-slate-500 dark:text-slate-400">
-                                  R$ {tiers[idx - 1]?.maxPrice?.toFixed(2) ?? '—'}
-                                </p>
-                              ) : (
-                                <AffixInput name={`platform_SHOPEE_tier${i}_maxPrice`} defaultValue={tier?.maxPrice ?? 0} prefix="R$" />
-                              )}
-                            </Field>
-                            <Field label="Taxa">
-                              <AffixInput name={`platform_SHOPEE_tier${i}_feePercent`} defaultValue={toPercentDisplay(tier?.feePercent ?? 0)} suffix="%" max="100" />
-                            </Field>
-                            <Field label="Taxa fixa">
-                              <AffixInput name={`platform_SHOPEE_tier${i}_feeFixed`} defaultValue={tier?.feeFixed ?? 0} prefix="R$" />
-                            </Field>
-                          </div>
-                        )
-                      })}
+                    <div className="mt-2">
+                      <TierEditor tiers={shopeeTiers} onChange={setShopeeTiers} />
                     </div>
                   </div>
                 )
               }
-              // Melhoria "Mercado Livre: taxa por faixa de preço": mesma
-              // ideia da Shopee (5 faixas fixas), mas a comissão é ÚNICA
-              // (um campo controlado só, ver mlCommission acima) em vez de
-              // uma % por faixa -- só a faixa 1 (até R$12,50) soma +50%
-              // (o componente "50% do valor" que o ML cobra só nela) e a
-              // faixa 5 (acima de R$79) é sempre isenta. Coluna "Taxa" de
-              // cada linha é só leitura (reflete mlCommission), não um
-              // input por faixa -- editar a comissão é sempre pelo campo
-              // único acima.
               if (kind === 'MERCADO_LIVRE') {
-                const tiers = p.feeTiers ?? []
-                const maxPrices = ML_DEFAULT_MAX_PRICES.map((def, idx) => tiers[idx]?.maxPrice ?? def)
                 return (
                   <div key={kind} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{PLATFORM_LABELS[kind]}</p>
-                      <div className="inline-flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
-                        {(['CLASSICO', 'PREMIUM'] as const).map((t) => (
-                          <button
-                            key={t}
-                            type="button"
-                            onClick={() => {
-                              setMlListingType(t)
-                              setMlCommission(ML_COMMISSION_PRESETS[t])
-                            }}
-                            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                              mlListingType === t
-                                ? 'bg-gradient-to-r from-violet-600 to-blue-600 text-white dark:from-violet-500 dark:to-blue-500 dark:text-slate-950'
-                                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
-                            }`}
-                          >
-                            {t === 'CLASSICO' ? 'Clássico' : 'Premium'}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{PLATFORM_LABELS[kind]}</p>
                     <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
-                      Comissão por tipo de anúncio + custo fixo por faixa de preço da venda (acima de R$ 79,00 não há custo fixo). A comissão não muda com o número de vendas — reputação e histórico afetam o custo de frete subsidiado, não a taxa em si.
+                      Comissão + custo fixo por faixa de preço da venda. Cada faixa tem sua própria taxa — ajuste livremente conforme o tipo de anúncio/categoria (ex.: Clássico ou Premium).
                     </p>
-                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <Field label="Comissão da categoria">
-                        <div className="mt-1 flex items-center rounded-lg border border-slate-300 bg-white px-2.5 transition-colors focus-within:border-violet-500 focus-within:ring-2 focus-within:ring-violet-500/30 dark:border-slate-700 dark:bg-slate-800">
-                          <input
-                            name="platform_MERCADO_LIVRE_commissionPercent"
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            max="100"
-                            value={mlCommission}
-                            onChange={(e) => setMlCommission(Number(e.target.value))}
-                            required
-                            className="w-full bg-transparent py-1.5 text-sm text-slate-900 focus:outline-none dark:text-slate-100"
-                          />
-                          <span className="ml-1 shrink-0 text-sm text-slate-400 dark:text-slate-500">%</span>
-                        </div>
-                      </Field>
+                    <div className="mt-3">
                       <Field label="Categoria de referência">
                         <input
                           name="platform_MERCADO_LIVRE_categoryReference"
@@ -449,42 +468,9 @@ export function SettingsForm({ settings, platforms }: { settings: SettingsValues
                       </Field>
                     </div>
 
-                    <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-300">Custo fixo por faixa de preço</p>
-                    <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Cobrado além da comissão, só em vendas abaixo de R$ 79,00.</p>
-                    <div className="mt-2 space-y-2">
-                      {Array.from({ length: ML_TIER_COUNT }, (_, idx) => {
-                        const i = idx + 1
-                        const isFirst = idx === 0
-                        const isLast = i === ML_TIER_COUNT
-                        const effectivePercent = mlCommission + (isFirst ? 50 : 0)
-                        return (
-                          <div key={i} className="grid grid-cols-2 items-end gap-2 sm:grid-cols-3">
-                            <Field label={isLast ? 'Acima de' : 'Até R$'}>
-                              {isLast ? (
-                                <p className="mt-1 rounded-lg border border-transparent px-2.5 py-1.5 text-sm text-slate-500 dark:text-slate-400">
-                                  R$ {maxPrices[ML_TIER_COUNT - 2].toFixed(2)}
-                                </p>
-                              ) : (
-                                <AffixInput name={`platform_MERCADO_LIVRE_tier${i}_maxPrice`} defaultValue={maxPrices[idx]} prefix="R$" />
-                              )}
-                            </Field>
-                            <Field label="Taxa">
-                              <p className="mt-1 rounded-lg border border-transparent px-2.5 py-1.5 text-sm text-slate-500 dark:text-slate-400">
-                                {effectivePercent.toFixed(2)}%
-                              </p>
-                            </Field>
-                            <Field label="Taxa fixa">
-                              {isFirst ? (
-                                <p className="mt-1 rounded-lg border border-transparent px-2.5 py-1.5 text-sm text-slate-500 dark:text-slate-400">50% do valor</p>
-                              ) : isLast ? (
-                                <p className="mt-1 rounded-lg border border-transparent px-2.5 py-1.5 text-sm text-slate-500 dark:text-slate-400">R$ 0,00 (isento)</p>
-                              ) : (
-                                <AffixInput name={`platform_MERCADO_LIVRE_tier${i}_feeFixed`} defaultValue={tiers[idx]?.feeFixed ?? 0} prefix="R$" />
-                              )}
-                            </Field>
-                          </div>
-                        )
-                      })}
+                    <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-300">Faixas de preço</p>
+                    <div className="mt-2">
+                      <TierEditor tiers={mlTiers} onChange={setMlTiers} />
                     </div>
 
                     <p className="mt-4 rounded-lg bg-slate-50 p-2.5 text-xs text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
