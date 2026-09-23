@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import localFont from 'next/font/local'
 import './globals.css'
+import { ClientErrorLogger } from '@/components/ClientErrorLogger'
 
 // Bug "deploy falha por causa de fonte": next/font/google baixa a fonte do
 // Google Fonts DURANTE o build (dentro do container Docker) -- se a rede do
@@ -66,7 +67,10 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
-      <body className="font-sans">{children}</body>
+      <body className="font-sans">
+        <ClientErrorLogger />
+        {children}
+      </body>
     </html>
   )
 }
