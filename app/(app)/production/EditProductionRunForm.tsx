@@ -31,6 +31,11 @@ export interface EditingRun {
   // simples de "gramas desperdiçadas" não sabe dizer qual cor mudou) --
   // ver esse motivo exibido em vez dos campos de edição.
   isMultiFilament: boolean
+  // Bug "só mostrava 1 cor de peça multi-filamento": filamentName é só o
+  // campo escalar (1º componente) -- esta lista tem TODAS as cores
+  // realmente usadas (ProductionRunFilamentUsage), exibida no lugar de
+  // filamentName quando isMultiFilament.
+  filamentUsages: { label: string; colorHex: string | null; gramsUsed: number }[]
   date: string
   quantityPlanned: number
   quantitySuccess: number
@@ -114,7 +119,18 @@ export function EditProductionRunForm({ editingRun, printers }: { editingRun: Ed
       </div>
       <div className="text-sm">
         <span className="block text-slate-500 dark:text-slate-400">Filamento</span>
-        <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.filamentName}</span>
+        {editingRun.isMultiFilament ? (
+          <ul className="mt-0.5 space-y-0.5">
+            {editingRun.filamentUsages.map((u, i) => (
+              <li key={i} className="flex items-center gap-1.5 font-medium text-slate-800 dark:text-slate-200">
+                <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-black/10 dark:border-white/10" style={{ background: u.colorHex ?? '#9CA3AF' }} />
+                {u.label} <span className="font-normal text-slate-500 dark:text-slate-400">({u.gramsUsed}g)</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.filamentName}</span>
+        )}
       </div>
       <div className="text-sm">
         <span className="block text-slate-500 dark:text-slate-400">Data</span>
@@ -128,7 +144,7 @@ export function EditProductionRunForm({ editingRun, printers }: { editingRun: Ed
       {editingRun.isMultiFilament ? (
         <>
           <div className="text-sm">
-            <span className="block text-slate-500 dark:text-slate-400">Filamento usado (g)</span>
+            <span className="block text-slate-500 dark:text-slate-400">Total usado (g)</span>
             <span className="font-medium text-slate-800 dark:text-slate-200">{editingRun.gramsUsed}g</span>
           </div>
           <p className="col-span-full text-sm text-amber-600 dark:text-amber-400">

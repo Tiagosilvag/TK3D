@@ -1166,7 +1166,7 @@ export interface PlateDetail {
 export async function getPlateDetail(id: string): Promise<PlateDetail | null> {
   const plate = await prisma.plate.findUnique({
     where: { id },
-    include: { printer: true, runs: { include: { product: true, productPart: true, filament: true } } },
+    include: { printer: true, runs: { include: { product: true, productPart: true, filament: true, filamentUsages: { include: { filament: true } } } } },
   })
   if (!plate) return null
 
@@ -1184,7 +1184,12 @@ export async function getPlateDetail(id: string): Promise<PlateDetail | null> {
       // tipo (material) + cor, que é o que importa pra reconhecer de
       // relance na tabela (a listagem de Filamentos continua mostrando
       // marca/rolo, onde faz sentido escolher entre rolos específicos).
-      filamentName: `${run.filament.material} ${run.filament.colorName}`,
+      // Bug "só mostrava 1 cor de peça multi-filamento": o campo escalar
+      // filamentId é só o 1º componente (compatibilidade, ver CLAUDE.md) --
+      // quando a peça tem filamentUsages (2+ cores reais), junta todas.
+      filamentName: run.filamentUsages.length > 0
+        ? run.filamentUsages.map((u) => `${u.filament.material} ${u.filament.colorName}`).join(' + ')
+        : `${run.filament.material} ${run.filament.colorName}`,
       quantityPlanned: run.quantityPlanned,
       quantitySuccess: run.quantitySuccess,
       quantityFailed: run.quantityFailed,

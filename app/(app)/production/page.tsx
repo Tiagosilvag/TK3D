@@ -63,7 +63,7 @@ export default async function ProductionPage({
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { manufacturer: 'asc' } }),
     editId
-      ? prisma.productionRun.findUnique({ where: { id: editId }, include: { product: true, printer: true, filament: true, productPart: true, filamentUsages: true } })
+      ? prisma.productionRun.findUnique({ where: { id: editId }, include: { product: true, printer: true, filament: true, productPart: true, filamentUsages: { include: { filament: true } } } })
       : null,
     // Melhoria "Produção" (reformulação Plate) §5: visões "Por produto" e
     // "Plates" -- independentes do filtro de período/produto/impressora
@@ -141,6 +141,16 @@ export default async function ProductionPage({
         // registrada, tipo + cor já identifica de relance.
         filamentName: `${editingRunRecord.filament.material} ${editingRunRecord.filament.colorName}`,
         isMultiFilament: editingRunRecord.filamentUsages.length > 0,
+        // Bug "só mostrava 1 cor de peça multi-filamento": filamentName
+        // acima vem só do campo escalar filamentId (1º componente/
+        // compatibilidade, ver CLAUDE.md), nunca mostrava as OUTRAS cores
+        // reais gravadas em ProductionRunFilamentUsage. Lista completa,
+        // só usada quando isMultiFilament (senão fica vazia).
+        filamentUsages: editingRunRecord.filamentUsages.map((u) => ({
+          label: `${u.filament.material} ${u.filament.colorName}`,
+          colorHex: u.filament.colorHex,
+          gramsUsed: u.gramsUsed.toNumber(),
+        })),
         date: editingRunRecord.date.toISOString().slice(0, 10),
         quantityPlanned: editingRunRecord.quantityPlanned,
         quantitySuccess: editingRunRecord.quantitySuccess,
