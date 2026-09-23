@@ -3,11 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createConsignmentSaleReportBatch } from '@/actions/consignmentSaleReports'
 import type { ConsignmentSaleableDelivery } from '@/lib/reports'
+import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 interface SaleRow {
   deliveryId: string

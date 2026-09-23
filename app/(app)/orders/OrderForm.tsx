@@ -2,6 +2,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { createOrder } from '@/actions/orders'
 import { ORDER_CHANNEL_LABELS } from '@/lib/format'
+import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
 import type { OrderReallocationEvent } from '@/lib/orderReservations'
 
@@ -22,10 +23,6 @@ export interface OrderProductOption {
   productId: string
   productName: string
   variants: OrderProductVariantOption[]
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
 }
 
 export function OrderForm({ products }: { products: OrderProductOption[] }) {

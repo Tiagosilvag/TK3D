@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createConsignmentDeliveryBatch } from '@/actions/consignmentDeliveries'
 import { formatCurrency } from '@/lib/format'
+import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
 
 export interface PartnerOption {
@@ -32,10 +33,6 @@ interface ItemDraft {
   colorHex: string | null
   quantity: number
   unitPrice: number
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
 }
 
 // Melhoria "Entregas em consignação" §1/§3: cadastro vira modal com um

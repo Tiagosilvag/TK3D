@@ -1,6 +1,7 @@
 'use client'
 import { useMemo, useState } from 'react'
 import { formatCurrency, getOrderStatusBadge, getDeadlineBadge, ORDER_CHANNEL_LABELS } from '@/lib/format'
+import { todayInBrasilia } from '@/lib/timezone'
 import { StatusBadge } from '@/components/StatusBadge'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { OrderForm, type OrderProductOption } from './OrderForm'
@@ -44,12 +45,13 @@ function chipClass(active: boolean): string {
   }`
 }
 
+// Mesmo critério de getDeadlineBadge (lib/format.ts) -- "hoje" em
+// Brasília, nunca o fuso da máquina rodando o navegador.
 function daysUntil(dateStr: string): number {
   const msPerDay = 1000 * 60 * 60 * 24
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
+  const today = todayInBrasilia()
   const delivery = new Date(dateStr)
-  delivery.setHours(0, 0, 0, 0)
+  delivery.setUTCHours(0, 0, 0, 0)
   return Math.round((delivery.getTime() - today.getTime()) / msPerDay)
 }
 

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createSupply, updateSupply } from '@/actions/supplies'
 import { formatCurrency, SUPPLY_UNIT_SUFFIX } from '@/lib/format'
+import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
 import type { SupplyUnit } from '@prisma/client'
 
@@ -13,10 +14,6 @@ const SUPPLY_UNITS: { value: SupplyUnit; label: string }[] = [
   { value: 'M', label: 'Metro' },
   { value: 'OUTRO', label: 'Outro' },
 ]
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 function formatOrDash(value: number): string {
   if (!Number.isFinite(value)) return '—'

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createAccessory, createAccessoryMultiColor, updateAccessory } from '@/actions/accessories'
 import { formatCurrency } from '@/lib/format'
+import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
 import { TypeSelect } from './TypeSelect'
 import { TypeManagerPanel, type AccessoryTypeOption } from './TypeManagerPanel'
@@ -16,10 +17,6 @@ export type EditingAccessory = {
 }
 
 type ColorRow = { colorName: string; colorHex: string; quantity: string }
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 function emptyColorRow(): ColorRow {
   return { colorName: '', colorHex: '#ff0000', quantity: '' }

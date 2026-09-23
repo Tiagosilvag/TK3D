@@ -6,6 +6,7 @@ import { createSaleBatch, updateSale } from '@/actions/sales'
 import { getPlatformSalePrice } from '@/actions/marketplacePlatforms'
 import { SubmitButton } from '@/components/SubmitButton'
 import { formatCurrency } from '@/lib/format'
+import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { resolveTieredPlatformFee, type PlatformFeeTier } from '@/lib/costing'
 import type { MarketplacePlatformKind } from '@prisma/client'
 
@@ -49,10 +50,6 @@ export interface PlatformFeeInfo {
   feePercent: number
   feeFixed: number
   feeTiers: PlatformFeeTier[] | null
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
 }
 
 // 3.6: plataforma específica obrigatória -- "Marketplace" genérico saiu da

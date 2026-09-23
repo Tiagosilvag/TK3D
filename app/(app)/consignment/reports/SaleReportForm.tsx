@@ -1,10 +1,7 @@
 'use client'
 import { useMemo, useRef, useState } from 'react'
 import { createConsignmentSaleReport } from '@/actions/consignmentSaleReports'
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
-}
+import { todayInBrasiliaString as today } from '@/lib/timezone'
 
 type DeliveryOption = {
   id: string

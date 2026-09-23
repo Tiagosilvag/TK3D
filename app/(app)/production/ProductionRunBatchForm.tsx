@@ -7,6 +7,7 @@ import { getAvailablePrinterCapture } from '@/actions/bambuStatus'
 import { buildPlateAutofill } from '@/lib/bambu/autofill'
 import { allocatePlatePrintTime } from '@/lib/costing'
 import { WASTE_REASON_LABELS } from '@/lib/format'
+import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
 import { FilamentSelect } from '@/components/FilamentSelect'
@@ -30,10 +31,6 @@ type PrinterOption = { id: string; name: string; costPerHour: number }
 // FilamentSelect.tsx) já usado em ProductForm.tsx -- <select> nativo não
 // tem como mostrar a bolinha de cor dentro de <option>.
 type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 interface FilamentComponentRow {
   filamentId: string

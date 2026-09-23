@@ -3,11 +3,8 @@ import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { registerAccessoryPurchase } from '@/actions/accessories'
 import { formatCurrency } from '@/lib/format'
+import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10)
-}
 
 // 3.7: "Repor estoque" virou um <dialog> nativo (mesmo padrão do
 // AdjustStockButton) em vez de um formulário completo embutido em cada

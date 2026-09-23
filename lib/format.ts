@@ -1,5 +1,6 @@
 import type { ProductionStatus, WasteReason, SupplyUnit, OrderStatus, OrderChannel, StockAdjustmentReason, SaleChannel } from '@prisma/client'
 import type { StockStatus } from '@/lib/costing'
+import { todayInBrasilia } from '@/lib/timezone'
 
 export function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value)
@@ -83,10 +84,15 @@ export interface DeadlineBadge extends StatusBadge {
 
 export function getDeadlineBadge(deliveryDate: Date, status: OrderStatus): DeadlineBadge {
   const msPerDay = 1000 * 60 * 60 * 24
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
+  // "Hoje" em Brasília (lib/timezone.ts), não `new Date()` cru -- o
+  // container roda em UTC, então perto da virada do dia em Brasília um
+  // pedido podia aparecer "atrasado" (ou deixar de aparecer) horas cedo
+  // demais. deliveryDate já vem como meia-noite UTC do dia escolhido
+  // (mesma convenção de todo DateTime data-only do app) -- comparável
+  // direto com todayInBrasilia(), sem precisar de setHours.
+  const today = todayInBrasilia()
   const delivery = new Date(deliveryDate)
-  delivery.setHours(0, 0, 0, 0)
+  delivery.setUTCHours(0, 0, 0, 0)
   const daysUntil = Math.round((delivery.getTime() - today.getTime()) / msPerDay)
   const isTerminal = status === 'ENTREGUE' || status === 'CANCELADO'
 
