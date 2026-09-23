@@ -29,6 +29,7 @@ export function DemandQueuePanel({ rows }: { rows: OrderDemandRow[] }) {
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
                   {row.productName}{row.partName && <span className="text-slate-500 dark:text-slate-400"> — Peça: {row.partName}</span>}
+                  {row.comboLabel && <span className="text-violet-600 dark:text-violet-400"> — {row.comboLabel}</span>}
                 </p>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   Pedido {ORDER_CHANNEL_LABELS[row.channel]}
@@ -53,6 +54,7 @@ export function DemandQueuePanel({ rows }: { rows: OrderDemandRow[] }) {
                     newRunProductId: row.productId,
                     ...(row.partId ? { newRunPartId: row.partId } : {}),
                     newRunQty: String(row.neededUnits),
+                    ...(row.filamentIds && row.filamentIds.length === 1 ? { newRunFilamentId: row.filamentIds[0] } : {}),
                   }).toString()}`}
                   className="shrink-0 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-violet-700 dark:bg-violet-500 dark:text-slate-950 dark:hover:bg-violet-400"
                 >

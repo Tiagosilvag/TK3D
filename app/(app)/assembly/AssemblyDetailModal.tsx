@@ -17,11 +17,17 @@ import type { ComponentOption } from './ComponentCategoryCard'
 // productId órfão de modal fechada.
 export function AssemblyDetailModal({
   status,
+  presetColorChoices,
   allAccessories,
   allSupplies,
   allPackaging,
 }: {
   status: AssemblyStatus | null
+  // Encomenda com variação personalizada: vem de ?presetColorComboKey=
+  // (AssemblyDemandPanel) -- combinação de cor que o pedido específico
+  // precisa, decodificada em { partId: comboKey }, repassada pro
+  // ConfirmAssemblyForm pré-selecionar em vez da heurística de sempre.
+  presetColorChoices: Record<string, string> | null
   allAccessories: ComponentOption[]
   allSupplies: ComponentOption[]
   allPackaging: ComponentOption[]
@@ -81,6 +87,7 @@ export function AssemblyDetailModal({
               allAccessories={allAccessories}
               allSupplies={allSupplies}
               allPackaging={allPackaging}
+              presetColorChoices={presetColorChoices}
             />
 
             <Link href="/stock" className="inline-block text-sm text-violet-600 hover:underline dark:text-violet-400">

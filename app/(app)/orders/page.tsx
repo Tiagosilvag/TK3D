@@ -29,6 +29,7 @@ export default async function OrdersPage() {
   const products = variantProducts.map((p) => ({
     productId: p.productId,
     productName: p.productName,
+    needsAssembly: p.needsAssembly,
     variants: p.variants.map((v) => ({ key: v.key, label: v.label, colorHex: v.colorHex, available: v.available })),
   }))
 

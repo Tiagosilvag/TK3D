@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { getAssemblyStatus, getAssemblyOverview } from '@/actions/assembly'
 import { getOrderDemandQueue } from '@/actions/orders'
+import { deserializeColorChoices } from '@/lib/reports'
 import { AssemblyOverview } from './AssemblyOverview'
 import { AssemblyDetailModal } from './AssemblyDetailModal'
 import { AssemblyDemandPanel } from './AssemblyDemandPanel'
@@ -10,9 +11,10 @@ export const dynamic = 'force-dynamic'
 export default async function AssemblyPage({
   searchParams,
 }: {
-  searchParams: Promise<{ productId?: string }>
+  searchParams: Promise<{ productId?: string; presetColorComboKey?: string }>
 }) {
-  const { productId } = await searchParams
+  const { productId, presetColorComboKey } = await searchParams
+  const presetColorChoices = presetColorComboKey ? deserializeColorChoices(presetColorComboKey) : null
 
   const [overview, status, allAccessories, allSupplies, allPackaging, demandQueue] = await Promise.all([
     getAssemblyOverview(),
@@ -39,6 +41,7 @@ export default async function AssemblyPage({
 
       <AssemblyDetailModal
         status={status}
+        presetColorChoices={presetColorChoices}
         allAccessories={allAccessories.map((a) => ({ id: a.id, name: a.name, colorName: a.colorName, available: Math.max(0, a.currentStock.toNumber()) }))}
         allSupplies={allSupplies.map((s) => ({ id: s.id, name: s.name, unit: s.unit, available: Math.max(0, s.currentStock.toNumber()), catalogDefaultUsage: s.defaultUsage?.toNumber() ?? null }))}
         allPackaging={allPackaging.map((p) => ({ id: p.id, name: p.name, available: Math.max(0, p.currentStock.toNumber()) }))}

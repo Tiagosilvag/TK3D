@@ -44,8 +44,17 @@ function toAccessoryColorSelectables(accessoryRequirements: AssemblyResourceRequ
 // sendo consumida nesta leva -- a quantidade máxima que dá pra montar
 // depende de qual cor foi escolhida, então recalcula a cada mudança de
 // seleção.
-function defaultColorChoice(item: ColorSelectable): string {
+// Encomenda com variação personalizada: quando a montagem vem de um
+// pedido específico (presetColorChoices, decodificado de
+// ?presetColorComboKey= por assembly/page.tsx), a combinação que o
+// PEDIDO pediu tem prioridade sobre a heurística de sempre -- só cai pra
+// ela se a peça não tiver preset (produto sem pedido em aberto) ou o
+// preset não for uma opção válida pra essa peça (ficha técnica mudou
+// desde que o pedido foi criado).
+function defaultColorChoice(item: ColorSelectable, presetColorChoices: Record<string, string> | null): string {
   if (!item.colorOptions || item.colorOptions.length === 0) return ''
+  const preset = presetColorChoices?.[item.key]
+  if (preset && item.colorOptions.some((o) => o.key === preset)) return preset
   // Bug "prévia diz Prata mas pré-preenche Dourado": pra Acessório
   // (item.key = o próprio id do acessório registrado na ficha técnica --
   // nunca bate com nenhuma chave de combo de peça/componente, então esse
@@ -132,6 +141,7 @@ export function ConfirmAssemblyForm({
   allAccessories,
   allSupplies,
   allPackaging,
+  presetColorChoices,
 }: {
   productId: string
   isComposite: boolean
@@ -143,6 +153,11 @@ export function ConfirmAssemblyForm({
   allAccessories: ComponentOption[]
   allSupplies: ComponentOption[]
   allPackaging: ComponentOption[]
+  // Encomenda com variação personalizada: combinação de cor que um
+  // pedido específico precisa (vinda de AssemblyDemandPanel), usada só
+  // como valor INICIAL de colorChoices -- o usuário continua livre pra
+  // trocar depois, igual qualquer outra pré-seleção.
+  presetColorChoices?: Record<string, string> | null
 }) {
   const router = useRouter()
   const [step, setStep] = useState<1 | 2 | 3>(1)
@@ -159,7 +174,7 @@ export function ConfirmAssemblyForm({
     [selectables, accessoryColorSelectables],
   )
   const [colorChoices, setColorChoices] = useState<Record<string, string>>(() =>
-    Object.fromEntries(colorSelectables.map((s) => [s.key, defaultColorChoice(s)])),
+    Object.fromEntries(colorSelectables.map((s) => [s.key, defaultColorChoice(s, presetColorChoices ?? null)])),
   )
   // Acessório com cor variável (colorOptions não nulo) sai da lista livre
   // de baixo -- passa a ser escolhido só pelo seletor de cor acima, não

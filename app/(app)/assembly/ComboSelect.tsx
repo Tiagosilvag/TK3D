@@ -48,10 +48,17 @@ export function ComboSelect({
   options,
   value,
   onChange,
+  allowUnavailable = false,
 }: {
   options: ComboOption[]
   value: string
   onChange: (key: string) => void
+  // Encomenda com variação personalizada: Pedidos precisa deixar
+  // escolher uma cor com available=0 (ainda não produzida -- é
+  // exatamente o ponto de pedir algo personalizado) -- Montagem
+  // continua bloqueando (não passa esta prop), só escolhe entre o que
+  // já existe fisicamente pronto pra montar.
+  allowUnavailable?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
@@ -118,17 +125,18 @@ export function ComboSelect({
               <div className="max-h-72 space-y-1 overflow-y-auto">
                 {options.map((o) => {
                   const isZero = o.available <= 0
+                  const blocked = isZero && !allowUnavailable
                   return (
                     <button
                       key={o.key}
                       type="button"
-                      disabled={isZero}
+                      disabled={blocked}
                       onClick={() => { onChange(o.key); setOpen(false) }}
                       className={`flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
                         o.key === value
                           ? 'border-violet-400 bg-violet-50 dark:border-violet-500 dark:bg-violet-500/10'
                           : 'border-transparent hover:bg-slate-100 dark:hover:bg-slate-800'
-                      } ${isZero ? 'cursor-not-allowed opacity-40' : ''}`}
+                      } ${blocked ? 'cursor-not-allowed opacity-40' : ''}`}
                     >
                       <Swatch colorHex={o.colorHex} className="h-4 w-4" />
                       <span className="min-w-0 flex-1 truncate">{o.label}</span>

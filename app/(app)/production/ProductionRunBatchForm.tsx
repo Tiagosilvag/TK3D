@@ -270,6 +270,7 @@ export function ProductionRunBatchForm({
   initialProductId,
   initialPartId,
   initialQuantity,
+  initialFilamentId,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -284,6 +285,10 @@ export function ProductionRunBatchForm({
   initialProductId?: string
   initialPartId?: string
   initialQuantity?: number
+  // Encomenda com variação personalizada: quando a linha da fila já sabe
+  // a cor exata que o pedido precisa (peça de 1 filamento só), vem junto
+  // pra pré-selecionar (initialPartId sempre presente nesse caso).
+  initialFilamentId?: string
 }) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -349,7 +354,7 @@ export function ProductionRunBatchForm({
   // este efeito de novo.
   useEffect(() => {
     if (open && initialProductId) {
-      void handleProductChange(initialProductId, { onlyPartId: initialPartId, quantity: initialQuantity })
+      void handleProductChange(initialProductId, { onlyPartId: initialPartId, quantity: initialQuantity, filamentId: initialFilamentId })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- só na abertura inicial, não a cada render
   }, [open])
@@ -384,7 +389,7 @@ export function ProductionRunBatchForm({
     setUsedCaptureId(null)
   }
 
-  async function handleProductChange(newProductId: string, prefill?: { onlyPartId?: string; quantity?: number }) {
+  async function handleProductChange(newProductId: string, prefill?: { onlyPartId?: string; quantity?: number; filamentId?: string }) {
     latestProductIdRef.current = newProductId
     setProductId(newProductId)
     setRows([])
@@ -399,6 +404,15 @@ export function ProductionRunBatchForm({
         // Peça específica vinda da fila de demanda -- só ela vem marcada,
         // pra registrar direto sem precisar desmarcar as outras na mão.
         if (prefill?.onlyPartId) newRows = newRows.map((r) => ({ ...r, checked: r.partId === prefill.onlyPartId }))
+        // Encomenda com variação personalizada: quando a fila já sabe qual
+        // cor o pedido precisa (peça de 1 filamento só), pré-seleciona
+        // direto -- só a peça marcada acima, nunca as outras (cada peça
+        // tem sua própria cor).
+        if (prefill?.filamentId && prefill?.onlyPartId) {
+          newRows = newRows.map((r) =>
+            r.partId === prefill.onlyPartId ? { ...r, filaments: r.filaments.map((f) => ({ ...f, filamentId: prefill.filamentId! })) } : r,
+          )
+        }
         setRows(newRows)
       } else {
         const product = products.find((p) => p.id === newProductId)

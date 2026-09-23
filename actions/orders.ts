@@ -8,21 +8,77 @@ import { consumePackagingForSale } from '@/actions/sales'
 import { resolveSalePlatformFee } from '@/actions/marketplacePlatforms'
 import { buildSaleCostSnapshot } from '@/lib/costing'
 import { productNeedsAssembly } from '@/lib/products'
-import { getAssemblyStatus } from '@/actions/assembly'
+import { getAssemblyStatus, type AssemblyPartColorOption } from '@/actions/assembly'
+import { serializeColorChoices, deserializeColorChoices } from '@/lib/reports'
 import { reconcileOrderReservations, type OrderReallocationEvent } from '@/lib/orderReservations'
 import { revalidatePath } from 'next/cache'
 import type { Prisma, OrderChannel, OrderStatus, SaleChannel } from '@prisma/client'
 
 type ActionResult = { success: boolean; error?: string; reallocations?: OrderReallocationEvent[] }
 
-function parse(formData: FormData) {
+function parse(formData: FormData, colorComboKeyOverride?: string) {
   const raw = Object.fromEntries(formData)
   return orderSchema.safeParse({
     ...raw,
-    colorComboKey: raw.colorComboKey || null,
+    colorComboKey: colorComboKeyOverride ?? raw.colorComboKey ?? null,
     buyerOrPlatform: raw.buyerOrPlatform || null,
     orderNumber: raw.orderNumber || null,
     notes: raw.notes || null,
+  })
+}
+
+export interface OrderablePartOption {
+  partId: string
+  partName: string
+  // Receita fixa (2+ ProductPartFilament): cor não é escolha do pedido --
+  // fixedLabel mostra a combinação travada, colorOptions vem vazio.
+  fixed: boolean
+  fixedLabel: string | null
+  colorOptions: AssemblyPartColorOption[]
+}
+
+// Encomenda com variação personalizada: opções de cor por peça pro
+// seletor de Pedidos -- ao contrário de AssemblyPartColorOption puro
+// (getAssemblyStatus), que só lista combo JÁ produzido alguma vez, aqui
+// toda peça de cor variável (1 só ProductPartFilament) ganha o CATÁLOGO
+// INTEIRO de filamento como opção (available: 0 pra cor nunca impressa
+// pra essa peça) -- só assim dá pra pedir algo nunca produzido antes.
+// Cobre também a "peça sintética" de produto simples com insumo/
+// acessório (mesma convenção de getAssemblyStatus: key = productId).
+export async function getOrderablePartOptions(productId: string): Promise<OrderablePartOption[]> {
+  const [status, parts, filaments] = await Promise.all([
+    getAssemblyStatus(productId),
+    prisma.productPart.findMany({ where: { productId }, include: { filamentComponents: { include: { filament: true } } } }),
+    prisma.filament.findMany({ orderBy: { colorName: 'asc' } }),
+  ])
+
+  const partById = new Map(parts.map((p) => [p.id, p]))
+
+  return status.parts.map((partStatus): OrderablePartOption => {
+    const part = partById.get(partStatus.partId)
+    // Peça sintética (produto simples com insumo/acessório): sem
+    // ProductPart real, sempre cor variável (mesmo tratamento de
+    // getAssemblyStatus pro caso !isComposite).
+    const isFixedRecipe = part ? part.filamentComponents.length >= 2 : false
+
+    if (isFixedRecipe) {
+      const label = part!.filamentComponents.map((c) => c.filament.colorName).join(' + ')
+      return { partId: partStatus.partId, partName: partStatus.name, fixed: true, fixedLabel: label, colorOptions: [] }
+    }
+
+    const existing = new Map((partStatus.colorOptions ?? []).map((o) => [o.key, o]))
+    const merged: AssemblyPartColorOption[] = filaments.map((f) => {
+      const found = existing.get(f.id)
+      return found ?? { key: f.id, filamentIds: [f.id], label: f.colorName, available: 0, colorHex: f.colorHex }
+    })
+    // Combo multi-filamento já produzido pra essa peça (não corresponde a
+    // nenhum Filament.id sozinho) -- mantém como opção também, senão uma
+    // cor já montada/produzida some do seletor.
+    for (const o of existing.values()) {
+      if (!merged.some((m) => m.key === o.key)) merged.push(o)
+    }
+
+    return { partId: partStatus.partId, partName: partStatus.name, fixed: false, fixedLabel: null, colorOptions: merged }
   })
 }
 
@@ -34,8 +90,53 @@ function parse(formData: FormData) {
 // já reservado), os eventos voltam no ActionResult pro form mostrar o
 // aviso passageiro (só existe aqui -- produção/montagem nunca "roubam"
 // reserva de ninguém, só preenchem buraco, ver lib/orderReservations.ts).
+// Encomenda com variação personalizada: quando o formulário manda
+// colorChoicesJson ({ partId: filamentId }, do CustomVariantPicker),
+// revalida contra as peças REAIS do produto (nunca confia cegamente no
+// client) antes de virar colorComboKey -- toda peça citada precisa
+// existir, ser de cor variável (não receita fixa) e apontar pra um
+// filamento que existe. Cálculo de serializeColorChoices fica sempre no
+// servidor (nunca no client, que não importa lib/reports.ts -- é
+// server-only, usa Prisma).
+async function resolveCustomColorComboKey(productId: string, colorChoicesJson: string): Promise<{ colorComboKey: string } | { error: string }> {
+  let raw: unknown
+  try {
+    raw = JSON.parse(colorChoicesJson)
+  } catch {
+    return { error: 'Combinação de cor inválida' }
+  }
+  const choicesParsed = z.record(z.string(), z.string()).safeParse(raw)
+  if (!choicesParsed.success) return { error: 'Combinação de cor inválida' }
+  const choices = choicesParsed.data
+
+  const options = await getOrderablePartOptions(productId)
+  const optionByPart = new Map(options.map((o) => [o.partId, o]))
+  for (const [partId, filamentId] of Object.entries(choices)) {
+    const option = optionByPart.get(partId)
+    if (!option) return { error: 'Peça inválida na combinação de cor' }
+    if (option.fixed) return { error: `${option.partName} tem receita fixa -- não é uma cor escolhível` }
+    if (!option.colorOptions.some((o) => o.key === filamentId)) return { error: `Cor inválida pra ${option.partName}` }
+  }
+  // Toda peça de cor variável do produto precisa ter uma escolha --
+  // senão a combinação fica incompleta (peça sem cor definida).
+  for (const option of options) {
+    if (!option.fixed && !(option.partId in choices)) return { error: `Falta escolher a cor de ${option.partName}` }
+  }
+
+  return { colorComboKey: serializeColorChoices(choices) }
+}
+
 export async function createOrder(formData: FormData): Promise<ActionResult> {
-  const parsed = parse(formData)
+  const colorChoicesJson = formData.get('colorChoicesJson')
+  let colorComboKeyOverride: string | undefined
+  if (typeof colorChoicesJson === 'string' && colorChoicesJson) {
+    const productId = String(formData.get('productId') ?? '')
+    const resolved = await resolveCustomColorComboKey(productId, colorChoicesJson)
+    if ('error' in resolved) return { success: false, error: resolved.error }
+    colorComboKeyOverride = resolved.colorComboKey
+  }
+
+  const parsed = parse(formData, colorComboKeyOverride)
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
   const order = await prisma.order.create({ data: parsed.data })
   const reallocations = await reconcileOrderReservations(order.productId, order.colorComboKey)
@@ -200,6 +301,14 @@ export interface OrderDemandRow {
   neededUnits: number
   reservedQuantity: number
   quantity: number
+  // Encomenda com variação personalizada: colorComboKey inteiro do
+  // pedido (todas as peças), pra Montagem pré-selecionar a combinação
+  // certa; comboLabel/filamentIds são só da PEÇA desta linha (produção
+  // só imprime uma peça por vez), null quando o pedido não tem cor
+  // específica ou a peça é receita fixa.
+  colorComboKey: string | null
+  comboLabel: string | null
+  filamentIds: string[] | null
 }
 
 export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDemandRow[]; assemblyRows: OrderDemandRow[] }> {
@@ -213,7 +322,28 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
 
   const productionRows: OrderDemandRow[] = []
   const assemblyRows: OrderDemandRow[] = []
-  const cacheByProduct = new Map<string, { parts: Awaited<ReturnType<typeof getAssemblyStatus>>['parts']; pool: Map<string, number> }>()
+  type ProductCache = {
+    parts: Awaited<ReturnType<typeof getAssemblyStatus>>['parts']
+    pool: Map<string, number>
+    comboPools: Map<string, Map<string, number>>
+  }
+  const cacheByProduct = new Map<string, ProductCache>()
+  // Encomenda com variação personalizada: uma linha de PRODUÇÃO existe
+  // exatamente pra uma cor que ainda falta imprimir -- então
+  // status.parts[].colorOptions (só lista combo JÁ produzido alguma vez,
+  // getAssemblyStatus) nunca vai ter o rótulo dela. Pra peça de cor
+  // variável, o combo escolhido no pedido é sempre 1 filamentId sozinho
+  // (resolveCustomColorComboKey só aceita escolha assim), então dá pra
+  // resolver o rótulo direto no catálogo -- carregado uma vez só, sob
+  // demanda (nenhuma linha com colorComboKey, nenhuma query).
+  let filamentById: Map<string, { colorName: string }> | null = null
+  async function getFilamentLabel(filamentId: string): Promise<string | null> {
+    if (!filamentById) {
+      const all = await prisma.filament.findMany({ select: { id: true, colorName: true } })
+      filamentById = new Map(all.map((f) => [f.id, { colorName: f.colorName }]))
+    }
+    return filamentById.get(filamentId)?.colorName ?? null
+  }
 
   for (const order of pending) {
     const shortfall = order.quantity - order.reservedQuantity
@@ -229,6 +359,7 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
       productName: product.name,
       reservedQuantity: order.reservedQuantity,
       quantity: order.quantity,
+      colorComboKey: order.colorComboKey,
     }
 
     const needsAssembly = productNeedsAssembly({
@@ -239,30 +370,82 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
     })
 
     if (!needsAssembly) {
-      productionRows.push({ ...base, partId: null, partName: null, neededUnits: shortfall })
+      productionRows.push({ ...base, partId: null, partName: null, neededUnits: shortfall, comboLabel: null, filamentIds: null })
       continue
     }
 
     if (!cacheByProduct.has(product.id)) {
       const status = await getAssemblyStatus(product.id)
       const pool = new Map<string, number>()
-      for (const part of status.parts) pool.set(part.partId, part.available)
-      cacheByProduct.set(product.id, { parts: status.parts, pool })
+      const comboPools = new Map<string, Map<string, number>>()
+      for (const part of status.parts) {
+        pool.set(part.partId, part.available)
+        if (part.colorOptions && part.colorOptions.length > 0) {
+          comboPools.set(part.partId, new Map(part.colorOptions.map((o) => [o.key, o.available])))
+        }
+      }
+      cacheByProduct.set(product.id, { parts: status.parts, pool, comboPools })
     }
-    const { parts, pool } = cacheByProduct.get(product.id)!
+    const { parts, pool, comboPools } = cacheByProduct.get(product.id)!
+
+    // Encomenda com variação personalizada: pedido com colorComboKey só
+    // reivindica a fatia do combo que ELE pediu (nunca a soma de todas
+    // as cores da peça); pedido sem variante continua reivindicando o
+    // pool agregado de sempre, drenando de qualquer combo (não importa
+    // a cor pra ele) -- mantém os dois tipos de pedido consumindo do
+    // MESMO estoque físico subjacente, sem contar a peça duas vezes.
+    const choices = order.colorComboKey ? deserializeColorChoices(order.colorComboKey) : null
+
+    function availableForPart(partId: string): number {
+      const combos = comboPools.get(partId)
+      if (choices && combos) return combos.get(choices[partId] ?? '') ?? 0
+      return pool.get(partId) ?? 0
+    }
+
+    function consumeFromPart(partId: string, units: number): void {
+      pool.set(partId, (pool.get(partId) ?? 0) - units)
+      const combos = comboPools.get(partId)
+      if (!combos) return
+      if (choices) {
+        const key = choices[partId]
+        if (key !== undefined) combos.set(key, (combos.get(key) ?? 0) - units)
+        return
+      }
+      let remaining = units
+      for (const [k, v] of combos) {
+        if (remaining <= 0) break
+        const take = Math.min(v, remaining)
+        combos.set(k, v - take)
+        remaining -= take
+      }
+    }
+
+    async function comboInfoForPart(partId: string): Promise<{ comboLabel: string | null; filamentIds: string[] | null }> {
+      if (!choices) return { comboLabel: null, filamentIds: null }
+      const chosenKey = choices[partId]
+      if (chosenKey === undefined) return { comboLabel: null, filamentIds: null }
+      const part = parts.find((p) => p.partId === partId)
+      const option = part?.colorOptions?.find((o) => o.key === chosenKey)
+      if (option) return { comboLabel: option.label, filamentIds: option.filamentIds }
+      // Cor nunca produzida pra essa peça -- sem entrada em colorOptions
+      // (produced-only). O combo de um pedido é sempre 1 filamentId
+      // sozinho pra peça de cor variável, então resolve pelo catálogo.
+      const label = await getFilamentLabel(chosenKey)
+      return label ? { comboLabel: label, filamentIds: [chosenKey] } : { comboLabel: null, filamentIds: null }
+    }
 
     let assemblableUnits = shortfall
     for (const part of parts) {
-      const poolAvail = pool.get(part.partId) ?? 0
+      const poolAvail = availableForPart(part.partId)
       const unitsFromThisPart = part.quantityPerUnit > 0 ? Math.floor(poolAvail / part.quantityPerUnit) : shortfall
       assemblableUnits = Math.min(assemblableUnits, unitsFromThisPart)
     }
     assemblableUnits = Math.max(0, assemblableUnits)
 
     if (assemblableUnits > 0) {
-      assemblyRows.push({ ...base, partId: null, partName: null, neededUnits: assemblableUnits })
+      assemblyRows.push({ ...base, partId: null, partName: null, neededUnits: assemblableUnits, comboLabel: null, filamentIds: null })
       for (const part of parts) {
-        pool.set(part.partId, (pool.get(part.partId) ?? 0) - assemblableUnits * part.quantityPerUnit)
+        consumeFromPart(part.partId, assemblableUnits * part.quantityPerUnit)
       }
     }
 
@@ -270,11 +453,11 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
     if (remaining > 0) {
       for (const part of parts) {
         const neededForPart = remaining * part.quantityPerUnit
-        const poolAvail = Math.max(0, pool.get(part.partId) ?? 0)
+        const poolAvail = Math.max(0, availableForPart(part.partId))
         const stillMissing = Math.max(0, neededForPart - poolAvail)
-        pool.set(part.partId, poolAvail - Math.min(poolAvail, neededForPart))
+        consumeFromPart(part.partId, Math.min(poolAvail, neededForPart))
         if (stillMissing > 0) {
-          productionRows.push({ ...base, partId: part.partId, partName: part.name, neededUnits: stillMissing })
+          productionRows.push({ ...base, partId: part.partId, partName: part.name, neededUnits: stillMissing, ...(await comboInfoForPart(part.partId)) })
         }
       }
     }

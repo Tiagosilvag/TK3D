@@ -4,6 +4,7 @@ import { createOrder } from '@/actions/orders'
 import { ORDER_CHANNEL_LABELS } from '@/lib/format'
 import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
+import { CustomVariantPicker, type CustomVariantChoice } from './CustomVariantPicker'
 import type { OrderReallocationEvent } from '@/lib/orderReservations'
 
 const CHANNELS = Object.entries(ORDER_CHANNEL_LABELS) as [keyof typeof ORDER_CHANNEL_LABELS, string][]
@@ -22,6 +23,7 @@ export interface OrderProductVariantOption {
 export interface OrderProductOption {
   productId: string
   productName: string
+  needsAssembly: boolean
   variants: OrderProductVariantOption[]
 }
 
@@ -29,21 +31,29 @@ export function OrderForm({ products }: { products: OrderProductOption[] }) {
   const formRef = useRef<HTMLFormElement>(null)
   const [productId, setProductId] = useState('')
   const [colorComboKey, setColorComboKey] = useState('')
+  const [customChoice, setCustomChoice] = useState<CustomVariantChoice | null>(null)
   const [reallocations, setReallocations] = useState<OrderReallocationEvent[] | null>(null)
 
   const selectedProduct = useMemo(() => products.find((p) => p.productId === productId), [products, productId])
-  const requiresColorChoice = Boolean(selectedProduct && selectedProduct.variants.length > 0)
+  // Encomenda com variação personalizada: produto que precisa de
+  // montagem sempre pede uma variação (mesmo sem NENHUMA já pronta --
+  // "+ Montar variação personalizada" cobre esse caso); produto sem
+  // montagem só pede quando já existe variante rastreada (comportamento
+  // de sempre).
+  const requiresColorChoice = Boolean(selectedProduct && (selectedProduct.variants.length > 0 || selectedProduct.needsAssembly))
 
   function handleProductChange(newProductId: string) {
     setProductId(newProductId)
     setColorComboKey('')
+    setCustomChoice(null)
   }
 
   async function action(formData: FormData) {
-    if (requiresColorChoice && !colorComboKey) {
+    if (requiresColorChoice && !colorComboKey && !customChoice) {
       alert('Selecione a cor/variação pedida')
       return
     }
+    if (customChoice) formData.set('colorChoicesJson', JSON.stringify(customChoice.choices))
     const result = await createOrder(formData)
     if (!result.success) {
       alert(result.error)
@@ -53,6 +63,7 @@ export function OrderForm({ products }: { products: OrderProductOption[] }) {
     formRef.current?.reset()
     setProductId('')
     setColorComboKey('')
+    setCustomChoice(null)
   }
 
   return (
@@ -100,17 +111,42 @@ export function OrderForm({ products }: { products: OrderProductOption[] }) {
           </select>
         </label>
         {requiresColorChoice && (
-          <label className="text-sm">
-            Cor/Variação *
-            <select name="colorComboKey" value={colorComboKey} onChange={(e) => setColorComboKey(e.target.value)} className="tk-input-full" required>
-              <option value="" disabled>Selecione a cor</option>
-              {selectedProduct!.variants.map((v) => (
-                <option key={v.key} value={v.key}>
-                  {v.label} ({v.available} {v.available === 1 ? 'disponível' : 'disponíveis'})
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="text-sm">
+            <span className="mb-1 block">Cor/Variação *</span>
+            {customChoice ? (
+              <div className="flex items-center gap-2 rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1.5 text-sm dark:border-violet-700 dark:bg-violet-500/10">
+                <span className="min-w-0 flex-1 truncate text-violet-800 dark:text-violet-300">{customChoice.label || 'Personalizado'}</span>
+                <button type="button" onClick={() => setCustomChoice(null)} className="shrink-0 text-xs font-medium text-violet-700 hover:underline dark:text-violet-300">
+                  Trocar
+                </button>
+              </div>
+            ) : (
+              <>
+                {selectedProduct!.variants.length > 0 && (
+                  <select name="colorComboKey" value={colorComboKey} onChange={(e) => setColorComboKey(e.target.value)} className="tk-input-full">
+                    <option value="" disabled>Selecione a cor</option>
+                    {selectedProduct!.variants.map((v) => (
+                      <option key={v.key} value={v.key}>
+                        {v.label} ({v.available} {v.available === 1 ? 'disponível' : 'disponíveis'})
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {selectedProduct!.needsAssembly && (
+                  <CustomVariantPicker
+                    key={productId}
+                    productId={productId}
+                    onConfirm={(choice) => { setCustomChoice(choice); setColorComboKey('') }}
+                    trigger={
+                      <button type="button" className="mt-1 text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                        + Montar variação personalizada
+                      </button>
+                    }
+                  />
+                )}
+              </>
+            )}
+          </div>
         )}
         <label className="text-sm">
           Quantidade *

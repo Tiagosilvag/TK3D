@@ -400,6 +400,21 @@ export function serializeColorChoices(choices: Record<string, string>): string {
     .join('|')
 }
 
+// Encomenda com variação personalizada: inverso de serializeColorChoices --
+// decodifica o Order.colorComboKey de volta pro mapa { partId: comboKey }
+// original, usado por maxAssemblableUnitsForCombo (lib/orderReservations.ts)
+// pra saber qual combo cada peça precisa. comboKey em si pode conter ":"
+// (nunca acontece hoje -- é um filamentId/cuid ou lista de cuids separada
+// por vírgula -- mas o split cauteloso evita truncar se algum dia mudar).
+export function deserializeColorChoices(key: string): Record<string, string> {
+  return Object.fromEntries(
+    key.split('|').map((pair) => {
+      const [partId, ...rest] = pair.split(':')
+      return [partId, rest.join(':')]
+    }),
+  )
+}
+
 // Ajuste "cor na montagem": quanto já foi montado de cada variante
 // (combinação de cores escolhidas por peça, via ProductAssembly.
 // colorChoices) -- puramente informativo/histórico. Como Sale/
@@ -594,6 +609,12 @@ export interface ProductVariantStockInfo {
   // achou nenhuma) -- o modal de entrega/venda pede só uma quantidade "sem
   // cor" nesse caso, sem oferecer combo nenhum.
   variants: ProductVariantStockOption[]
+  // Encomenda com variação personalizada: Pedidos precisa oferecer
+  // "+ Montar variação personalizada" pra produto que precisa de
+  // montagem mesmo com `variants` vazio (nunca produzido/montado em
+  // nenhuma cor ainda) -- só `variants.length > 0` não basta pra decidir
+  // isso (ver OrderForm.tsx).
+  needsAssembly: boolean
 }
 
 // Melhoria "Vendas por variante": generaliza o antigo getProductDeliveryOptions
@@ -656,6 +677,7 @@ export async function getProductVariantStockOptions(): Promise<ProductVariantSto
       productId: p.id,
       productName: p.name,
       suggestedPrice: p.suggestedPrice?.toNumber() ?? null,
+      needsAssembly,
       variants: breakdown.map((v) => ({
         key: v.key,
         label: v.label,

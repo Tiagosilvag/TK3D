@@ -50,6 +50,7 @@ export function ProductionRunsExplorer({
   newRunProductId,
   newRunPartId,
   newRunQty,
+  newRunFilamentId,
 }: {
   runs: ProductionRunRow[]
   byProduct: ProductionByProductRow[]
@@ -60,6 +61,7 @@ export function ProductionRunsExplorer({
   newRunProductId?: string
   newRunPartId?: string
   newRunQty?: number
+  newRunFilamentId?: string
 }) {
   const router = useRouter()
   const plateDialogRef = useRef<HTMLDialogElement>(null)
@@ -82,9 +84,10 @@ export function ProductionRunsExplorer({
     params.delete('newRunProductId')
     params.delete('newRunPartId')
     params.delete('newRunQty')
+    params.delete('newRunFilamentId')
     router.replace(`/production${params.toString() ? `?${params.toString()}` : ''}`, { scroll: false })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- só quando os params de trigger mudam, não a cada render
-  }, [newRunProductId, newRunPartId, newRunQty])
+  }, [newRunProductId, newRunPartId, newRunQty, newRunFilamentId])
 
   async function handleRemoveItem(id: string) {
     const result = await deleteProductionRun(id)
@@ -274,6 +277,7 @@ export function ProductionRunsExplorer({
         initialProductId={newRunProductId}
         initialPartId={newRunPartId}
         initialQuantity={newRunQty}
+        initialFilamentId={newRunFilamentId}
       />
 
       <dialog

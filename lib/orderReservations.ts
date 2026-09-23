@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { productNeedsAssembly } from '@/lib/products'
-import { getProductVariantBreakdown } from '@/lib/reports'
-import { getAssemblyStatus } from '@/actions/assembly'
+import { getProductVariantBreakdown, deserializeColorChoices } from '@/lib/reports'
+import { getAssemblyStatus, type AssemblyStatus } from '@/actions/assembly'
 import type { OrderStatus } from '@prisma/client'
 
 // Melhoria "Pedidos com reserva de estoque": motor central que decide
@@ -96,13 +96,30 @@ async function getRawVariantAvailable(productId: string, colorComboKey: string, 
   return Math.max(0, produced - (deliveredAgg._sum.quantityDelivered ?? 0) - (soldAgg._sum.quantity ?? 0))
 }
 
-// Aproximação aceita: em vez de repetir a resolução por combo de cor que
-// getAssemblyStatus já faz (intrincada -- combos multi-filamento por
-// peça), só olha se EXISTE alguma capacidade de montagem agora
-// (maxAssemblableUnits > 0) pra decidir AGUARDANDO_MONTAGEM vs
-// AGUARDANDO_PRODUCAO. maxAssemblableUnits já contabiliza peça/
-// acessório/insumo/embalagem disponíveis, então é um sinal forte mesmo
-// sem verificar a cor exata pedida.
+// Encomenda com variação personalizada: quanto dá pra montar AGORA pra um
+// (productId, colorComboKey) ESPECÍFICO -- ao contrário de
+// AssemblyStatus.maxAssemblableUnits (produto inteiro, qualquer cor),
+// aqui cada peça de cor variável só conta a fatia do combo que o PEDIDO
+// pediu (via colorOptions, já calculado por getAssemblyStatus), nunca a
+// soma de todas as cores dessa peça. Peça de receita fixa (colorOptions
+// null) não é escolha do pedido -- usa maxUnitsFromThisPart normal.
+// colorComboKey null (produto sem variante rastreada, ou pedido genérico
+// de peça única) cai no sinal antigo, sem quebrar o comportamento de
+// sempre.
+export function maxAssemblableUnitsForCombo(status: AssemblyStatus, colorComboKey: string | null): number {
+  if (colorComboKey === null) return status.maxAssemblableUnits
+  if (status.parts.length === 0) return 0
+  const choices = deserializeColorChoices(colorComboKey)
+  const limits = status.parts.map((part) => {
+    if (!part.colorOptions) return part.maxUnitsFromThisPart
+    const chosenKey = choices[part.partId]
+    const option = part.colorOptions.find((o) => o.key === chosenKey)
+    const available = option?.available ?? 0
+    return part.quantityPerUnit > 0 ? Math.floor(available / part.quantityPerUnit) : 0
+  })
+  return Math.max(0, Math.min(...limits))
+}
+
 function computeOrderStatus(
   quantity: number,
   reserved: number,
@@ -144,7 +161,7 @@ export async function reconcileOrderReservations(
       : getRawVariantAvailable(productId, colorComboKey, needsAssembly),
     needsAssembly ? getAssemblyStatus(productId) : Promise.resolve(null),
   ])
-  const maxAssemblableUnits = assemblyStatus?.maxAssemblableUnits ?? 0
+  const maxAssemblableUnits = assemblyStatus ? maxAssemblableUnitsForCombo(assemblyStatus, colorComboKey) : 0
 
   let remaining = claimable
   const results = orders.map((o) => {

@@ -6,11 +6,15 @@ import type { OrderDemandRow } from '@/actions/orders'
 // montar por encomenda" no topo de Montagem -- mesma lógica do painel de
 // Produção, só que com peça que JÁ existe (produzida, esperando
 // montagem) e só falta a montagem pra fechar o pedido. "Montar agora"
-// leva pro detalhe do produto (?productId=), onde o usuário escolhe a
-// cor/quantidade no formulário que já existe -- sem tentar pré-preencher
-// o combo de cor automaticamente (baixo risco/alto retorno, mesma
-// simplificação já aplicada no botão "Registrar produção" da fila de
-// Produção).
+// leva pro detalhe do produto (?productId=).
+//
+// Encomenda com variação personalizada: quando o pedido tem uma
+// combinação de cor específica (colorComboKey), o link também leva
+// ?presetColorComboKey= -- ConfirmAssemblyForm pré-seleciona a
+// combinação certa por peça (deserializeColorChoices), em vez da
+// heurística "maior estoque" de sempre, pra não escolher a cor errada
+// por acidente (a reserva em si já é automática via
+// reconcileOrderReservations, isso só guia a escolha).
 export function AssemblyDemandPanel({ rows }: { rows: OrderDemandRow[] }) {
   if (rows.length === 0) return null
 
@@ -43,7 +47,10 @@ export function AssemblyDemandPanel({ rows }: { rows: OrderDemandRow[] }) {
                   <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${deadline.className}`}>{deadline.label}</span>
                 </div>
                 <Link
-                  href={`/assembly?productId=${row.productId}`}
+                  href={`/assembly?${new URLSearchParams({
+                    productId: row.productId,
+                    ...(row.colorComboKey ? { presetColorComboKey: row.colorComboKey } : {}),
+                  }).toString()}`}
                   className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 dark:bg-emerald-500 dark:text-slate-950 dark:hover:bg-emerald-400"
                 >
                   Montar agora
