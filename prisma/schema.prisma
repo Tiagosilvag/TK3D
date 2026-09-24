@@ -911,9 +911,22 @@ model Listing {
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
 
-  // Um anúncio por produto+plataforma -- trocar o Tipo (Clássico/Premium)
-  // edita o mesmo anúncio, não cria um segundo.
-  @@unique([productId, platformId])
+  // Melhoria "mais de 1 anúncio por produto": Mercado Livre permite manter
+  // Clássico E Premium do mesmo produto ao mesmo tempo (2 tabelas de taxa
+  // reais, cada uma seu próprio anúncio) -- o unique antigo
+  // ([productId, platformId]) travava em 1 anúncio por produto+plataforma
+  // TOTAL, impedindo cadastrar o 2º tipo. Substituído por 2 índices únicos
+  // PARCIAIS (criados via SQL na migration -- `@@unique` do Prisma não
+  // expressa WHERE sem a preview feature extendedIndexes, não habilitada
+  // neste projeto):
+  //   - (productId, platformId) WHERE "listingType" IS NULL -- cobre
+  //     Shopee (nunca tem Tipo, sempre null) -- continua no máximo 1
+  //     anúncio por produto+plataforma, já que NULL não seria distinto de
+  //     NULL num unique comum e abriria brecha pra duplicar.
+  //   - (productId, platformId, listingType) WHERE "listingType" IS NOT
+  //     NULL -- cobre Mercado Livre -- no máximo 1 Clássico E 1 Premium
+  //     por produto, nunca dois do mesmo tipo.
+  // Ver prisma/migrations/20260924161500_listing_multi_type_per_platform.
 }
 
 model Sale {

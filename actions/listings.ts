@@ -53,7 +53,18 @@ export async function createListingDraft(productId: string, platformId: string, 
       },
     })
   } catch (err) {
-    if (isUniqueConstraintError(err)) return { success: false, error: 'Esse produto já tem um anúncio nessa plataforma — edite o existente.' }
+    if (isUniqueConstraintError(err)) {
+      // Melhoria "mais de 1 anúncio por produto": Mercado Livre permite 1
+      // Clássico + 1 Premium do mesmo produto ao mesmo tempo (2 índices
+      // únicos parciais, ver schema.prisma) -- só bate duplicata dentro do
+      // MESMO tipo (ou em Shopee, que não tem tipo pra distinguir).
+      return {
+        success: false,
+        error: resolvedType
+          ? `Esse produto já tem um anúncio ${resolvedType === 'CLASSICO' ? 'Clássico' : 'Premium'} nessa plataforma — edite o existente.`
+          : 'Esse produto já tem um anúncio nessa plataforma — edite o existente.',
+      }
+    }
     throw err
   }
   revalidatePath('/listings')
@@ -70,19 +81,29 @@ export async function updateListing(id: string, formData: FormData): Promise<Act
     return { success: false, error: 'Tipo de anúncio só existe pra Mercado Livre' }
   }
 
-  await prisma.listing.update({
-    where: { id },
-    data: {
-      listingType: platform.platform === 'MERCADO_LIVRE' ? data.listingType ?? null : null,
-      status: data.status,
-      price: data.price,
-      freightType: data.freightType,
-      freightCost: data.freightCost,
-      hasGift: data.hasGift,
-      giftCost: data.hasGift ? data.giftCost : 0,
-      listingUrl: data.listingUrl,
-    },
-  })
+  try {
+    await prisma.listing.update({
+      where: { id },
+      data: {
+        listingType: platform.platform === 'MERCADO_LIVRE' ? data.listingType ?? null : null,
+        status: data.status,
+        price: data.price,
+        freightType: data.freightType,
+        freightCost: data.freightCost,
+        hasGift: data.hasGift,
+        giftCost: data.hasGift ? data.giftCost : 0,
+        listingUrl: data.listingUrl,
+      },
+    })
+  } catch (err) {
+    // Trocar o Tipo (Clássico <-> Premium) inline (ListingRow.tsx) pode
+    // esbarrar num anúncio que já existe com o tipo de destino -- mesmo
+    // índice único parcial de createListingDraft, mesma mensagem amigável.
+    if (isUniqueConstraintError(err)) {
+      return { success: false, error: 'Esse produto já tem um anúncio com esse tipo nessa plataforma — edite o existente em vez de duplicar.' }
+    }
+    throw err
+  }
   revalidatePath('/listings')
   return { success: true }
 }

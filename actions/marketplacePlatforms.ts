@@ -105,21 +105,39 @@ export async function updateMarketplacePlatformFees(platform: MarketplacePlatfor
 // divergir de novo. Retorna o breakdown completo (não só o preço) --
 // melhoria "Mostrar taxa da plataforma": SaleForm.tsx usa feePercent/
 // feeFixed/feeAmount pra mostrar a taxa aplicada, não só o preço final.
+// Melhoria "mais de 1 anúncio por produto": Listing deixou de ter no
+// máximo 1 linha por produto+plataforma (Mercado Livre agora permite 1
+// Clássico + 1 Premium ao mesmo tempo, ver schema.prisma) -- não dá mais
+// pra achar "o" anúncio de um produto+plataforma com findUnique. Quando
+// `listingType` é informado, filtra por ele (escolha explícita). Sem
+// informar (SaleForm.tsx não rastreia de qual anúncio uma venda veio),
+// desempata por: ONLINE primeiro (é o que realmente está publicado
+// cobrando esse preço/taxa/frete agora), senão o mais recentemente
+// editado -- mesmo comportamento de antes quando só existia 1 linha
+// possível.
+async function findRelevantListing(productId: string, platformId: string, listingType?: ListingType) {
+  const candidates = await prisma.listing.findMany({
+    where: { productId, platformId, ...(listingType ? { listingType } : {}) },
+    orderBy: { updatedAt: 'desc' },
+  })
+  return candidates.find((l) => l.status === 'ONLINE') ?? candidates[0] ?? null
+}
+
 // Anúncios: 3º parâmetro opcional -- quando informado (Mercado Livre),
 // escolhe entre Clássico/Premium via resolveListingTiers; chamadas
 // existentes (SaleForm.tsx) continuam passando só 2 argumentos, sem
-// quebrar (cai em Clássico, comportamento de sempre). Também passa a
-// checar se já existe um Listing (anúncio real) pra esse produto+
-// plataforma -- se existir, o preço/taxa REAIS do anúncio prevalecem
-// sobre o cálculo teórico (custo+markup+taxa) abaixo, já que é isso que
-// o vendedor realmente cobra nesse canal.
+// quebrar (cai em findRelevantListing sem filtro de tipo, que desempata
+// sozinho). Também passa a checar se já existe um Listing (anúncio real)
+// pra esse produto+plataforma -- se existir, o preço/taxa REAIS do
+// anúncio prevalecem sobre o cálculo teórico (custo+markup+taxa) abaixo,
+// já que é isso que o vendedor realmente cobra nesse canal.
 export async function getPlatformSalePrice(
   productId: string,
   platform: MarketplacePlatformKind,
   listingType?: ListingType,
 ): Promise<PlatformPriceBreakdown> {
   const platformConfig = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform } })
-  const listing = await prisma.listing.findUnique({ where: { productId_platformId: { productId, platformId: platformConfig.id } } })
+  const listing = await findRelevantListing(productId, platformConfig.id, listingType)
   if (listing) {
     const price = listing.price.toNumber()
     const tiers = resolveListingTiers(platformConfig, listing.listingType)
@@ -160,9 +178,7 @@ export async function resolveSalePlatformFee(
 ): Promise<{ feePercent: number; feeFixed: number; feeAmountPerUnit: number } | null> {
   if (channel !== 'SHOPEE' && channel !== 'MERCADO_LIVRE') return null
   const platformConfig = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: channel } })
-  const listing = productId
-    ? await prisma.listing.findUnique({ where: { productId_platformId: { productId, platformId: platformConfig.id } } })
-    : null
+  const listing = productId ? await findRelevantListing(productId, platformConfig.id) : null
   const tiers = resolveListingTiers(platformConfig, listing?.listingType)
   const { feePercent, feeFixed } =
     tiers && tiers.length > 0
@@ -183,8 +199,6 @@ export async function resolveSalePlatformFee(
 export async function resolveSaleFreight(channel: SaleChannel, productId?: string): Promise<number> {
   if (channel !== 'SHOPEE' && channel !== 'MERCADO_LIVRE') return 0
   const platformConfig = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: channel } })
-  const listing = productId
-    ? await prisma.listing.findUnique({ where: { productId_platformId: { productId, platformId: platformConfig.id } } })
-    : null
+  const listing = productId ? await findRelevantListing(productId, platformConfig.id) : null
   return (listing?.freightCost ?? platformConfig.avgFreight).toNumber()
 }
