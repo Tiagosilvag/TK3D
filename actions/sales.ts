@@ -138,10 +138,11 @@ export async function createSaleBatch(formData: FormData): Promise<ActionResult>
     items,
     giftProductId: raw.giftProductId || undefined,
     giftQuantity: raw.giftQuantity || undefined,
+    freightCost: raw.freightCost || undefined,
   })
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
-  const { items: parsedItems, giftProductId, giftQuantity, ...header } = parsed.data
+  const { items: parsedItems, giftProductId, giftQuantity, freightCost, ...header } = parsed.data
   const batchId = randomUUID()
   await prisma.$transaction(async (tx) => {
     for (const item of parsedItems) {
@@ -156,6 +157,13 @@ export async function createSaleBatch(formData: FormData): Promise<ActionResult>
         data: { batchId, productId: giftProductId, quantity: giftQuantity, unitCost: giftBreakdown.finalCost },
       })
     }
+    // Melhoria "Frete em Vendas": mesmo padrão do Brinde -- por LOTE, não
+    // por item (um envio cobre a venda inteira). Só grava quando o
+    // vendedor de fato informou algum valor (SaleForm.tsx já pré-preenche,
+    // mas o usuário pode zerar/deixar em branco pra não rastrear).
+    if (freightCost && freightCost > 0) {
+      await tx.saleFreight.create({ data: { batchId, amount: freightCost } })
+    }
   })
   revalidatePath('/sales')
   revalidatePath('/packaging')
@@ -167,6 +175,17 @@ export async function createSaleBatch(formData: FormData): Promise<ActionResult>
 // sempre possível, editar nem sempre" de deleteConsignmentDelivery).
 export async function removeSaleGiftUsage(id: string): Promise<ActionResult> {
   await prisma.saleGiftUsage.delete({ where: { id } })
+  revalidatePath('/sales')
+  return { success: true }
+}
+
+// Remove o frete anexado a uma venda -- mesmo raciocínio de
+// removeSaleGiftUsage acima (editar valor fica fora de escopo, só
+// remover; o vendedor recria informando de novo se precisar de outro
+// valor -- nunca acontece na prática porque frete não muda por evento
+// isolado).
+export async function removeSaleFreight(id: string): Promise<ActionResult> {
+  await prisma.saleFreight.delete({ where: { id } })
   revalidatePath('/sales')
   return { success: true }
 }

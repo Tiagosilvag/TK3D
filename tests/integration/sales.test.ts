@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { randomUUID } from 'crypto'
 import { PrismaClient } from '@prisma/client'
-import { createSale, createSaleBatch, getSaleProfit, removeSaleGiftUsage } from '@/actions/sales'
+import { createSale, createSaleBatch, getSaleProfit, removeSaleGiftUsage, removeSaleFreight } from '@/actions/sales'
 import { getProductCostBreakdown, createProduct as createProductAction } from '@/actions/products'
 import { getProductVariantStockOptions } from '@/lib/reports'
 import { createConsignmentDeliveryBatch } from '@/actions/consignmentDeliveries'
@@ -18,6 +18,7 @@ async function cleanup() {
   // Brinde: SaleGiftUsage não cascadeia com Sale (FK só com Product,
   // Restrict) -- precisa ir antes de product.deleteMany() abaixo.
   await prisma.saleGiftUsage.deleteMany()
+  await prisma.saleFreight.deleteMany()
   await prisma.sale.deleteMany()
   // StockConsumption (embalagem consumida por consumePackagingForSale) tem
   // FK real pra Product -- precisa ir antes do product.deleteMany() abaixo.
@@ -484,5 +485,89 @@ describe('Brinde anexado a uma venda (createSaleBatch + removeSaleGiftUsage)', (
     }))
 
     expect(await prisma.saleGiftUsage.count()).toBe(2)
+  })
+})
+
+// Melhoria "Frete em Vendas": mesmo raciocínio/formato do Brinde acima --
+// por LOTE (SaleFreight, batchId), nunca somado por linha de Sale (evita
+// contar o mesmo frete várias vezes numa venda de vários produtos).
+describe('Frete anexado a uma venda (createSaleBatch + removeSaleFreight)', () => {
+  it('cria 1 SaleFreight com o batchId do lote e o valor informado', async () => {
+    const { product } = await createSupportRecords()
+
+    const result = await createSaleBatch(fd({
+      channel: 'MERCADO_LIVRE',
+      saleDate: '2026-09-16',
+      itemsJson: JSON.stringify([{ productId: product.id, quantity: 1, unitPrice: 50 }]),
+      freightCost: '8.45',
+    }))
+    expect(result.success).toBe(true)
+
+    const sale = await prisma.sale.findFirstOrThrow({ where: { productId: product.id } })
+    const freight = await prisma.saleFreight.findFirstOrThrow({ where: { batchId: sale.batchId } })
+    expect(freight.amount.toNumber()).toBeCloseTo(8.45, 2)
+  })
+
+  it('sem freightCost (ou 0): nenhum SaleFreight é criado', async () => {
+    const { product } = await createSupportRecords()
+    await createSaleBatch(fd({
+      channel: 'MERCADO_LIVRE',
+      saleDate: '2026-09-16',
+      itemsJson: JSON.stringify([{ productId: product.id, quantity: 1, unitPrice: 50 }]),
+    }))
+    expect(await prisma.saleFreight.count()).toBe(0)
+  })
+
+  it('venda com 2 produtos no mesmo lote: 1 SaleFreight só (não 1 por produto)', async () => {
+    const { product, printer, filament } = await createSupportRecords()
+    const product2 = await prisma.product.create({
+      data: { name: 'Chaveirinho 2', category: 'Chaveiro', printerId: printer.id, filamentId: filament.id, weightGrams: 20, printTimeHours: 1, laborTimeHours: 0.1 },
+    })
+
+    const result = await createSaleBatch(fd({
+      channel: 'MERCADO_LIVRE',
+      saleDate: '2026-09-16',
+      itemsJson: JSON.stringify([
+        { productId: product.id, quantity: 1, unitPrice: 50 },
+        { productId: product2.id, quantity: 1, unitPrice: 30 },
+      ]),
+      freightCost: '10',
+    }))
+    expect(result.success).toBe(true)
+    expect(await prisma.sale.count()).toBe(2)
+    expect(await prisma.saleFreight.count()).toBe(1)
+  })
+
+  it('removeSaleFreight remove o frete sem afetar as linhas de Sale do lote', async () => {
+    const { product } = await createSupportRecords()
+    await createSaleBatch(fd({
+      channel: 'MERCADO_LIVRE',
+      saleDate: '2026-09-16',
+      itemsJson: JSON.stringify([{ productId: product.id, quantity: 1, unitPrice: 50 }]),
+      freightCost: '5',
+    }))
+    const freight = await prisma.saleFreight.findFirstOrThrow()
+
+    const result = await removeSaleFreight(freight.id)
+    expect(result.success).toBe(true)
+    expect(await prisma.saleFreight.count()).toBe(0)
+    expect(await prisma.sale.count()).toBe(1)
+  })
+
+  it('@@unique([batchId]) trava em no máximo 1 frete por venda -- 2 chamadas em lotes diferentes não conflitam', async () => {
+    const { product } = await createSupportRecords()
+
+    await createSaleBatch(fd({
+      channel: 'MERCADO_LIVRE', saleDate: '2026-09-16',
+      itemsJson: JSON.stringify([{ productId: product.id, quantity: 1, unitPrice: 50 }]),
+      freightCost: '5',
+    }))
+    await createSaleBatch(fd({
+      channel: 'MERCADO_LIVRE', saleDate: '2026-09-17',
+      itemsJson: JSON.stringify([{ productId: product.id, quantity: 1, unitPrice: 50 }]),
+      freightCost: '5',
+    }))
+
+    expect(await prisma.saleFreight.count()).toBe(2)
   })
 })

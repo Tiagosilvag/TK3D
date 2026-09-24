@@ -3,7 +3,7 @@ import { Fragment } from 'react'
 import { prisma } from '@/lib/prisma'
 import { formatCurrency, getSaleChannelBadge } from '@/lib/format'
 import { SaleForm } from './SaleForm'
-import { deleteSale, getSaleProfit, removeSaleGiftUsage } from '@/actions/sales'
+import { deleteSale, getSaleProfit, removeSaleGiftUsage, removeSaleFreight } from '@/actions/sales'
 import { getProductCostBreakdown, getGiftProductOptions } from '@/actions/products'
 import { getProductVariantStockOptions } from '@/lib/reports'
 import type { PlatformFeeTier } from '@/lib/costing'
@@ -65,6 +65,15 @@ export default async function SalesPage({
     : []
   const giftUsageByBatchId = new Map(giftUsages.map((g) => [g.batchId, g]))
 
+  // Melhoria "Frete em Vendas": mesmo padrão do Brinde acima -- por LOTE
+  // (um envio cobre a venda inteira, não cada produto dela separadamente),
+  // nunca uma coluna em Sale (evitaria contar o mesmo frete várias vezes
+  // numa venda de vários produtos).
+  const freights = batchIds.length > 0
+    ? await prisma.saleFreight.findMany({ where: { batchId: { in: batchIds } } })
+    : []
+  const freightByBatchId = new Map(freights.map((f) => [f.batchId, f]))
+
   // Melhoria "Redesign Vendas": custo unitário de cada produto, pro bloco
   // "Custo de produção" da prévia ao vivo (3) -- reaproveita
   // getProductCostBreakdown (actions/products.ts), mesmo padrão já usado
@@ -123,11 +132,15 @@ export default async function SalesPage({
   // (giftUsages já vem filtrado pelos mesmos batchIds de `sales`) --
   // entra no custo total/desconta do lucro, nunca no valor vendido.
   const totalGiftCost = giftUsages.reduce((sum, g) => sum + g.unitCost.toNumber() * g.quantity, 0)
+  // Melhoria "Frete em Vendas": mesmo raciocínio de totalGiftCost acima --
+  // soma de todo frete registrado nos lotes visíveis (freights já vem
+  // filtrado pelos mesmos batchIds de `sales`).
+  const totalFreightCost = freights.reduce((sum, f) => sum + f.amount.toNumber(), 0)
 
   const totalSaleAmount = profits.reduce((sum, p) => sum + p.saleTotal, 0)
   const totalFees = profits.reduce((sum, p) => sum + p.platformFeeAmount, 0)
   const totalCost = profits.reduce((sum, p) => sum + p.costTotal, 0) + totalGiftCost
-  const totalProfit = profits.reduce((sum, p) => sum + p.profit, 0) - totalGiftCost
+  const totalProfit = profits.reduce((sum, p) => sum + p.profit, 0) - totalGiftCost - totalFreightCost
 
   // Melhoria "Vendas: múltiplos produtos numa venda": agrupa as linhas de
   // Sale por batchId (mesmo padrão Map-por-batchId de
@@ -137,10 +150,10 @@ export default async function SalesPage({
   // sub-linha de totais no final. `sales` já vem ordenado por saleDate
   // desc, e Map preserva a ordem de primeira inserção -- os lotes já saem
   // na ordem certa.
-  const batchesMap = new Map<string, { batchId: string; saleDate: Date; channel: SaleChannel; buyerOrPlatform: string | null; gift: (typeof giftUsages)[number] | null; lines: { sale: (typeof sales)[number]; profit: (typeof profits)[number] }[] }>()
+  const batchesMap = new Map<string, { batchId: string; saleDate: Date; channel: SaleChannel; buyerOrPlatform: string | null; gift: (typeof giftUsages)[number] | null; freight: (typeof freights)[number] | null; lines: { sale: (typeof sales)[number]; profit: (typeof profits)[number] }[] }>()
   for (let i = 0; i < sales.length; i++) {
     const s = sales[i]
-    const batch = batchesMap.get(s.batchId) ?? { batchId: s.batchId, saleDate: s.saleDate, channel: s.channel, buyerOrPlatform: s.buyerOrPlatform, gift: giftUsageByBatchId.get(s.batchId) ?? null, lines: [] }
+    const batch = batchesMap.get(s.batchId) ?? { batchId: s.batchId, saleDate: s.saleDate, channel: s.channel, buyerOrPlatform: s.buyerOrPlatform, gift: giftUsageByBatchId.get(s.batchId) ?? null, freight: freightByBatchId.get(s.batchId) ?? null, lines: [] }
     batch.lines.push({ sale: s, profit: profits[i] })
     batchesMap.set(s.batchId, batch)
   }
@@ -160,7 +173,7 @@ export default async function SalesPage({
           resumo de /stock (StockExplorer.tsx) -- refletem o filtro de
           canal/data ativo automaticamente, já que vêm de `profits`/`sales`
           filtrados acima. */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <div className="tk-panel p-3">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Total vendido</p>
           <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(totalSaleAmount)}</p>
@@ -169,6 +182,16 @@ export default async function SalesPage({
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Total em taxas</p>
           <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(totalFees)}</p>
         </div>
+        {/* Melhoria "Frete em Vendas": só aparece quando existe frete
+            registrado no período filtrado -- sem virar um card R$0 vazio
+            pra quem nunca usa o campo (venda Direta, ou marketplace sem
+            frete informado). */}
+        {totalFreightCost > 0 && (
+          <div className="tk-panel p-3">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Total em frete</p>
+            <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(totalFreightCost)}</p>
+          </div>
+        )}
         <div className="tk-panel p-3">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Lucro líquido</p>
           <p className={`mt-1 text-lg font-semibold tabular-nums ${totalProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatCurrency(totalProfit)}</p>
@@ -243,13 +266,17 @@ export default async function SalesPage({
             // cada linha individual -- não pertence a nenhum produto
             // específico do lote).
             const batchGiftCost = batch.gift ? batch.gift.unitCost.toNumber() * batch.gift.quantity : 0
+            // Melhoria "Frete em Vendas": mesmo raciocínio do Brinde acima --
+            // por LOTE, nunca somado por linha (batch.freight já é o valor
+            // inteiro da venda, não algo que se acumula item a item).
+            const batchFreightCost = batch.freight ? batch.freight.amount.toNumber() : 0
             const batchTotals = isMulti
               ? batch.lines.reduce((acc, l) => ({
                   cost: acc.cost + l.profit.costTotal,
                   fee: acc.fee + l.profit.platformFeeAmount,
                   saleTotal: acc.saleTotal + l.profit.saleTotal,
                   profit: acc.profit + l.profit.profit,
-                }), { cost: batchGiftCost, fee: 0, saleTotal: 0, profit: -batchGiftCost })
+                }), { cost: batchGiftCost, fee: 0, saleTotal: 0, profit: -batchGiftCost - batchFreightCost })
               : null
 
             return (
@@ -293,6 +320,20 @@ export default async function SalesPage({
                             />
                           </div>
                         )}
+                        {/* Frete em Vendas: mesma tag/remoção pontual do
+                            Brinde acima -- também por lote, não por
+                            produto. */}
+                        {idx === 0 && batch.freight && (
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                              📦 Frete {formatCurrency(batchFreightCost)}
+                            </span>
+                            <ConfirmDeleteForm
+                              action={async () => { 'use server'; return await removeSaleFreight(batch.freight!.id) }}
+                              confirmMessage="Remover o frete desta venda?"
+                            />
+                          </div>
+                        )}
                       </td>
                       <td className="text-center">{s.quantity}</td>
                       <td className="text-center">{formatCurrency(s.unitPrice.toNumber())}</td>
@@ -324,14 +365,32 @@ export default async function SalesPage({
                           </span>
                         )}
                       </td>
-                      <td className="text-center">{formatCurrency(saleTotal - platformFeeAmount)}</td>
                       <td className="text-center">
                         {(() => {
-                          // Brinde: só o lote de 1 produto desconta o custo
-                          // do brinde do lucro exibido AQUI -- mesmo
-                          // raciocínio da célula Custo acima.
+                          // Frete em Vendas: só o lote de 1 produto desconta
+                          // o frete do "Recebido" exibido AQUI -- mesmo
+                          // raciocínio do Brinde na célula Custo acima (lote
+                          // com 2+ produtos mostra só no subtotal).
+                          const rowFreightCost = !isMulti ? batchFreightCost : 0
+                          const received = saleTotal - platformFeeAmount - rowFreightCost
+                          return rowFreightCost > 0 ? (
+                            <>
+                              {formatCurrency(received)}
+                              <span className="block text-xs font-normal text-slate-400 dark:text-slate-500">frete {formatCurrency(rowFreightCost)}</span>
+                            </>
+                          ) : (
+                            formatCurrency(received)
+                          )
+                        })()}
+                      </td>
+                      <td className="text-center">
+                        {(() => {
+                          // Brinde/Frete: só o lote de 1 produto desconta o
+                          // custo do brinde/frete do lucro exibido AQUI --
+                          // mesmo raciocínio da célula Custo acima.
                           const rowGiftCost = !isMulti ? batchGiftCost : 0
-                          const displayProfit = profit - rowGiftCost
+                          const rowFreightCost = !isMulti ? batchFreightCost : 0
+                          const displayProfit = profit - rowGiftCost - rowFreightCost
                           return (
                             <details>
                               <summary
@@ -356,6 +415,12 @@ export default async function SalesPage({
                                   <div className="flex justify-between gap-3">
                                     <dt>Brinde</dt>
                                     <dd>− {formatCurrency(rowGiftCost)}</dd>
+                                  </div>
+                                )}
+                                {rowFreightCost > 0 && (
+                                  <div className="flex justify-between gap-3">
+                                    <dt>Frete</dt>
+                                    <dd>− {formatCurrency(rowFreightCost)}</dd>
                                   </div>
                                 )}
                                 {platformFeeAmount > 0 && (
@@ -394,7 +459,12 @@ export default async function SalesPage({
                       )}
                     </td>
                     <td className="py-1.5 text-center">{formatCurrency(batchTotals.fee)}</td>
-                    <td className="py-1.5 text-center">{formatCurrency(batchTotals.saleTotal - batchTotals.fee)}</td>
+                    <td className="py-1.5 text-center">
+                      {formatCurrency(batchTotals.saleTotal - batchTotals.fee - batchFreightCost)}
+                      {batchFreightCost > 0 && (
+                        <span className="block font-normal text-slate-400 dark:text-slate-500">frete {formatCurrency(batchFreightCost)}</span>
+                      )}
+                    </td>
                     <td className={`py-1.5 text-center ${batchTotals.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatCurrency(batchTotals.profit)}</td>
                     <td></td>
                   </tr>
@@ -411,7 +481,7 @@ export default async function SalesPage({
               <td className="py-2" colSpan={6}>Total ({batches.length} {batches.length === 1 ? 'venda' : 'vendas'})</td>
               <td className="text-center">{formatCurrency(totalCost)}</td>
               <td className="text-center">{formatCurrency(totalFees)}</td>
-              <td className="text-center">{formatCurrency(totalSaleAmount - totalFees)}</td>
+              <td className="text-center">{formatCurrency(totalSaleAmount - totalFees - totalFreightCost)}</td>
               <td className={`text-center ${totalProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatCurrency(totalProfit)}</td>
               <td></td>
             </tr>

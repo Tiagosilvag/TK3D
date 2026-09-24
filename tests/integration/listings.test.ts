@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient, Prisma } from '@prisma/client'
 import { createListingDraft, updateListing, deleteListing, getListingsPageData } from '@/actions/listings'
-import { updateMarketplacePlatformFees, getPlatformSalePrice, resolveSalePlatformFee } from '@/actions/marketplacePlatforms'
+import { updateMarketplacePlatformFees, getPlatformSalePrice, resolveSalePlatformFee, resolveSaleFreight } from '@/actions/marketplacePlatforms'
 import type { PlatformFeeTier } from '@/lib/costing'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
@@ -163,6 +163,29 @@ describe('actions/listings', () => {
     expect(result.price).toBeCloseTo(999)
     expect(result.feePercent).toBeCloseTo(0.14)
     expect(result.feeFixed).toBeCloseTo(26)
+  })
+
+  it('resolveSaleFreight prefere o frete real do Listing quando existe', async () => {
+    await updateMarketplacePlatformFees('SHOPEE', fd({ feePercent: '0.20', feeFixed: '4', avgFreight: '15', feeTiersJson: JSON.stringify(shopeeTiers) }))
+    const product = await createProduct()
+    const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'SHOPEE' } })
+    await createListingDraft(product.id, platform.id)
+    const listing = await prisma.listing.findUniqueOrThrow({ where: { productId_platformId: { productId: product.id, platformId: platform.id } } })
+    await updateListing(listing.id, fd({ productId: product.id, platformId: platform.id, status: 'ONLINE', price: '999', freightType: 'GRATIS_SUBSIDIADO', freightCost: '6.5' }))
+
+    expect(await resolveSaleFreight('SHOPEE', product.id)).toBeCloseTo(6.5)
+  })
+
+  it('resolveSaleFreight cai na média da plataforma quando não há Listing', async () => {
+    await updateMarketplacePlatformFees('SHOPEE', fd({ feePercent: '0.20', feeFixed: '4', avgFreight: '15', feeTiersJson: JSON.stringify(shopeeTiers) }))
+    const product = await createProduct()
+
+    expect(await resolveSaleFreight('SHOPEE', product.id)).toBeCloseTo(15)
+  })
+
+  it('resolveSaleFreight devolve 0 pra canal Direta (sem frete rastreado)', async () => {
+    const product = await createProduct('Produto Direta')
+    expect(await resolveSaleFreight('DIRETA', product.id)).toBe(0)
   })
 
   it('resolveSalePlatformFee(productId) usa o listingType do Listing pra escolher Clássico/Premium', async () => {

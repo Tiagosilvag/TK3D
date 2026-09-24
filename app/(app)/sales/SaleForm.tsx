@@ -3,12 +3,12 @@ import { useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createSaleBatch, updateSale } from '@/actions/sales'
-import { getPlatformSalePrice } from '@/actions/marketplacePlatforms'
+import { getPlatformSalePrice, resolveSaleFreight } from '@/actions/marketplacePlatforms'
 import { SubmitButton } from '@/components/SubmitButton'
 import { formatCurrency } from '@/lib/format'
 import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { resolveTieredPlatformFee, type PlatformFeeTier } from '@/lib/costing'
-import type { MarketplacePlatformKind } from '@prisma/client'
+import type { MarketplacePlatformKind, SaleChannel } from '@prisma/client'
 
 // Melhoria "Mostrar taxa da plataforma": ao lado do Valor unitário, mostra
 // quanto da taxa Shopee/Mercado Livre entrou no preço sugerido -- resolvido
@@ -134,6 +134,13 @@ export function SaleForm({
   const [channel, setChannel] = useState(editingSale?.channel ?? '')
   const [unitPrice, setUnitPrice] = useState(editingSale ? String(editingSale.unitPrice) : '')
   const [quantity, setQuantity] = useState(editingSale ? String(editingSale.quantity) : '1')
+  // Melhoria "Frete em Vendas": por LOTE (venda inteira), não por produto --
+  // mesmo raciocínio do Brinde abaixo (SaleGiftUsage) -- só existe no modo
+  // "nova venda"; editar uma linha (editingSale) nunca mexe no frete do
+  // lote, mesma exclusão que o Brinde já tem (updateSale não toca em
+  // SaleGiftUsage). Pré-preenchido junto com unitPrice (mesma função
+  // maybePrefillMarketplacePrice), sempre editável.
+  const [freightCost, setFreightCost] = useState('')
   const [prefilling, setPrefilling] = useState(false)
   const [productId, setProductId] = useState(editingSale?.productId ?? defaultProductId ?? '')
   const [colorComboKey, setColorComboKey] = useState(editingSale?.colorComboKey ?? '')
@@ -174,6 +181,7 @@ export function SaleForm({
 
   const quantityNum = Number(quantity) || 0
   const unitPriceNum = Number(unitPrice) || 0
+  const freightCostNum = Number(freightCost) || 0
 
   // Melhoria "Vendas: múltiplos produtos numa venda": o item em rascunho
   // (campos Produto/Cor/Quantidade/Valor unitário ainda não confirmados via
@@ -217,9 +225,12 @@ export function SaleForm({
         fee += (it.unitPrice * feePercent + feeFixed) * it.quantity
       }
     }
-    const profit = saleTotal - cost - fee
-    return { saleTotal, cost, fee, profit, margin: saleTotal > 0 ? profit / saleTotal : null }
-  }, [previewItems, channel, platforms, products, giftCost])
+    // Melhoria "Frete em Vendas": por LOTE, não por item (um envio cobre a
+    // venda inteira) -- 1 valor só pra toda a prévia, não somado por item.
+    const freight = freightCostNum
+    const profit = saleTotal - cost - fee - freight
+    return { saleTotal, cost, fee, freight, profit, margin: saleTotal > 0 ? profit / saleTotal : null }
+  }, [previewItems, channel, platforms, products, giftCost, freightCostNum])
 
   // Legenda "Taxa Shopee: 20% + R$4,00 (≈R$X/un.)" embaixo do campo Valor
   // unitário -- só do item em rascunho (não do agregado acima), mesmo
@@ -236,14 +247,24 @@ export function SaleForm({
   // platform's own computed price (cost + markup + THAT platform's specific
   // fee/tax, spec 4.1) as a starting point for unitPrice — still a plain
   // editable field, not a locked value, since the actual sale price can
-  // differ.
+  // differ. Melhoria "Frete em Vendas": mesmo round-trip pré-preenche o
+  // Frete (resolveSaleFreight -- Anúncio já cadastrado ou média da
+  // plataforma), também editável -- nunca trava/inventa, só sugere.
   async function maybePrefillMarketplacePrice(currentProductId: string, currentChannel: string) {
     if (editingSale) return
     if ((currentChannel !== 'SHOPEE' && currentChannel !== 'MERCADO_LIVRE') || !currentProductId) return
     setPrefilling(true)
     try {
-      const result = await getPlatformSalePrice(currentProductId, currentChannel as MarketplacePlatformKind)
+      const [result, freight] = await Promise.all([
+        getPlatformSalePrice(currentProductId, currentChannel as MarketplacePlatformKind),
+        resolveSaleFreight(currentChannel as SaleChannel, currentProductId),
+      ])
       setUnitPrice(result.price.toFixed(2))
+      // Melhoria "Frete em Vendas": só sugere quando o campo ainda está
+      // vazio -- trocar de produto/cor depois de já ter digitado um frete
+      // (ex.: 2º produto marketplace numa venda com vários) nunca
+      // sobrescreve o que o vendedor já ajustou pro envio inteiro.
+      setFreightCost((prev) => (prev ? prev : freight.toFixed(2)))
     } catch {
       // Product lookup failing here shouldn't block filling the form
       // manually — leave whatever the user already typed in place.
@@ -466,6 +487,7 @@ export function SaleForm({
       setBatchSelected({})
       setBatchQty({})
       setBatchPrice({})
+      setFreightCost('')
     } else {
       alert(result.error)
     }
@@ -702,6 +724,29 @@ export function SaleForm({
           </div>
         )}
 
+        {/* Melhoria "Frete em Vendas": por LOTE (a venda inteira, não cada
+            produto dela), mesma exclusão do modo "editar linha" que o
+            Brinde já tem acima. Só marketplace (Shopee/Mercado Livre) --
+            venda Direta não rastreia frete hoje. Pré-preenchido pelo
+            Anúncio/média da plataforma (ver maybePrefillMarketplacePrice),
+            sempre editável -- inclusive pra zerar se não quiser rastrear
+            nesta venda específica. */}
+        {!editingSale && (channel === 'SHOPEE' || channel === 'MERCADO_LIVRE') && (
+          <label className="text-sm">
+            Frete (opcional) {prefilling && <span className="text-xs font-normal text-slate-400 dark:text-slate-500">(preenchendo…)</span>}
+            <input
+              name="freightCost"
+              type="number"
+              step="0.01"
+              min="0"
+              value={freightCost}
+              onChange={(e) => setFreightCost(e.target.value)}
+              className="tk-input-full"
+            />
+            <span className="mt-1 block text-xs font-normal text-slate-400 dark:text-slate-500">Frete que você banca, cobre a venda inteira.</span>
+          </label>
+        )}
+
         <label className="text-sm">
           Data da venda *
           <input name="saleDate" type="date" defaultValue={editingSale?.saleDate ?? today()} className="tk-input-full" required />
@@ -728,7 +773,7 @@ export function SaleForm({
           há dado suficiente pra calcular algo (senão mostraria R$0 vazio,
           mais confuso que ausente). */}
       {preview && (
-        <div className={`mt-4 grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 dark:border-slate-800 ${giftCost > 0 ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
+        <div className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-4 dark:border-slate-800 sm:grid-cols-3 lg:grid-cols-5">
           <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Custo de produção</p>
             <p className="mt-1 text-base font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(preview.cost - giftCost)}</p>
@@ -737,6 +782,12 @@ export function SaleForm({
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Taxa da plataforma</p>
             <p className="mt-1 text-base font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(preview.fee)}</p>
           </div>
+          {preview.freight > 0 && (
+            <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/50">
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Frete</p>
+              <p className="mt-1 text-base font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(preview.freight)}</p>
+            </div>
+          )}
           {giftCost > 0 && (
             <div className="rounded-lg bg-pink-50 p-3 dark:bg-pink-950/20">
               <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Custo do brinde</p>

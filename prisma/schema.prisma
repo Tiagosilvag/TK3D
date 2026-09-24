@@ -969,6 +969,27 @@ model SaleGiftUsage {
   @@index([batchId])
 }
 
+// Melhoria "Frete em Vendas": custo de frete que o vendedor banca NUMA
+// VENDA INTEIRA (um envio cobre o lote inteiro, não cada produto dele
+// separadamente) -- mesmo raciocínio/formato de SaleGiftUsage acima (por
+// LOTE via batchId, nunca por linha de Sale; @@unique trava em no máximo
+// 1 registro de frete por venda). Editável (o formulário pré-preenche a
+// partir do Anúncio -- Listing.freightCost -- do 1º produto marketplace
+// da venda, ou da média da plataforma -- MarketplacePlatform.avgFreight
+// -- quando não há Anúncio, mas o valor aqui já É o fato registrado,
+// nunca recalculado depois). Só existe quando o vendedor informou algum
+// valor (> 0) -- sem registro nenhum pra venda Direta ou lote sem frete
+// informado, nunca inventado retroativamente.
+model SaleFreight {
+  id        String   @id @default(cuid())
+  batchId   String
+  amount    Decimal  @db.Decimal(10, 2)
+  createdAt DateTime @default(now())
+
+  @@unique([batchId])
+  @@index([batchId])
+}
+
 // 2.4 Sistema de pedidos: registra um pedido recebido (de qualquer canal)
 // antes de ele ser produzido/despachado. Ao marcar Concluído
 // (actions/orders.ts#updateOrderStatus), cria automaticamente 1 Sale

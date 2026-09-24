@@ -33,12 +33,18 @@ export const saleItemSchema = saleSchema.pick({ productId: true, quantity: true,
 // (não por item -- é "um mimo pra venda inteira"), mesmo nível de
 // channel/saleDate/buyerOrPlatform acima. Os dois campos vêm juntos ou
 // nenhum -- .refine abaixo garante isso.
+// Melhoria "Frete em Vendas": mesmo raciocínio do Brinde -- um envio cobre
+// a venda inteira, não cada produto dela separadamente (SaleFreight, por
+// batchId, nunca uma coluna em Sale -- evita contar o mesmo frete várias
+// vezes numa venda de vários produtos). Editável, opcional (ausente/0 =
+// nenhum frete registrado).
 export const saleBatchSchema = saleSchema
   .omit({ productId: true, quantity: true, unitPrice: true, colorComboKey: true })
   .extend({
     items: z.array(saleItemSchema).min(1, 'Adicione pelo menos um produto'),
     giftProductId: z.string().optional(),
     giftQuantity: z.coerce.number().int('Quantidade deve ser um número inteiro').positive('Quantidade deve ser maior que zero').optional(),
+    freightCost: z.coerce.number({ invalid_type_error: 'Valor inválido' }).min(0, 'Não pode ser negativo').optional().default(0),
   })
   .refine((data) => Boolean(data.giftProductId) === Boolean(data.giftQuantity), {
     message: 'Selecione o brinde e a quantidade',

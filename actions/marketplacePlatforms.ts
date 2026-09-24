@@ -170,3 +170,21 @@ export async function resolveSalePlatformFee(
       : { feePercent: platformConfig.feePercent.toNumber(), feeFixed: platformConfig.feeFixed.toNumber() }
   return { feePercent, feeFixed, feeAmountPerUnit: unitPrice * feePercent + feeFixed }
 }
+
+// Melhoria "Frete em Vendas": pré-preenchimento do campo Frete no
+// formulário de Vendas -- mesmo espírito de resolveSalePlatformFee acima
+// (chamado do client, só pra sugerir um valor inicial editável, nunca pra
+// travar/congelar nada). Prioridade: frete REAL do Anúncio já cadastrado
+// pra esse produto+plataforma (Listing.freightCost, o vendedor já sabe
+// quanto realmente paga nesse canal) -- sem Anúncio, cai na média
+// configurada da plataforma (MarketplacePlatform.avgFreight, mesmo
+// fallback que createListingDraft usa pra um Anúncio novo). 0 pra
+// Direta/canal legado MARKETPLACE (sem frete rastreado hoje).
+export async function resolveSaleFreight(channel: SaleChannel, productId?: string): Promise<number> {
+  if (channel !== 'SHOPEE' && channel !== 'MERCADO_LIVRE') return 0
+  const platformConfig = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: channel } })
+  const listing = productId
+    ? await prisma.listing.findUnique({ where: { productId_platformId: { productId, platformId: platformConfig.id } } })
+    : null
+  return (listing?.freightCost ?? platformConfig.avgFreight).toNumber()
+}
