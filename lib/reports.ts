@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { getStockStatus, type ProductionCostSnapshot } from '@/lib/costing'
+import { getStockStatus, calculateStockReferenceQuantity, calculateStockPercentRemaining, type ProductionCostSnapshot } from '@/lib/costing'
 import { productNeedsAssembly } from '@/lib/products'
 import type { Prisma, ProductionStatus, WasteReason } from '@prisma/client'
 
@@ -11,12 +11,12 @@ import type { Prisma, ProductionStatus, WasteReason } from '@prisma/client'
 export async function getFilamentsLowStockCount(): Promise<number> {
   const filaments = await prisma.filament.findMany({
     where: { currentStockGrams: { gt: 0 } },
-    select: { currentStockGrams: true, initialStockGrams: true },
+    select: { currentStockGrams: true, purchases: { select: { weightGrams: true }, orderBy: { purchaseDate: 'desc' } } },
   })
   return filaments.filter((f) => {
-    const initial = f.initialStockGrams.toNumber()
     const current = f.currentStockGrams.toNumber()
-    const percentRemaining = initial > 0 ? (current / initial) * 100 : 0
+    const referenceQuantity = calculateStockReferenceQuantity(f.purchases.map((p) => p.weightGrams.toNumber()))
+    const percentRemaining = calculateStockPercentRemaining(current, referenceQuantity)
     return getStockStatus(percentRemaining).label === 'Estoque baixo'
   }).length
 }

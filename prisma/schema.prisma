@@ -155,25 +155,49 @@ model MaterialDefaults {
   bedTempC    Int
 }
 
+// Melhoria "Estoque de filamento por custo médio ponderado": deixou de ser
+// "1 linha = 1 rolo físico com preço fixo daquele rolo" (rollNumber,
+// spoolWeightKg/spoolPrice, initialStockGrams) e virou 1 linha por SKU
+// (marca+material+cor), estoque em gramas somado entre compras e custo
+// médio ponderado por grama recalculado a cada compra -- mesmo modelo já
+// usado por Accessory/Supply (avgUnitCost + tabela de Purchase própria,
+// ver calculateWeightedAverageCost). Comprar o mesmo filamento de novo
+// (mesmo que a preço diferente) soma no estoque da MESMA linha em vez de
+// criar um "Rolo #002" -- não há mais rastreamento de qual rolo específico
+// foi usado em qual produção (Produção/Montagem/Estoque não mostram mais
+// "Rolo #NNN"), só a cor.
 model Filament {
-  id                String           @id @default(cuid())
-  manufacturer      String
-  material          FilamentMaterial
-  colorName         String
-  colorHex          String
-  rollNumber        Int
-  spoolWeightKg     Decimal          @db.Decimal(6, 3)
-  spoolPrice        Decimal          @db.Decimal(10, 2)
-  initialStockGrams Decimal          @db.Decimal(10, 2)
-  currentStockGrams Decimal          @db.Decimal(10, 2)
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  products          Product[]
-  productionRuns    ProductionRun[]
+  id                 String           @id @default(cuid())
+  manufacturer       String
+  material           FilamentMaterial
+  colorName          String
+  colorHex           String
+  currentStockGrams  Decimal          @db.Decimal(10, 2)
+  avgUnitCostPerGram Decimal          @db.Decimal(10, 4)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  products           Product[]
+  productionRuns     ProductionRun[]
   productPartFilaments ProductPartFilament[]
   productionRunFilamentUsages ProductionRunFilamentUsage[]
+  purchases          FilamentPurchase[]
 
-  @@unique([manufacturer, material, colorName, rollNumber])
+  @@unique([manufacturer, material, colorName])
+}
+
+model FilamentPurchase {
+  id           String   @id @default(cuid())
+  filamentId   String
+  // onDelete: Cascade -- purchase history is owned by its Filament (it only
+  // exists to explain how that filament's stock/avgUnitCostPerGram got
+  // where they are); Product/ProductPart/ProductionRun's own filamentId FKs
+  // (no cascade) are what actually blocks a physical deleteFilament.
+  filament     Filament @relation(fields: [filamentId], references: [id], onDelete: Cascade)
+  weightGrams  Decimal  @db.Decimal(10, 2)
+  totalCost    Decimal  @db.Decimal(10, 2)
+  purchaseDate DateTime
+  notes        String?
+  createdAt    DateTime @default(now())
 }
 
 // Melhorias "Embalagens": ganhou controle de estoque real (antes só tinha

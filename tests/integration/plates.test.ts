@@ -34,8 +34,8 @@ async function createSupportRecords() {
   const printer = await prisma.printer.create({
     data: { name: 'Impressora Plate', purchasePrice: 2000, depreciationHours: 1000, maintenanceCostPerHour: 0, avgPowerConsumptionKwh: 0, energyCostPerKwh: 0 },
   })
-  const filamentA = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
-  const filamentB = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Branco', colorHex: '#FFFFFF', rollNumber: 2, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+  const filamentA = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+  const filamentB = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Branco', colorHex: '#FFFFFF', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
   // Mosquetão: 30% do peso da Plate no exemplo do pedido.
   const productA = await prisma.product.create({
     data: { name: 'Mosquetão', category: 'Chaveiro', printerId: printer.id, filamentId: filamentA.id, weightGrams: 10, printTimeHours: 0.3, laborTimeHours: 0 },
@@ -156,7 +156,7 @@ describe('createPlate (reformulação Produção)', () => {
 describe('updateProductionRun -- edição de consumo (gramsUsed), reformulação Produção §42', () => {
   async function createSingleRun() {
     const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const product = await prisma.product.create({
       data: { name: 'Peça simples', category: 'Chaveiro', printerId: printer.id, filamentId: filament.id, weightGrams: 30, printTimeHours: 2, laborTimeHours: 0.25 },
     })

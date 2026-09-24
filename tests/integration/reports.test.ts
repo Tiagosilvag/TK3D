@@ -47,7 +47,7 @@ afterAll(async () => {
 
 async function createSupportRecords() {
   const printer = await prisma.printer.create({ data: { name: 'P', purchasePrice: 1, depreciationHours: 1, avgPowerConsumptionKwh: 0.1 } })
-  const filament = await prisma.filament.create({ data: { manufacturer: 'F', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 100, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+  const filament = await prisma.filament.create({ data: { manufacturer: 'F', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 100 / 1000 } })
   const product = await prisma.product.create({ data: { name: 'X', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0 } })
   return { printer, filament, product }
 }
@@ -176,7 +176,7 @@ describe('relatórios de produção (Task 9)', () => {
 
     const printer1 = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
     const printer2 = await prisma.printer.create({ data: { name: 'P2', purchasePrice: 2000, depreciationHours: 8000, avgPowerConsumptionKwh: 0.2 } })
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 100, spoolWeightKg: 1, initialStockGrams: 100000, currentStockGrams: 100000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 100000, avgUnitCostPerGram: 100 / 100000 } })
     const productA = await prisma.product.create({ data: { name: 'Produto A', printerId: printer1.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0 } })
     const productB = await prisma.product.create({ data: { name: 'Produto B', printerId: printer2.id, filamentId: filament.id, weightGrams: 20, printTimeHours: 2, laborTimeHours: 0 } })
 

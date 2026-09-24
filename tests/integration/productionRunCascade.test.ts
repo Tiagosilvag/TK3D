@@ -41,7 +41,7 @@ function fd(obj: Record<string, string>): FormData {
 // cenário do bug relatado: "produção que já estava em estoque".
 async function createSupportRecords() {
   const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 10000, currentStockGrams: 10000 } })
+  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 10000, avgUnitCostPerGram: 80 / 10000 } })
   const accessory = await prisma.accessory.create({ data: { name: 'Argola Dourada', type: 'OUTRO', colorName: '', currentStock: 100, avgUnitCost: 0.5 } })
   const supply = await prisma.supply.create({ data: { name: 'Cola Quente', unit: 'ML', currentStock: 50, avgUnitCost: 1.2 } })
   const product = await prisma.product.create({
@@ -95,7 +95,7 @@ async function assemble(product: { id: string }, filament: { id: string }, acces
 // por causa do componentUsage (mesma regra de productNeedsAssembly).
 async function createSharedComponentScenario() {
   const printer = await prisma.printer.create({ data: { name: 'P2', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-  const filament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Vermelho', colorHex: '#FF0000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 10000, currentStockGrams: 10000 } })
+  const filament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Vermelho', colorHex: '#FF0000', currentStockGrams: 10000, avgUnitCostPerGram: 80 / 10000 } })
 
   const mosquetao = await prisma.product.create({
     data: { name: 'Mosquetão', category: 'Acessório', printerId: printer.id, filamentId: filament.id, weightGrams: 3, printTimeHours: 0.2, laborTimeHours: 0 },

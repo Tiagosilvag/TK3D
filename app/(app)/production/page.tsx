@@ -6,7 +6,7 @@ import { getProductionByProduct, getPlates } from '@/actions/productionRuns'
 import { getOrderDemandQueue } from '@/actions/orders'
 import { DemandQueuePanel } from './DemandQueuePanel'
 import type { ProductionCostSnapshot } from '@/lib/costing'
-import { calculateFilamentPricePerGram, calculatePrinterDepreciationCostPerHour } from '@/lib/costing'
+import { calculatePrinterDepreciationCostPerHour } from '@/lib/costing'
 import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
 import { resolveDateRange } from '@/lib/dateRange'
 import type { ProductionStatus } from '@prisma/client'
@@ -187,8 +187,8 @@ export default async function ProductionPage({
 
   const filaments = filamentRecords.map((f) => ({
     id: f.id,
-    name: `${f.manufacturer} ${f.colorName} (${f.material}) — Rolo #${String(f.rollNumber).padStart(3, '0')} (${f.currentStockGrams.toNumber()}g restantes)`,
-    pricePerGram: calculateFilamentPricePerGram({ spoolPrice: f.spoolPrice.toNumber(), spoolWeightKg: f.spoolWeightKg.toNumber() }),
+    name: `${f.manufacturer} ${f.colorName} (${f.material}) (${f.currentStockGrams.toNumber()}g restantes)`,
+    pricePerGram: f.avgUnitCostPerGram.toNumber(),
     colorHex: f.colorHex,
   }))
 

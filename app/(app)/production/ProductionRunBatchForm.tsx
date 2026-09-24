@@ -23,9 +23,9 @@ type Option = { id: string; name: string }
 type PrinterOption = { id: string; name: string; costPerHour: number }
 // Melhoria "Produção" (reformulação Plate): filamento agora carrega
 // pricePerGram -- usado pelas novas colunas R$/g e Custo da tabela de
-// cores (spec §3 do pedido de reformulação), calculado uma vez no server
-// (lib/costing.ts#calculateFilamentPricePerGram) a partir de spoolPrice/
-// spoolWeightKg, sem precisar buscar o filamento inteiro aqui. Melhoria
+// cores (spec §3 do pedido de reformulação), lido direto de
+// Filament.avgUnitCostPerGram no server, sem precisar buscar o filamento
+// inteiro aqui. Melhoria
 // "padronizar seleção de filamento com bolinha de cor": também carrega
 // colorHex agora, pra usar o mesmo FilamentSelect (components/
 // FilamentSelect.tsx) já usado em ProductForm.tsx -- <select> nativo não

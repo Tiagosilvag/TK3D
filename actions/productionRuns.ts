@@ -11,7 +11,6 @@ import {
 import {
   buildProductionCostSnapshot,
   calculatePrinterDepreciationCostPerHour,
-  calculateFilamentPricePerKg,
   calculateWasteCost,
   allocatePlatePrintTime,
   recomputeProductionRunPrinterCost,
@@ -288,16 +287,13 @@ async function prepareProductionRunCreation(
   if (productPart) {
     const recipe = productPart.filamentComponents.map((c) => ({
       weightGrams: c.weightGrams.toNumber(),
-      pricePerKg: calculateFilamentPricePerKg({ spoolPrice: c.filament.spoolPrice.toNumber(), spoolWeightKg: c.filament.spoolWeightKg.toNumber() }),
+      pricePerKg: c.filament.avgUnitCostPerGram.toNumber() * 1000,
     }))
     weightGrams = recipe.reduce((sum, c) => sum + c.weightGrams, 0)
     filamentPricePerKg = weightGrams > 0 ? recipe.reduce((sum, c) => sum + c.weightGrams * c.pricePerKg, 0) / weightGrams : 0
   } else {
     weightGrams = product.weightGrams.toNumber()
-    filamentPricePerKg = calculateFilamentPricePerKg({
-      spoolPrice: filamentById.get(data.filamentId)!.spoolPrice.toNumber(),
-      spoolWeightKg: filamentById.get(data.filamentId)!.spoolWeightKg.toNumber(),
-    })
+    filamentPricePerKg = filamentById.get(data.filamentId)!.avgUnitCostPerGram.toNumber() * 1000
   }
 
   // gramsUsed/gramsWasted do snapshot = soma real de todos os componentes
@@ -732,10 +728,7 @@ export async function updateProductionRun(id: string, formData: FormData): Promi
     depreciationHours: printer.depreciationHours.toNumber(),
   })
   const printerMaintenanceCostPerHour = printer.maintenanceCostPerHour.toNumber()
-  const filamentPricePerKg = calculateFilamentPricePerKg({
-    spoolPrice: filament.spoolPrice.toNumber(),
-    spoolWeightKg: filament.spoolWeightKg.toNumber(),
-  })
+  const filamentPricePerKg = filament.avgUnitCostPerGram.toNumber() * 1000
   const newWasteCost = calculateWasteCost({
     gramsWasted,
     timeWastedHours,

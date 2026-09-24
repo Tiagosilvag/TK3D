@@ -62,11 +62,19 @@ Deploy em produção: `tk3d.coffetech.com.br` via Coolify.
   como fallback/preview antes de existir plataforma específica), limiares
   de estoque baixo/crítico, flags de composição de custo,
   `roundingMode`.
-- **Printer, Filament, PackagingItem, Accessory(+Purchase),
+- **Printer, Filament(+Purchase), PackagingItem, Accessory(+Purchase),
   Supply(+Purchase)**: catálogo de insumos, todos com soft delete
-  (`active`) exceto Sale/ProductionRun/ConsignmentSaleReport (log
-  transacional, delete físico). Accessory/Supply usam custo médio
-  ponderado (`calculateWeightedAverageCost`), recalculado a cada compra.
+  (`active`, exceto Filament/Accessory/Supply — ver abaixo) exceto
+  Sale/ProductionRun/ConsignmentSaleReport (log transacional, delete
+  físico). Filament/Accessory/Supply usam custo médio ponderado
+  (`calculateWeightedAverageCost`), recalculado a cada compra (`*Purchase`
+  sub-tabela) — 1 linha por SKU (Filament: manufacturer+material+colorName;
+  sem soft delete, mas `deleteFilament`/`deleteAccessory` recusam excluir
+  um item esgotado, já que o histórico de compras é preservado
+  automaticamente por existir). Filament NÃO rastreia mais rolo físico
+  individual (sem `rollNumber`) — comprar a mesma cor de novo, mesmo que a
+  preço diferente, soma no estoque em gramas da MESMA linha e recalcula a
+  média; nenhuma tela mostra "Rolo #NNN", só marca+cor.
   `AccessoryTypeRecord` é uma tabela própria (não enum) com CRUD em
   `/settings/accessory-types`.
 - **Product**: pode ser `isComposite` (produto montado a partir de

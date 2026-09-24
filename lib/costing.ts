@@ -13,19 +13,6 @@ export function calculatePrinterDepreciationCostPerHour(input: PrinterDepreciati
 // (Printer.maintenanceCostPerHour) -- não há mais nada a "calcular" aqui,
 // cada chamador lê o valor já pronto direto do Printer. Função removida.
 
-export interface FilamentPriceInput {
-  spoolPrice: number
-  spoolWeightKg: number
-}
-
-export function calculateFilamentPricePerKg(input: FilamentPriceInput): number {
-  return input.spoolPrice / input.spoolWeightKg
-}
-
-export function calculateFilamentPricePerGram(input: FilamentPriceInput): number {
-  return calculateFilamentPricePerKg(input) / 1000
-}
-
 export interface StockStatus {
   emoji: string
   label: string

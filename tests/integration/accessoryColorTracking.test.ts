@@ -41,7 +41,7 @@ function fd(obj: Record<string, string>): FormData {
 // catálogo -- Corrente Bolinha Prata/Dourada.
 async function buildProductWithColorVariableAccessory() {
   const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Vermelho', colorHex: '#ff0000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Vermelho', colorHex: '#ff0000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
   const type = await prisma.accessoryTypeRecord.create({ data: { name: 'Corrente Teste' } })
   const prata = await prisma.accessory.create({ data: { name: 'Corrente Bolinha', type: type.id, colorName: 'Prata', currentStock: 20, avgUnitCost: 0.3 } })
   const dourada = await prisma.accessory.create({ data: { name: 'Corrente Bolinha', type: type.id, colorName: 'Dourada', currentStock: 20, avgUnitCost: 0.3 } })
@@ -120,7 +120,7 @@ describe('Acessório com cor variável rastreado por leva de montagem', () => {
 
   it('acessório sem irmão de cor continua funcionando exatamente como antes (colorOptions null, sem exigir escolha)', async () => {
     const printer = await prisma.printer.create({ data: { name: 'P2', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const type = await prisma.accessoryTypeRecord.create({ data: { name: 'Corrente Teste' } })
     const unica = await prisma.accessory.create({ data: { name: 'Corrente Bolinha', type: type.id, colorName: '', currentStock: 10, avgUnitCost: 0.3 } })
     const product = await prisma.product.create({
@@ -153,7 +153,7 @@ describe('Acessório com cor variável rastreado por leva de montagem', () => {
 describe('Bug "VERMELHO solto": label de produto-como-componente ganha o prefixo do nome', () => {
   it('getProductVariantBreakdown prefixa a cor do componente com o nome dele (ex. "Mosquetão: Azul")', async () => {
     const printer = await prisma.printer.create({ data: { name: 'P3', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-    const azul = await prisma.filament.create({ data: { manufacturer: 'Voolt', material: 'PLA', colorName: 'Azul', colorHex: '#0000FF', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const azul = await prisma.filament.create({ data: { manufacturer: 'Voolt', material: 'PLA', colorName: 'Azul', colorHex: '#0000FF', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const mosquetao = await prisma.product.create({
       data: { name: 'Mosquetão', category: 'Chaveiro', printerId: printer.id, filamentId: azul.id, weightGrams: 3, printTimeHours: 0.2, laborTimeHours: 0 },
     })

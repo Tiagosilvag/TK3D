@@ -72,7 +72,7 @@ function fd(obj: Record<string, string>): FormData {
 
 async function createSupportRecords() {
   const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
   const product = await prisma.product.create({
     data: {
       name: 'Chaveirinho',
@@ -163,7 +163,7 @@ describe('sales actions', () => {
 describe('Sale cost snapshot (task-10 brief, new feature)', () => {
   async function createProductWithAccessory() {
     const printer = await prisma.printer.create({ data: { name: 'P2', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Azul', colorHex: '#0000ff', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Azul', colorHex: '#0000ff', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const accessory = await prisma.accessory.create({ data: { name: 'Argola Snapshot', type: 'MOSQUETAO', currentStock: 100, avgUnitCost: 0.50 } })
     const product = await prisma.product.create({
       data: {
@@ -267,8 +267,8 @@ describe('Sale cost snapshot (task-10 brief, new feature)', () => {
 describe('Vendas por variante (Sale.colorComboKey)', () => {
   async function createTwoColorProduct() {
     const printer = await prisma.printer.create({ data: { name: 'P3', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-    const rosa = await prisma.filament.create({ data: { manufacturer: 'F3', material: 'PLA', colorName: 'Rosa', colorHex: '#ff69b4', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
-    const azul = await prisma.filament.create({ data: { manufacturer: 'F3', material: 'PLA', colorName: 'Azul', colorHex: '#0000ff', rollNumber: 2, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const rosa = await prisma.filament.create({ data: { manufacturer: 'F3', material: 'PLA', colorName: 'Rosa', colorHex: '#ff69b4', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+    const azul = await prisma.filament.create({ data: { manufacturer: 'F3', material: 'PLA', colorName: 'Azul', colorHex: '#0000ff', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const product = await prisma.product.create({
       data: { name: 'Produto Duas Cores', category: 'Chaveiro', printerId: printer.id, filamentId: rosa.id, weightGrams: 10, printTimeHours: 0.3, laborTimeHours: 0 },
     })
@@ -340,7 +340,7 @@ describe('createSaleBatch (Vendas: múltiplos produtos numa venda)', () => {
 
   it('cria 1 linha de Sale por item, todas com o mesmo batchId, cada uma com seu próprio costSnapshot e consumo de embalagem', async () => {
     const printer = await prisma.printer.create({ data: { name: 'P-batch', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F-batch', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F-batch', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const { product: productA, packagingItem: packagingA } = await createProductWithPackaging('Produto A', printer.id, filament.id, 1)
     const { product: productB, packagingItem: packagingB } = await createProductWithPackaging('Produto B', printer.id, filament.id, 2)
 

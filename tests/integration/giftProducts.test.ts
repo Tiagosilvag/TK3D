@@ -67,7 +67,7 @@ describe('createProduct/updateProduct com isGift=true', () => {
     // filamento cadastrados no sistema (qualquer um) -- mesmo que nunca
     // sejam lidos por nenhum cálculo/tela de Brinde.
     await prisma.printer.create({ data: { name: 'P1', purchasePrice: 1000, depreciationHours: 5000, avgPowerConsumptionKwh: 0.2 } })
-    await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
 
     const result = await createProduct(fd({
       name: 'Chaveiro Purga Reciclada',
@@ -109,7 +109,7 @@ describe('createProduct/updateProduct com isGift=true', () => {
 
   it('getGiftProductCostBreakdown soma material (custo livre) + acessório real + equipamento rateado', async () => {
     await prisma.printer.create({ data: { name: 'P1', purchasePrice: 1000, depreciationHours: 5000, avgPowerConsumptionKwh: 0.2 } })
-    await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const accessory = await createAccessoryWithStock()
 
     const created = await createProduct(fd({
@@ -140,7 +140,7 @@ describe('createProduct/updateProduct com isGift=true', () => {
 
   it('giftEnergyCostPerKwh nulo cai no fallback de Settings.energyCostPerKwh', async () => {
     await prisma.printer.create({ data: { name: 'P1', purchasePrice: 1000, depreciationHours: 5000, avgPowerConsumptionKwh: 0.2 } })
-    await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     await prisma.settings.update({ where: { id: 1 }, data: { energyCostPerKwh: 2 } })
 
     await createProduct(fd({
@@ -161,7 +161,7 @@ describe('createProduct/updateProduct com isGift=true', () => {
 
   it('updateProduct reconcilia materiais/equipamento/acessórios (delete-then-recreate)', async () => {
     await prisma.printer.create({ data: { name: 'P1', purchasePrice: 1000, depreciationHours: 5000, avgPowerConsumptionKwh: 0.2 } })
-    await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     await createProduct(fd({
       name: 'Brinde Editável',
       category: 'Chaveiro',
@@ -190,7 +190,7 @@ describe('createProduct/updateProduct com isGift=true', () => {
 
   it('getGiftProductOptions só lista produtos isGift=true ativos', async () => {
     await prisma.printer.create({ data: { name: 'P1', purchasePrice: 1000, depreciationHours: 5000, avgPowerConsumptionKwh: 0.2 } })
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const printer = await prisma.printer.findFirstOrThrow()
     await createProduct(fd({
       name: 'Brinde Listado',

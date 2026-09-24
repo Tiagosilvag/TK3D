@@ -34,8 +34,8 @@ function fd(obj: Record<string, string>): FormData {
 // filamento escolhido na Produção -- o "componente" do pedido do usuário.
 async function createMosquetao() {
   const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-  const azul = await prisma.filament.create({ data: { manufacturer: 'Voolt', material: 'PLA', colorName: 'Azul', colorHex: '#0000FF', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
-  const rosa = await prisma.filament.create({ data: { manufacturer: 'Voolt', material: 'PLA', colorName: 'Rosa', colorHex: '#FFC0CB', rollNumber: 2, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+  const azul = await prisma.filament.create({ data: { manufacturer: 'Voolt', material: 'PLA', colorName: 'Azul', colorHex: '#0000FF', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+  const rosa = await prisma.filament.create({ data: { manufacturer: 'Voolt', material: 'PLA', colorName: 'Rosa', colorHex: '#FFC0CB', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
   const mosquetao = await prisma.product.create({
     data: { name: 'Mosquetão', category: 'Chaveiro', printerId: printer.id, filamentId: azul.id, weightGrams: 3, printTimeHours: 0.2, laborTimeHours: 0 },
   })

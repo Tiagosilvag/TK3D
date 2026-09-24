@@ -7,7 +7,6 @@ import {
   calculateProductCost,
   calculateCompositeProductCost,
   calculatePrinterDepreciationCostPerHour,
-  calculateFilamentPricePerKg,
   calculateGiftProductCost,
   sumUsageCost,
   applyRounding,
@@ -425,10 +424,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
       quantityPerUnit: part.quantityPerUnit,
       filamentComponents: part.filamentComponents.map((c) => ({
         weightGrams: c.weightGrams.toNumber(),
-        filamentPricePerKg: calculateFilamentPricePerKg({
-          spoolPrice: c.filament.spoolPrice.toNumber(),
-          spoolWeightKg: c.filament.spoolWeightKg.toNumber(),
-        }),
+        filamentPricePerKg: c.filament.avgUnitCostPerGram.toNumber() * 1000,
       })),
       printTimeHours: part.printTimeHours.toNumber(),
       printerAvgPowerConsumptionKwh: part.printer.avgPowerConsumptionKwh.toNumber(),
@@ -472,10 +468,7 @@ export async function getProductCostBreakdown(productId: string): Promise<Produc
 
   const printerMaintenanceCostPerHour = product.printer.maintenanceCostPerHour.toNumber()
 
-  const filamentPricePerKg = calculateFilamentPricePerKg({
-    spoolPrice: product.filament.spoolPrice.toNumber(),
-    spoolWeightKg: product.filament.spoolWeightKg.toNumber(),
-  })
+  const filamentPricePerKg = product.filament.avgUnitCostPerGram.toNumber() * 1000
 
   return calculateProductCost(
     {
@@ -598,15 +591,14 @@ function filamentOptionLabel(f: {
   manufacturer: string
   colorName: string
   material: string
-  rollNumber: number
 }): string {
-  return `${f.manufacturer} ${f.colorName} (${f.material}) — Rolo #${String(f.rollNumber).padStart(3, '0')}`
+  return `${f.manufacturer} ${f.colorName} (${f.material})`
 }
 
-// Filament options for the product edit form's dropdown. Filtered to in-stock
-// rolls (currentStockGrams > 0), which is correct for picking a NEW filament
-// -- BUT if the product's *current* filament has since depleted to 0, it
-// won't be in that in-stock list. A plain
+// Filament options for the product edit form's dropdown. Filtered to
+// in-stock filaments (currentStockGrams > 0), which is correct for picking
+// a NEW filament -- BUT if the product's *current* filament has since
+// depleted to 0, it won't be in that in-stock list. A plain
 // <select defaultValue={product.filamentId}> whose defaultValue matches no
 // <option> makes the browser silently fall back to selecting the FIRST
 // option, so simply saving the form (with no changes intended) would
@@ -614,7 +606,7 @@ function filamentOptionLabel(f: {
 // informed choice instead, the depleted current filament (if any) is looked
 // up separately and returned as a clearly-labeled "(esgotado)" option, so
 // defaultValue always matches a real <option> and the user must actively
-// choose to keep it or pick a replacement roll.
+// choose to keep it or pick a replacement.
 export async function getEditableFilamentOptions(productId: string): Promise<{ id: string; name: string; pricePerGram: number; colorHex: string | null }[]> {
   const product = await prisma.product.findUniqueOrThrow({ where: { id: productId } })
   const inStock = await prisma.filament.findMany({
@@ -627,8 +619,7 @@ export async function getEditableFilamentOptions(productId: string): Promise<{ i
     ? null
     : await prisma.filament.findUnique({ where: { id: product.filamentId } })
 
-  const priceOf = (f: { spoolPrice: Prisma.Decimal; spoolWeightKg: Prisma.Decimal }) =>
-    calculateFilamentPricePerKg({ spoolPrice: f.spoolPrice.toNumber(), spoolWeightKg: f.spoolWeightKg.toNumber() }) / 1000
+  const priceOf = (f: { avgUnitCostPerGram: Prisma.Decimal }) => f.avgUnitCostPerGram.toNumber()
 
   return [
     ...(depletedCurrent ? [{ id: depletedCurrent.id, name: `${filamentOptionLabel(depletedCurrent)} (esgotado)`, pricePerGram: priceOf(depletedCurrent), colorHex: depletedCurrent.colorHex }] : []),

@@ -44,7 +44,7 @@ const mlPremiumTiers: PlatformFeeTier[] = [{ maxPrice: null, feePercent: 0.17, f
 
 async function createProduct(name = 'Chaveirinho') {
   const printer = await prisma.printer.create({ data: { name: `P-${name}`, purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
   return prisma.product.create({
     data: { name, category: 'Chaveiro', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 0.5, laborTimeHours: 0.1 },
   })

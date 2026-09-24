@@ -200,7 +200,7 @@ describe('deleteSupply', () => {
     const item = await prisma.supply.findFirstOrThrow({ where: { name: 'Insumo Referenciado' } })
 
     const printer = await prisma.printer.create({ data: { name: 'Impressora Teste Insumo', purchasePrice: 1000, depreciationHours: 5000, avgPowerConsumptionKwh: 0.2 } })
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const product = await prisma.product.create({ data: { name: 'Produto Teste Insumo', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0.1 } })
     await prisma.productSupplyUsage.create({ data: { productId: product.id, supplyId: item.id, quantity: 1 } })
 

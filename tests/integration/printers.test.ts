@@ -138,11 +138,7 @@ describe('printers actions', () => {
         material: 'PLA',
         colorName: 'Preto',
         colorHex: '#000000',
-        rollNumber: 1,
-        spoolPrice: 80,
-        spoolWeightKg: 1,
-        initialStockGrams: 1000,
-        currentStockGrams: 1000,
+        currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000,
       },
     })
     await prisma.product.create({

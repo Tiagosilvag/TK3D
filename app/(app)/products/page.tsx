@@ -1,7 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import {
   calculatePrinterDepreciationCostPerHour,
-  calculateFilamentPricePerGram,
   resolvePlatformPrice,
   type PlatformFeeTier,
   type ProductCostBreakdown,
@@ -114,8 +113,8 @@ export default async function ProductsPage() {
 
   const filamentOptions = filaments.map((f) => ({
     id: f.id,
-    name: `${f.manufacturer} ${f.colorName} (${f.material}) — Rolo #${String(f.rollNumber).padStart(3, '0')}`,
-    pricePerGram: calculateFilamentPricePerGram({ spoolPrice: f.spoolPrice.toNumber(), spoolWeightKg: f.spoolWeightKg.toNumber() }),
+    name: `${f.manufacturer} ${f.colorName} (${f.material})`,
+    pricePerGram: f.avgUnitCostPerGram.toNumber(),
     colorHex: f.colorHex,
   }))
 

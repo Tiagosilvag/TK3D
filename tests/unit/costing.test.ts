@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
   calculatePrinterDepreciationCostPerHour,
-  calculateFilamentPricePerKg,
-  calculateFilamentPricePerGram,
   calculateProductCost,
   calculateWasteCost,
   getStockStatus,
@@ -39,21 +37,6 @@ describe('calculatePrinterDepreciationCostPerHour (no maintenance folded in)', (
   })
   it('Anycubic Kobra X: 3600 / 10000h', () => {
     expect(calculatePrinterDepreciationCostPerHour({ purchasePrice: 3600, depreciationHours: 10000 })).toBeCloseTo(0.36, 4)
-  })
-})
-
-describe('calculateFilamentPricePerKg', () => {
-  it('Outro: 80/1kg', () => {
-    expect(calculateFilamentPricePerKg({ spoolPrice: 80, spoolWeightKg: 1 })).toBeCloseTo(80, 4)
-  })
-})
-
-describe('calculateFilamentPricePerGram', () => {
-  it('é o preço por kg dividido por 1000', () => {
-    expect(calculateFilamentPricePerGram({ spoolPrice: 80, spoolWeightKg: 1 })).toBeCloseTo(0.08, 5)
-  })
-  it('rolo de 1kg a R$120: R$0,12/g', () => {
-    expect(calculateFilamentPricePerGram({ spoolPrice: 120, spoolWeightKg: 1 })).toBeCloseTo(0.12, 5)
   })
 })
 

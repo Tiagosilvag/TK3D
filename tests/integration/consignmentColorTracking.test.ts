@@ -50,8 +50,8 @@ function fd(obj: Record<string, string>): FormData {
 // do app, verificado também ao vivo via Playwright durante a implementação.
 async function buildTwoColorProductScenario() {
   const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-  const filamentRosa = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Rosa', colorHex: '#ff69b4', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
-  const filamentAzul = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Azul', colorHex: '#3b82f6', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+  const filamentRosa = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Rosa', colorHex: '#ff69b4', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+  const filamentAzul = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Azul', colorHex: '#3b82f6', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
 
   const type = await prisma.accessoryTypeRecord.create({ data: { name: 'Corrente' } })
   const accessoryDourado = await prisma.accessory.create({ data: { name: 'Correntinha', type: type.id, colorName: 'Dourado', currentStock: 100, avgUnitCost: 0.5 } })

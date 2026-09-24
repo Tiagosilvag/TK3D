@@ -35,8 +35,8 @@ function fd(obj: Record<string, unknown>): FormData {
 
 async function buildSimpleProductScenario() {
   const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-  const filamentRosa = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Rosa', colorHex: '#ff69b4', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
-  const filamentAzul = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Azul', colorHex: '#3b82f6', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+  const filamentRosa = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Rosa', colorHex: '#ff69b4', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+  const filamentAzul = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Azul', colorHex: '#3b82f6', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
 
   const productA = await prisma.product.create({
     data: { name: 'Fidget', category: 'Chaveiro', printerId: printer.id, filamentId: filamentRosa.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0.1, suggestedPrice: 20 },
@@ -118,7 +118,7 @@ describe('getProductVariantStockOptions', () => {
 
   it('produto sem nenhuma produção não aparece com variantes', async () => {
     const printer = await prisma.printer.create({ data: { name: 'P2', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const product = await prisma.product.create({ data: { name: 'Nunca Produzido', category: 'Chaveiro', printerId: printer.id, filamentId: filament.id, weightGrams: 5, printTimeHours: 0.3, laborTimeHours: 0.02 } })
 
     const options = await getProductVariantStockOptions()

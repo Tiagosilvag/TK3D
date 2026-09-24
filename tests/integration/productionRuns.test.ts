@@ -39,7 +39,7 @@ function fd(obj: Record<string, string>): FormData {
 // createProductionRun/cancelProductionRun must touch.
 async function createSupportRecords() {
   const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
   const accessory = await prisma.accessory.create({ data: { name: 'Argola Dourada', type: 'OUTRO', colorName: '', currentStock: 100, avgUnitCost: 0.5 } })
   const supply = await prisma.supply.create({ data: { name: 'Cola Quente', unit: 'ML', currentStock: 50, avgUnitCost: 1.2 } })
   const packagingItem = await prisma.packagingItem.create({ data: { name: 'Saquinho', currentStock: 100, avgUnitCost: 0.3 } })
@@ -76,7 +76,7 @@ const baseRun = {
 // pure-function-tested buildProductionCostSnapshot cases).
 async function createMinimalSupportRecords() {
   const printer = await prisma.printer.create({ data: { name: 'P2', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-  const filament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Branco', colorHex: '#FFFFFF', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+  const filament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Branco', colorHex: '#FFFFFF', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
   const product = await prisma.product.create({
     data: {
       name: 'Peça simples',
@@ -612,7 +612,7 @@ describe('updateProductionRunPrinter (editar impressora depois de criar)', () =>
   it('bloqueia troca de impressora pra produção de Plate (impressora compartilhada por todas as peças)', async () => {
     const printerA = await prisma.printer.create({ data: { name: 'PA', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
     const printer2 = await createSecondPrinter()
-    const filamentA = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filamentA = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const productA = await prisma.product.create({ data: { name: 'Produto Plate', category: 'Chaveiro', printerId: printerA.id, filamentId: filamentA.id, weightGrams: 10, printTimeHours: 0.3, laborTimeHours: 0 } })
 
     const result = await createPlate(fd({

@@ -3,23 +3,16 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { getStockStatus } from '@/lib/costing'
-import { getStockStatusBadge } from '@/lib/format'
+import { formatCurrency, getStockStatusBadge } from '@/lib/format'
 import { StatusBadge } from '@/components/StatusBadge'
 import { AdjustStockButton } from '@/components/AdjustStockButton'
 import { ActionsMenu } from '@/components/ActionsMenu'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { deleteFilament } from '@/actions/filaments'
 import { FilamentForm, type EditingFilament } from './FilamentForm'
+import { RestockForm } from './RestockForm'
+import { FilamentHistoryButton, type FilamentPurchaseEntry, type FilamentAdjustmentEntry, type FilamentConsumptionEntry } from './FilamentHistoryButton'
 import type { FilamentMaterial } from '@prisma/client'
-
-export interface FilamentConsumptionEntry {
-  id: string
-  date: string
-  productName: string
-  partName: string | null
-  gramsUsed: number
-  gramsWasted: number
-}
 
 export interface FilamentRow {
   id: string
@@ -27,17 +20,13 @@ export interface FilamentRow {
   material: FilamentMaterial
   colorName: string
   colorHex: string
-  rollNumber: number
   currentStockGrams: number
-  spoolPrice: number
-  spoolWeightKg: number
-  percentRemaining: number
   pricePerGram: number
+  lastPricePerKg: number | null
+  percentRemaining: number
+  purchases: FilamentPurchaseEntry[]
+  adjustments: FilamentAdjustmentEntry[]
   consumptionHistory: FilamentConsumptionEntry[]
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('pt-BR')
 }
 
 const MATERIAL_OPTIONS: { value: FilamentMaterial | ''; label: string }[] = [
@@ -91,6 +80,12 @@ function SortHeader({ label, active, dir, onClick, center }: { label: string; ac
 // e não pede nenhuma lib nova. `editingFilament` é a ÚNICA parte que
 // continua vindo do servidor via ?editId= (padrão `?editId=` do app,
 // CLAUDE.md) -- abre o modal sozinho quando a página chega com esse param.
+//
+// Melhoria "Estoque de filamento por custo médio ponderado": não existe
+// mais "rolo" -- 1 linha por marca+material+cor, "Repor estoque" e
+// "Histórico" (agora modal, disponível pra esgotados também -- ver
+// FilamentHistoryButton) saem do corpo da tabela pro menu de ações (⋯),
+// mesmo padrão de AccessoriesExplorer.
 export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow[]; editingFilament?: EditingFilament }) {
   const router = useRouter()
   const [search, setSearch] = useState('')
@@ -101,15 +96,10 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [modalOpen, setModalOpen] = useState(false)
   const [modalTarget, setModalTarget] = useState<EditingFilament | undefined>(undefined)
-  // Melhoria "Repor estoque em Filamentos": estado separado de modalTarget
-  // (edição) -- só um dos dois fica setado por vez, controla qual modo o
-  // FilamentForm abre em (ver comentário lá).
-  const [restockTarget, setRestockTarget] = useState<EditingFilament | undefined>(undefined)
 
   useEffect(() => {
     if (editingFilament) {
       setModalTarget(editingFilament)
-      setRestockTarget(undefined)
       setModalOpen(true)
     }
   }, [editingFilament])
@@ -123,13 +113,6 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
 
   function openNew() {
     setModalTarget(undefined)
-    setRestockTarget(undefined)
-    setModalOpen(true)
-  }
-
-  function openRestock(row: FilamentRow) {
-    setModalTarget(undefined)
-    setRestockTarget(row)
     setModalOpen(true)
   }
 
@@ -221,6 +204,7 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
             <th>Material</th>
             <th className="text-center"><SortHeader label="Estoque" active={sortKey === 'percentRemaining'} dir={sortDir} onClick={() => toggleSort('percentRemaining')} center /></th>
             <th className="text-center"><SortHeader label="R$/g" active={sortKey === 'pricePerGram'} dir={sortDir} onClick={() => toggleSort('pricePerGram')} center /></th>
+            <th className="text-center">Último valor pago</th>
             <th>Status</th>
             <th></th>
           </tr>
@@ -238,7 +222,7 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
                   />
                 </td>
                 <td className="py-3 font-medium text-slate-900 dark:text-slate-100">
-                  {r.manufacturer} {r.colorName} — Rolo #{String(r.rollNumber).padStart(3, '0')}
+                  {r.manufacturer} {r.colorName}
                 </td>
                 <td className="text-slate-500 dark:text-slate-400">{r.material}</td>
                 <td title={`${r.currentStockGrams}g restantes`}>
@@ -261,51 +245,31 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
                     `R$ ${r.pricePerGram.toFixed(4)}`
                   )}
                 </td>
+                <td className="text-center text-slate-500 dark:text-slate-400">
+                  {r.lastPricePerKg !== null ? `${formatCurrency(r.lastPricePerKg)}/kg` : '—'}
+                </td>
                 <td><StatusBadge badge={getStockStatusBadge(status)} /></td>
                 <td>
-                  <div className="flex flex-col items-start gap-1">
-                    {r.consumptionHistory.length > 0 && (
-                      <details>
-                        <summary className="tk-summary">Histórico de consumo ({r.consumptionHistory.length})</summary>
-                        <table className="mt-2 text-xs">
-                          <thead>
-                            <tr className="tk-table-head-row">
-                              <th className="pr-2">Data</th>
-                              <th className="pr-2">Produto</th>
-                              <th className="pr-2">Usado</th>
-                              <th>Desperdiçado</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {r.consumptionHistory.map((h) => (
-                              <tr key={h.id} className="tk-row">
-                                <td className="pr-2">{formatDate(h.date)}</td>
-                                <td className="pr-2">{h.productName}{h.partName ? ` — ${h.partName}` : ''}</td>
-                                <td className="pr-2">-{h.gramsUsed}g</td>
-                                <td>{h.gramsWasted}g</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </details>
-                    )}
-                    <ActionsMenu>
-                      <Link href={`/filaments?editId=${r.id}`} className="tk-menu-item">
-                        Editar
-                      </Link>
-                      <button type="button" onClick={() => openRestock(r)} className="tk-menu-item">
-                        Repor estoque
-                      </button>
-                      <AdjustStockButton
-                        resourceType="FILAMENT"
-                        resourceId={r.id}
-                        resourceName={`${r.manufacturer} ${r.colorName}`}
-                        currentQuantity={r.currentStockGrams}
-                        unitLabel="g"
-                      />
-                      <ConfirmDeleteForm action={async () => { return await deleteFilament(r.id) }} className="tk-menu-item-danger" />
-                    </ActionsMenu>
-                  </div>
+                  <ActionsMenu>
+                    <Link href={`/filaments?editId=${r.id}`} className="tk-menu-item">
+                      Editar
+                    </Link>
+                    <RestockForm filamentId={r.id} filamentName={`${r.manufacturer} ${r.colorName}`} className="tk-menu-item" />
+                    <FilamentHistoryButton
+                      filamentName={`${r.manufacturer} ${r.colorName}`}
+                      purchases={r.purchases}
+                      adjustments={r.adjustments}
+                      consumptionHistory={r.consumptionHistory}
+                    />
+                    <AdjustStockButton
+                      resourceType="FILAMENT"
+                      resourceId={r.id}
+                      resourceName={`${r.manufacturer} ${r.colorName}`}
+                      currentQuantity={r.currentStockGrams}
+                      unitLabel="g"
+                    />
+                    <ConfirmDeleteForm action={async () => { return await deleteFilament(r.id) }} className="tk-menu-item-danger" />
+                  </ActionsMenu>
                 </td>
               </tr>
             )
@@ -320,11 +284,10 @@ export function FilamentsExplorer({ rows, editingFilament }: { rows: FilamentRow
       )}
 
       <FilamentForm
-        key={modalTarget ? `edit-${modalTarget.id}` : restockTarget ? `restock-${restockTarget.id}` : 'new'}
+        key={modalTarget?.id ?? 'new'}
         open={modalOpen}
         onOpenChange={(open) => (open ? setModalOpen(true) : closeModal())}
         editingFilament={modalTarget}
-        restockFrom={restockTarget}
       />
     </div>
   )

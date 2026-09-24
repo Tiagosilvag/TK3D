@@ -69,7 +69,7 @@ const mlTiers: PlatformFeeTier[] = [
 
 async function createCheapProduct() {
   const printer = await prisma.printer.create({ data: { name: 'P-barato', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
   return prisma.product.create({
     data: {
       name: 'Chaveirinho',
@@ -85,7 +85,7 @@ async function createCheapProduct() {
 
 async function createExpensiveProduct() {
   const printer = await prisma.printer.create({ data: { name: 'P-caro', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 5000, currentStockGrams: 5000 } })
+  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 5000, avgUnitCostPerGram: 80 / 5000 } })
   return prisma.product.create({
     data: {
       name: 'Peça grande',

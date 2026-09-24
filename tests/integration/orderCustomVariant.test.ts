@@ -38,8 +38,8 @@ function fd(obj: Record<string, string>): FormData {
 // cadastrado, sem receita fixa.
 async function createCompositeProduct() {
   const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-  const vermelho = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Vermelho', colorHex: '#ff0000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
-  const azul = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Azul', colorHex: '#0000ff', rollNumber: 2, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+  const vermelho = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Vermelho', colorHex: '#ff0000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+  const azul = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Azul', colorHex: '#0000ff', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
 
   const product = await prisma.product.create({
     data: { name: 'ZZ Boneco', category: 'Decoração', isComposite: true, printerId: printer.id, filamentId: vermelho.id, weightGrams: 0, printTimeHours: 0, laborTimeHours: 0 },

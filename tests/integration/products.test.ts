@@ -60,7 +60,7 @@ describe('products actions', () => {
     // 3600*0.10/2000=0.18 R$/h), pra manter o suggestedPrice esperado
     // abaixo idêntico ao de antes da mudança.
     const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27, energyCostPerKwh: 1, maintenanceCostPerHour: 0.18 } })
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     // Matches the costing.test.ts fixture exactly (suppliesCost: 0.3, packagingCost: 0,
     // accessoryCost: 0): depreciation 3600/10000=0.36 R$/h, maintenance 0.18 R$/h
     // (both from the printer above). suggestedPrice (15.004) is reproduced here
@@ -93,7 +93,7 @@ describe('products actions', () => {
   })
 
   it('rejeita produto sem impressora selecionada', async () => {
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const result = await createProduct(fd({
       name: 'Sem Impressora',
       category: 'Chaveiro',
@@ -110,7 +110,7 @@ describe('products actions', () => {
 
   it('atualiza e depois remove (soft-delete)', async () => {
     const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
 
     const created = await createProduct(fd({
       name: 'Produto Original',
@@ -149,7 +149,7 @@ describe('products actions', () => {
   it('inclui custo de insumos, embalagem e acessórios (lista) no breakdown', async () => {
     await prisma.settings.create({ data: { id: 1 } })
     const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const packagingItem = await prisma.packagingItem.create({ data: { name: 'Saquinho', currentStock: 100, avgUnitCost: 0.1 } })
     // 2 accessories (spec §2, task-5 brief: accessoryId single-FK generalized
     // into a ProductAccessoryUsage list) -- proves the new summing logic
@@ -225,7 +225,7 @@ describe('products actions', () => {
   it('rejeita quantidade não positiva ao adicionar acessório e upsert atualiza a quantidade da mesma linha', async () => {
     await prisma.settings.create({ data: { id: 1 } })
     const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
     const accessory = await prisma.accessory.create({ data: { name: 'Mosquetão', type: 'MOSQUETAO', colorName: '', currentStock: 10, avgUnitCost: 0.3 } })
 
     const created = await createProduct(fd({
@@ -257,8 +257,8 @@ describe('products actions', () => {
 
   it('mantém o filamento esgotado do produto como opção selecionável (rotulado) no dropdown de edição', async () => {
     const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-    const depletedFilament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
-    const replacementFilament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Branco', colorHex: '#FFFFFF', rollNumber: 2, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const depletedFilament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+    const replacementFilament = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Branco', colorHex: '#FFFFFF', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
 
     const created = await createProduct(fd({
       name: 'Produto Com Filamento Esgotável',
@@ -301,7 +301,7 @@ describe('products actions', () => {
       // tests that don't care about rounding are unaffected.
       await prisma.settings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } })
       const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-      const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+      const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
       const created = await createProduct(fd({
         name: 'Produto Preço',
         category: 'Chaveiro',
@@ -382,7 +382,7 @@ describe('products actions', () => {
 
   it('não duplica o filamento atual no dropdown de edição quando ele ainda está em estoque', async () => {
     const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
-    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+    const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
 
     const created = await createProduct(fd({
       name: 'Produto Com Filamento Em Estoque',

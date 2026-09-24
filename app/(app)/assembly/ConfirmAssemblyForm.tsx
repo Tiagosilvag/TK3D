@@ -472,8 +472,8 @@ export function ConfirmAssemblyForm({
                   )}
                   <span className="shrink-0 text-slate-500 dark:text-slate-400">{item.name}</span>
                   {/* Bug "nome sem quebra de linha": combo de peça multi-filamento
-                      (ex. "MULTIFILA PRETO — Rolo #001 + MASTERPRINT BRANCO —
-                      Rolo #001") é bem mais longo que uma cor só -- `shrink-0
+                      (ex. "MULTIFILA PRETO + MASTERPRINT BRANCO") é bem mais
+                      longo que uma cor só -- `shrink-0
                       truncate` antes travava esse valor no tamanho do próprio
                       conteúdo (shrink-0 nunca deixa truncate ativar de verdade),
                       empurrando a ficha inteira pra fora e criando barra de

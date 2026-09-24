@@ -79,15 +79,8 @@ export function FilamentSelect({
 
   const selected = options.find((o) => o.id === value) ?? null
   const term = search.trim().toLowerCase()
-  // Bug "busca não filtra nada": o `name` de cada opção é montado como
-  // "Marca Cor (Material) — Rolo #001" (às vezes com "(Xg restantes)" no
-  // final, ver production/page.tsx) -- TODO rolo tem "Rolo" no nome, então
-  // buscar "ro" batia em praticamente toda a lista por causa dessa parte
-  // fixa, não da marca/cor de verdade. Corta tudo a partir de "— Rolo #"
-  // antes de comparar, então o termo só compara contra a parte que
-  // realmente varia de opção pra opção.
   const visible = term
-    ? options.filter((o) => o.name.split(' — Rolo #')[0].toLowerCase().includes(term))
+    ? options.filter((o) => o.name.toLowerCase().includes(term))
     : options
 
   function openPicker() {
