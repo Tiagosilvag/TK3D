@@ -10,7 +10,7 @@ import { buildSaleCostSnapshot } from '@/lib/costing'
 import { productNeedsAssembly } from '@/lib/products'
 import { getAssemblyStatus, type AssemblyPartColorOption } from '@/actions/assembly'
 import { serializeColorChoices, deserializeColorChoices } from '@/lib/reports'
-import { reconcileOrderReservations, type OrderReallocationEvent } from '@/lib/orderReservations'
+import { reconcileOrderReservations, reconcileAllPendingOrders, type OrderReallocationEvent } from '@/lib/orderReservations'
 import { revalidatePath } from 'next/cache'
 import type { Prisma, OrderChannel, OrderStatus, SaleChannel } from '@prisma/client'
 
@@ -464,4 +464,19 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
   }
 
   return { productionRows, assemblyRows }
+}
+
+// Bug "pedido antigo fica travado mostrando falta produzir pra sempre":
+// botão manual (DemandQueuePanel) pra varrer e reconciliar TODO pedido
+// pendente de uma vez -- corrige pedidos cuja reconciliação deveria ter
+// rodado num evento passado mas ficou pra trás (ex.: criados antes de um
+// fix de escopo de reconciliação), sem precisar esperar outro evento do
+// mesmo produto+combo disparar por acaso.
+export async function syncOrderReservations(): Promise<ActionResult> {
+  await reconcileAllPendingOrders()
+  revalidatePath('/orders')
+  revalidatePath('/production')
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
+  return { success: true }
 }

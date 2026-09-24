@@ -227,3 +227,26 @@ export async function reconcileOrderReservations(
 
   return events
 }
+
+// Bug "pedido antigo fica travado mostrando falta produzir pra sempre":
+// reconcileOrderReservations só roda quando ALGO dispara ela (criar
+// produção, montar, criar/cancelar/excluir pedido) -- um pedido cuja
+// reconciliação deveria ter rodado num evento passado (ex.: criado antes
+// de um fix de escopo de reconciliação, como o de confirmAssembly/
+// maybeReconcileAfterProduction) fica com reservedQuantity desatualizado
+// pra sempre, até por acaso outro evento do MESMO produto+combo disparar
+// de novo -- nada re-sincroniza pedidos "esquecidos" sozinho. Botão
+// manual "Recalcular pedidos" (DemandQueuePanel) chama isto pra varrer
+// TODO (productId, colorComboKey) com pedido pendente e reconciliar cada
+// um -- barato/idempotente quando nada mudou, mesma garantia de
+// reconcileOrderReservations.
+export async function reconcileAllPendingOrders(): Promise<void> {
+  const pending = await prisma.order.findMany({
+    where: { status: { notIn: TERMINAL_STATUSES } },
+    select: { productId: true, colorComboKey: true },
+    distinct: ['productId', 'colorComboKey'],
+  })
+  for (const { productId, colorComboKey } of pending) {
+    await reconcileOrderReservations(productId, colorComboKey)
+  }
+}
