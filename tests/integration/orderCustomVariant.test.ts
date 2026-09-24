@@ -230,3 +230,58 @@ describe('getOrderDemandQueue -- isolamento por cor entre pedidos do mesmo produ
     }
   })
 })
+
+// Bug "pedido genérico não migra sozinho mesmo com peça pronta montada":
+// confirmAssembly só reconciliava o colorComboKey EXATO recém-montado --
+// um pedido sem cor específica (colorComboKey null, a maioria dos
+// pedidos, já que "variação personalizada" é opt-in) nunca era
+// reconciliado por uma montagem de cor específica, mesmo sobrando estoque
+// pronto suficiente pra ele. Ficava preso mostrando "falta produzir" peça
+// por peça pra sempre, mesmo com uma unidade inteira pronta em Meu
+// Estoque. Fix: confirmAssembly reconcilia TODO colorComboKey pendente do
+// produto (mesmo padrão já usado em maybeReconcileAfterProduction).
+describe('confirmAssembly reconcilia pedido genérico (sem cor específica)', () => {
+  it('pedido sem cor específica vira Pronto — reservado assim que QUALQUER combo é montado', async () => {
+    const { product, cabeca, corpo, printer, azul } = await createCompositeProduct()
+
+    // Pedido genérico, criado ANTES de qualquer peça existir -- nasce
+    // Aguardando produção, sem colorComboKey nenhum.
+    const orderResult = await createOrder(fd({
+      productId: product.id,
+      channel: 'DIRETA',
+      quantity: '1',
+      unitPrice: '30',
+      orderDate: '2026-09-01',
+      deliveryDate: '2026-09-20',
+    }))
+    expect(orderResult.success).toBe(true)
+    const genericOrder = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
+    expect(genericOrder.colorComboKey).toBeNull()
+    expect(genericOrder.status).toBe('AGUARDANDO_PRODUCAO')
+
+    // Produz e monta 1 unidade inteira numa cor ESPECÍFICA (azul) -- o
+    // pedido genérico não pediu cor nenhuma, então deveria aceitar
+    // qualquer uma.
+    await producePart(product.id, cabeca.id, printer.id, azul.id, 1)
+    await producePart(product.id, corpo.id, printer.id, azul.id, 1)
+    const assemble = await confirmAssembly(fd({
+      productId: product.id,
+      quantity: '1',
+      notes: '',
+      colorChoicesJson: JSON.stringify({ [cabeca.id]: azul.id, [corpo.id]: azul.id }),
+      accessoryUsagesJson: '[]',
+      supplyUsagesJson: '[]',
+    }))
+    expect(assemble.success).toBe(true)
+
+    const refreshed = await prisma.order.findUniqueOrThrow({ where: { id: genericOrder.id } })
+    expect(refreshed.status).toBe('PRONTO_RESERVADO')
+    expect(refreshed.reservedQuantity).toBe(1)
+
+    // A fila de demanda de Produção não deve mais pedir peça nenhuma pra
+    // este pedido -- já está totalmente coberto pela unidade pronta.
+    const queue = await getOrderDemandQueue()
+    expect(queue.productionRows.some((r) => r.orderId === genericOrder.id)).toBe(false)
+    expect(queue.assemblyRows.some((r) => r.orderId === genericOrder.id)).toBe(false)
+  })
+})

@@ -978,13 +978,29 @@ export async function confirmAssembly(formData: FormData): Promise<ActionResult>
 
   // Melhoria "Pedidos com reserva de estoque": produto que precisa de
   // montagem só vira estoque vendável de verdade AQUI (não na
-  // ProductionRun da peça) -- reconcilia a variação recém-montada pra
-  // dar a pedido pendente que esteja esperando. colorComboKey usa a
-  // MESMA serialização que getProductVariantBreakdown grava (é o que o
-  // seletor de variação de Pedidos também usa), null quando a montagem
-  // não tem cor variável nenhuma associada.
-  const assembledComboKey = Object.keys(colorChoicesToStore).length > 0 ? serializeColorChoices(colorChoicesToStore) : null
-  await reconcileOrderReservations(productId, assembledComboKey)
+  // ProductionRun da peça) -- reconcilia pra dar a pedido pendente que
+  // esteja esperando.
+  //
+  // Bug "pedido genérico não migra sozinho mesmo com peça pronta montada":
+  // reconciliar só o combo recém-montado (colorComboKey exato) nunca batia
+  // com um pedido SEM cor específica (colorComboKey null -- a maioria dos
+  // pedidos, já que "variação personalizada" é opt-in). reconcileOrderReservations
+  // filtra por IGUALDADE exata de colorComboKey, então um pedido genérico
+  // nunca era reconciliado por uma montagem de cor específica, mesmo
+  // sobrando estoque pronto suficiente pra ele -- ficava preso mostrando
+  // "falta produzir" peça por peça pra sempre, já consumida na montagem que
+  // ninguém nunca contou pra ele. Mesmo fix já aplicado em
+  // maybeReconcileAfterProduction (actions/productionRuns.ts): reconcilia
+  // TODO colorComboKey pendente deste produto, não só o que acabou de ser
+  // montado -- barato/idempotente quando nada mudou pra um combo.
+  const pendingCombos = await prisma.order.findMany({
+    where: { productId, status: { notIn: ['ENTREGUE', 'CANCELADO'] } },
+    select: { colorComboKey: true },
+    distinct: ['colorComboKey'],
+  })
+  for (const { colorComboKey } of pendingCombos) {
+    await reconcileOrderReservations(productId, colorComboKey)
+  }
 
   revalidatePath('/assembly')
   revalidatePath('/stock')
