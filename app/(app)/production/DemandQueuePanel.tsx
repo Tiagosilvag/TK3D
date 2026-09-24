@@ -29,7 +29,11 @@ export function DemandQueuePanel({ rows }: { rows: OrderDemandRow[] }) {
           const deadline = getDeadlineBadge(new Date(row.deliveryDate), row.status)
           const isPartial = row.reservedQuantity > 0
           return (
-            <div key={i} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
+            <div
+              key={i}
+              title={`orderId=${row.orderId} partId=${row.partId ?? ''} colorComboKey=${row.colorComboKey ?? ''}`}
+              className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700"
+            >
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
                   {row.productName}{row.partName && <span className="text-slate-500 dark:text-slate-400"> — Peça: {row.partName}</span>}
