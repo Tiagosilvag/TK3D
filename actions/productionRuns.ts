@@ -29,18 +29,28 @@ import { reconcileOrderReservations } from '@/lib/orderReservations'
 // "Excluir" de /stock pra "sinalizar quais peças ficaram incompletas".
 type ActionResult = { success: boolean; error?: string; reversedFrom?: { productName: string; unitsReversed: number }[] }
 
-// Melhoria "Pedidos com reserva de estoque": ProductionRun de uma PEÇA
-// (productPartId presente) nunca vira estoque vendável sozinha -- quem
-// reconcilia é confirmAssembly, não aqui. ProductionRun DIRETA do produto
-// (productPartId nulo) só é estoque vendável de verdade quando o produto
-// não precisa de montagem nenhuma (sem insumo/acessório/componente
-// cadastrado, ver productNeedsAssembly) -- produto simples-com-acessório
-// também usa productPartId nulo mas ainda passa por confirmAssembly antes
-// de virar estoque, então reconcilia só no caso realmente direto.
-// colorComboKey = filamentId (produto simples de 1 filamento -- mesma
-// convenção de getProductVariantBreakdown pra produto sem montagem).
-async function maybeReconcileAfterProduction(productId: string, productPartId: string | null, filamentId: string): Promise<void> {
-  if (productPartId) return
+// Bug "pedido não migra sozinho pra Aguardando montagem": produzir uma
+// PEÇA de um produto composto (ou a "peça sintética" de um produto simples
+// com insumo/acessório, productPartId nulo mas needsAssembly true) nunca
+// chamava reconcileOrderReservations -- só confirmAssembly (montagem de
+// verdade) reconciliava esses casos. Só que AGUARDANDO_MONTAGEM
+// (computeOrderStatus, lib/orderReservations.ts) é decidido por
+// `maxAssemblableUnits > 0`, ou seja, é pra acontecer assim que peça SOLTA
+// suficiente existir, ANTES da montagem física -- sem essa chamada, o
+// pedido ficava travado em Aguardando produção até algum OUTRO evento de
+// pedido (criar/cancelar/excluir outro pedido do mesmo produto) disparar
+// reconcileOrderReservations por acaso.
+//
+// ProductionRun DIRETA do produto (productPartId nulo) só é estoque
+// vendável de verdade quando o produto não precisa de montagem nenhuma
+// (sem insumo/acessório/componente cadastrado, ver productNeedsAssembly)
+// -- aí colorComboKey = filamentId direto (produto simples de 1 filamento,
+// mesma convenção de getProductVariantBreakdown). Quando precisa de
+// montagem, uma peça produzida não decide sozinha qual COMBINAÇÃO de cor
+// fica pronta pra montar (depende de todas as peças daquela combinação) --
+// reconcilia todo colorComboKey pendente deste produto (reconcileOrderReservations
+// é barato/idempotente quando nada mudou pra aquele combo).
+async function maybeReconcileAfterProduction(productId: string, filamentId: string): Promise<void> {
   const product = await prisma.product.findUnique({
     where: { id: productId },
     include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
@@ -52,8 +62,18 @@ async function maybeReconcileAfterProduction(productId: string, productPartId: s
     supplyUsagesCount: product._count.supplyUsages,
     componentUsagesCount: product._count.componentUsages,
   })
-  if (needsAssembly) return
-  await reconcileOrderReservations(productId, filamentId)
+  if (!needsAssembly) {
+    await reconcileOrderReservations(productId, filamentId)
+    return
+  }
+  const pendingCombos = await prisma.order.findMany({
+    where: { productId, status: { notIn: ['ENTREGUE', 'CANCELADO'] } },
+    select: { colorComboKey: true },
+    distinct: ['colorComboKey'],
+  })
+  for (const { colorComboKey } of pendingCombos) {
+    await reconcileOrderReservations(productId, colorComboKey)
+  }
 }
 
 // Ajuste "peça multi-filamento": quando a peça produzida tem >1 componente
@@ -406,7 +426,7 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
   if (!result.success) return result
 
   await prisma.$transaction(result.ops)
-  await maybeReconcileAfterProduction(data.productId, data.productPartId ?? null, data.filamentId)
+  await maybeReconcileAfterProduction(data.productId, data.filamentId)
 
   revalidatePath('/production')
   revalidatePath('/filaments')
@@ -453,7 +473,11 @@ export async function createProductionRunBatch(formData: FormData): Promise<Acti
   const batchId = randomUUID()
   const allOps: Prisma.PrismaPromise<unknown>[] = []
   const reservedGramsByFilament = new Map<string, number>()
-  const directFilamentIds = new Set<string>()
+  // Bug "pedido não migra sozinho pra Aguardando montagem" (ver comentário
+  // de maybeReconcileAfterProduction acima): reconcilia pra TODO filamento
+  // usado no lote, não só os de item sem productPartId -- uma peça de
+  // produto composto também precisa disparar a reconciliação.
+  const usedFilamentIds = new Set<string>()
 
   for (const item of parsed.data.items) {
     // "Falhas (auto)" (spec §3): nunca confiado do cliente -- sempre
@@ -496,12 +520,12 @@ export async function createProductionRunBatch(formData: FormData): Promise<Acti
     )
     if (!result.success) return result
     allOps.push(...result.ops)
-    if (!item.productPartId) directFilamentIds.add(first.filamentId)
+    usedFilamentIds.add(first.filamentId)
   }
 
   await prisma.$transaction(allOps)
-  for (const filamentId of directFilamentIds) {
-    await maybeReconcileAfterProduction(parsed.data.productId, null, filamentId)
+  for (const filamentId of usedFilamentIds) {
+    await maybeReconcileAfterProduction(parsed.data.productId, filamentId)
   }
 
   revalidatePath('/production')
@@ -618,14 +642,18 @@ export async function createPlate(formData: FormData): Promise<ActionResult> {
     ...(printerCaptureId ? [prisma.printerCapture.update({ where: { id: printerCaptureId }, data: { linkedPlateId: plateId } })] : []),
   ])
 
-  const directPairs = new Set<string>()
+  // Bug "pedido não migra sozinho pra Aguardando montagem" (ver comentário
+  // de maybeReconcileAfterProduction acima): reconcilia todo par produto/
+  // filamento usado na Plate, não só os itens sem productPartId -- uma
+  // Plate mistura peças de produtos DIFERENTES (REGRA 9), cada uma
+  // podendo destravar Aguardando montagem do seu próprio produto.
+  const usedPairs = new Set<string>()
   for (const item of parsed.data.items) {
-    if (item.productPartId) continue
-    directPairs.add(`${item.productId}::${item.filaments[0].filamentId}`)
+    usedPairs.add(`${item.productId}::${item.filaments[0].filamentId}`)
   }
-  for (const pair of directPairs) {
+  for (const pair of usedPairs) {
     const [prodId, filId] = pair.split('::')
-    await maybeReconcileAfterProduction(prodId, null, filId)
+    await maybeReconcileAfterProduction(prodId, filId)
   }
 
   revalidatePath('/production')

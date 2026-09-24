@@ -8,7 +8,10 @@ const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL }
 async function cleanup() {
   await prisma.orderReallocation.deleteMany()
   await prisma.order.deleteMany()
+  await prisma.productAssembly.deleteMany()
   await prisma.productionRun.deleteMany()
+  await prisma.productPartFilament.deleteMany()
+  await prisma.productPart.deleteMany()
   await prisma.product.deleteMany()
   await prisma.printer.deleteMany()
   await prisma.filament.deleteMany()
@@ -195,5 +198,68 @@ describe('reconcileOrderReservations (via createOrder)', () => {
     const refreshed = await prisma.order.findUniqueOrThrow({ where: { id: order.id } })
     expect(refreshed.status).toBe('PRONTO_RESERVADO')
     expect(refreshed.reservedQuantity).toBe(3)
+  })
+})
+
+// Bug real relatado em produção (23-24/09): produto composto de várias
+// peças -- registrar produção de uma peça (productPartId presente) nunca
+// chamava reconcileOrderReservations (só confirmAssembly chamava), então
+// um pedido ficava travado em AGUARDANDO_PRODUCAO mesmo depois de TODAS as
+// peças necessárias já existirem soltas, esperando montagem -- só uma
+// reconciliação por acaso (outro pedido criado/cancelado do mesmo
+// produto) destravava. maybeReconcileAfterProduction (actions/
+// productionRuns.ts) corrigido pra reconciliar também nesse caso.
+async function createCompositeSupportRecords() {
+  const printer = await prisma.printer.create({ data: { name: 'P1', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+  const filament = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Rosa', colorHex: '#ff69b4', rollNumber: 1, spoolPrice: 80, spoolWeightKg: 1, initialStockGrams: 1000, currentStockGrams: 1000 } })
+  const product = await prisma.product.create({
+    data: { name: 'Amigurumi', category: 'Crochê', isComposite: true, printerId: printer.id, filamentId: filament.id, weightGrams: 0, printTimeHours: 0, laborTimeHours: 0.5 },
+  })
+  const parts: Record<string, { id: string }> = {}
+  for (const name of ['CORPO', 'PÉS', 'OLHOS']) {
+    parts[name] = await prisma.productPart.create({
+      data: { productId: product.id, name, printerId: printer.id, printTimeHours: 0.3, quantityPerUnit: 1, filamentComponents: { create: [{ filamentId: filament.id, weightGrams: 5 }] } },
+    })
+  }
+  return { printer, filament, product, parts }
+}
+
+async function producePart(productId: string, partId: string, printerId: string, filamentId: string, quantitySuccess: string) {
+  return createProductionRun(fd({
+    productId,
+    productPartId: partId,
+    printerId,
+    filamentId,
+    date: '2026-09-01',
+    quantityPlanned: quantitySuccess,
+    quantitySuccess,
+    quantityFailed: '0',
+    gramsUsed: '5',
+    gramsWasted: '0',
+    timeWastedHours: '0',
+  }))
+}
+
+describe('reconcileOrderReservations dispara sozinho ao produzir PEÇA de produto composto', () => {
+  it('pedido migra pra Aguardando montagem assim que a última peça necessária é produzida, sem nenhum outro evento de pedido', async () => {
+    const { printer, filament, product, parts } = await createCompositeSupportRecords()
+
+    // 2 das 3 peças já produzidas ANTES do pedido existir.
+    await producePart(product.id, parts['PÉS'].id, printer.id, filament.id, '1')
+    await producePart(product.id, parts['OLHOS'].id, printer.id, filament.id, '1')
+
+    const orderResult = await createOrder(orderFd({ productId: product.id, quantity: '1' }))
+    expect(orderResult.success).toBe(true)
+    const order = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
+    expect(order.status).toBe('AGUARDANDO_PRODUCAO')
+
+    // Produz a última peça que faltava -- nenhuma referência ao pedido
+    // aqui, mesmo padrão de "Registrar produção" na tela de Produção.
+    const productionResult = await producePart(product.id, parts['CORPO'].id, printer.id, filament.id, '1')
+    expect(productionResult.success).toBe(true)
+
+    const refreshed = await prisma.order.findUniqueOrThrow({ where: { id: order.id } })
+    expect(refreshed.status).toBe('AGUARDANDO_MONTAGEM')
+    expect(refreshed.reservedQuantity).toBe(0)
   })
 })
