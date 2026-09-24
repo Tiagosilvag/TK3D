@@ -90,6 +90,23 @@ describe('reconcileOrderReservations (via createOrder)', () => {
     expect(order.reservedQuantity).toBe(3)
   })
 
+  it('bug "string vazia trava reserva pra sempre": colorComboKey="" (select sempre presente no form, mesmo sem cor escolhida) grava null e reserva normalmente', async () => {
+    const { product, printer, filament } = await createSupportRecords()
+    await produce(product.id, printer.id, filament.id, '3')
+
+    // OrderForm.tsx sempre manda o campo colorComboKey no FormData (mesmo
+    // "" quando o comprador não escolheu cor nenhuma) -- criar o pedido
+    // com "" explícito reproduz exatamente esse caso, em vez de omitir o
+    // campo (que o zod trataria como undefined, nunca reproduziu o bug).
+    const result = await createOrder(orderFd({ productId: product.id, colorComboKey: '', quantity: '3' }))
+    expect(result.success).toBe(true)
+
+    const order = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
+    expect(order.colorComboKey).toBeNull()
+    expect(order.status).toBe('PRONTO_RESERVADO')
+    expect(order.reservedQuantity).toBe(3)
+  })
+
   it('pedido com estoque parcial reserva o que existe e vira Parcial — aguardando produção', async () => {
     const { product, printer, filament } = await createSupportRecords()
     await produce(product.id, printer.id, filament.id, '1')

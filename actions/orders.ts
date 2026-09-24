@@ -20,7 +20,22 @@ function parse(formData: FormData, colorComboKeyOverride?: string) {
   const raw = Object.fromEntries(formData)
   return orderSchema.safeParse({
     ...raw,
-    colorComboKey: colorComboKeyOverride ?? raw.colorComboKey ?? null,
+    // Bug "pedido genérico fica travado em falta produzir pra sempre":
+    // o <select name="colorComboKey"> de OrderForm.tsx sempre existe no
+    // DOM (mesmo pra produto que já tem variante conhecida, mas o
+    // comprador não pediu cor específica) -- FormData sempre manda o
+    // campo, "" quando nada foi escolhido. `??` só troca null/undefined,
+    // nunca "" -- colorComboKey acabava gravado como STRING VAZIA, não
+    // null. reconcileOrderReservations/maxAssemblableUnitsForCombo
+    // (lib/orderReservations.ts) fazem `colorComboKey === null` pra
+    // decidir "pedido genérico" (pool agregado) vs "combo específico"
+    // (getRawVariantAvailable, que procura uma variante com key === "" --
+    // nunca existe) -- "" nunca bate em `=== null`, cai sempre no
+    // caminho de variante específica, que nunca acha nada e trava
+    // reservedQuantity em 0 pra sempre, não importa quanto estoque exista.
+    // `||` trata "" igual null/undefined -- sempre um pedido genérico de
+    // verdade quando nenhuma cor foi escolhida.
+    colorComboKey: colorComboKeyOverride || raw.colorComboKey || null,
     buyerOrPlatform: raw.buyerOrPlatform || null,
     orderNumber: raw.orderNumber || null,
     notes: raw.notes || null,

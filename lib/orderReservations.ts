@@ -106,7 +106,8 @@ async function getRawVariantAvailable(productId: string, colorComboKey: string, 
 // colorComboKey null (produto sem variante rastreada, ou pedido genérico
 // de peça única) cai no sinal antigo, sem quebrar o comportamento de
 // sempre.
-export function maxAssemblableUnitsForCombo(status: AssemblyStatus, colorComboKey: string | null): number {
+export function maxAssemblableUnitsForCombo(status: AssemblyStatus, colorComboKeyInput: string | null): number {
+  const colorComboKey = colorComboKeyInput || null
   if (colorComboKey === null) return status.maxAssemblableUnits
   if (status.parts.length === 0) return 0
   const choices = deserializeColorChoices(colorComboKey)
@@ -134,8 +135,14 @@ function computeOrderStatus(
 
 export async function reconcileOrderReservations(
   productId: string,
-  colorComboKey: string | null,
+  colorComboKeyInput: string | null,
 ): Promise<OrderReallocationEvent[]> {
+  // Defesa extra pro bug "colorComboKey = string vazia" (corrigido na
+  // origem em actions/orders.ts#parse): normaliza aqui também, pra um ""
+  // que escape por outro caminho no futuro cair no comportamento de
+  // pedido genérico (getRawProductAvailable) em vez de tentar achar uma
+  // variante "" que nunca existe (getRawVariantAvailable, sempre 0).
+  const colorComboKey = colorComboKeyInput || null
   const [product, orders] = await Promise.all([
     prisma.product.findUniqueOrThrow({
       where: { id: productId },

@@ -1,0 +1,14 @@
+-- Bug "pedido genérico fica travado em falta produzir pra sempre": o
+-- <select name="colorComboKey"> de OrderForm.tsx sempre existe no DOM
+-- (mesmo pra produto que já tem variante conhecida, mas o comprador não
+-- pediu cor específica) -- FormData sempre manda o campo, "" quando nada
+-- foi escolhido. `??` (corrigido em actions/orders.ts#parse, agora `||`)
+-- só troca null/undefined, nunca "" -- colorComboKey acabava gravado como
+-- STRING VAZIA em vez de null. reconcileOrderReservations/
+-- maxAssemblableUnitsForCombo (lib/orderReservations.ts) tratam ""
+-- como "pedido de combo específico" (nunca "pedido genérico"), procuram
+-- uma variante com key = "" -- nunca existe -- e travam reservedQuantity
+-- em 0 pra sempre, não importa quanto estoque exista. Normaliza os
+-- pedidos já afetados por esse bug -- toda escrita nova já usa `||`, não
+-- volta a acontecer.
+UPDATE "Order" SET "colorComboKey" = NULL WHERE "colorComboKey" = '';
