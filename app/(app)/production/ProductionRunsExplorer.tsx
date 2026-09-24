@@ -47,6 +47,7 @@ export function ProductionRunsExplorer({
   products,
   printers,
   filaments,
+  editQueryBase,
   newRunProductId,
   newRunPartId,
   newRunQty,
@@ -58,6 +59,12 @@ export function ProductionRunsExplorer({
   products: Option[]
   printers: PrinterOption[]
   filaments: FilamentOption[]
+  // Bug "editar some o filtro aplicado": querystring pronta com o
+  // filtro/página atuais (from/to/productId/printerId/plateId/status/page),
+  // montada em page.tsx (Server Component, único lugar com acesso a esses
+  // valores) -- os links "Editar" abaixo só concatenam `&editId=<id>` nela
+  // em vez de navegar pra um `/production?editId=` pelado que perdia tudo.
+  editQueryBase: string
   newRunProductId?: string
   newRunPartId?: string
   newRunQty?: number
@@ -172,7 +179,7 @@ export function ProductionRunsExplorer({
                     <td className="py-2">
                       <ActionsMenu>
                         {run.status !== 'CANCELADA' && (
-                          <Link href={`/production?editId=${run.id}`} className="tk-menu-item">
+                          <Link href={`/production?${editQueryBase}&editId=${run.id}`} className="tk-menu-item">
                             Editar
                           </Link>
                         )}
@@ -319,7 +326,7 @@ export function ProductionRunsExplorer({
                     </td>
                     <td className="text-center">{run.cost != null ? formatCurrency(run.cost) : '—'}</td>
                     <td>
-                      <Link href={`/production?editId=${run.id}`} className="text-violet-600 hover:underline dark:text-violet-400">Editar</Link>
+                      <Link href={`/production?${editQueryBase}&editId=${run.id}`} className="text-violet-600 hover:underline dark:text-violet-400">Editar</Link>
                     </td>
                   </tr>
                 ))}

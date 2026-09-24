@@ -110,6 +110,26 @@ export default async function ProductionPage({
     return `/production?${qs.toString()}`
   }
 
+  // Bug "editar some o filtro aplicado": os links "Editar" dentro de
+  // ProductionRunsExplorer (Client Component) eram montados só com
+  // `?editId=` -- perdiam from/to/productId/printerId/plateId/status/page
+  // ativos, porque esse componente nunca recebia o filtro atual (só as
+  // `runs` já filtradas). `editQueryBase` empacota o filtro/página atuais
+  // numa querystring pronta (from/to sempre presentes, resolveDateRange já
+  // garante isso) -- ProductionRunsExplorer só concatena `&editId=<id>`
+  // nela, preservando tudo que estava ativo ao entrar/sair do modo edição.
+  const editQueryBase = (() => {
+    const qs = new URLSearchParams()
+    qs.set('from', range.from)
+    qs.set('to', range.to)
+    if (productId) qs.set('productId', productId)
+    if (printerId) qs.set('printerId', printerId)
+    if (plateId) qs.set('plateId', plateId)
+    if (status) qs.set('status', status)
+    if (currentPage > 1) qs.set('page', String(currentPage))
+    return qs.toString()
+  })()
+
   // Melhoria "Editar impressora depois de criar": só permite trocar quando a
   // produção NÃO faz parte de uma Plate (impressora compartilhada por todas
   // as peças da Plate, trocar isolado deixaria inconsistente) E o
@@ -273,7 +293,11 @@ export default async function ProductionPage({
 
       {editingRun && (
         <div className="mt-6">
-          <EditProductionRunForm editingRun={editingRun} printers={printers.map((p) => ({ id: p.id, name: p.name }))} />
+          <EditProductionRunForm
+            editingRun={editingRun}
+            printers={printers.map((p) => ({ id: p.id, name: p.name }))}
+            returnTo={`/production${editQueryBase ? `?${editQueryBase}` : ''}`}
+          />
         </div>
       )}
 
@@ -281,6 +305,7 @@ export default async function ProductionPage({
         runs={runs}
         byProduct={byProduct}
         plates={plates}
+        editQueryBase={editQueryBase}
         newRunProductId={newRunProductId}
         newRunPartId={newRunPartId}
         newRunQty={newRunQty ? parseInt(newRunQty, 10) || undefined : undefined}

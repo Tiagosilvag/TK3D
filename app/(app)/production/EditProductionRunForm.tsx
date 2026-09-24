@@ -51,7 +51,11 @@ export interface EditingRun {
 // ProductionRunBatchForm) -- correção pós-fato de uma produção já
 // registrada continua exatamente como era: quantidade/filamento somente
 // leitura, só desperdício/observações editáveis, acessada via `?editId=`.
-export function EditProductionRunForm({ editingRun, printers }: { editingRun: EditingRun; printers: { id: string; name: string }[] }) {
+// Bug "editar some o filtro aplicado": `returnTo` é a URL de /production já
+// com o filtro/página atuais (montada em page.tsx) -- sair da edição (salvar
+// ou cancelar) volta pra ela em vez de sempre `/production` pelado, que
+// resetava filtro/página toda vez que alguém editava uma produção.
+export function EditProductionRunForm({ editingRun, printers, returnTo }: { editingRun: EditingRun; printers: { id: string; name: string }[]; returnTo: string }) {
   const router = useRouter()
   const [timeWastedHours, setTimeWastedHours] = useState(String(editingRun.timeWastedHours))
   const [printerId, setPrinterId] = useState(editingRun.printerId)
@@ -62,7 +66,7 @@ export function EditProductionRunForm({ editingRun, printers }: { editingRun: Ed
       alert(result.error)
       return
     }
-    router.push('/production')
+    router.push(returnTo)
   }
 
   // Melhoria "Editar impressora depois de criar": correção independente do
@@ -75,7 +79,7 @@ export function EditProductionRunForm({ editingRun, printers }: { editingRun: Ed
       alert(result.error)
       return
     }
-    router.push('/production')
+    router.push(returnTo)
   }
 
   return (
@@ -190,7 +194,7 @@ export function EditProductionRunForm({ editingRun, printers }: { editingRun: Ed
 
       <div className="col-span-full mt-2 flex items-center gap-3">
         {!editingRun.isMultiFilament && <SubmitButton pendingLabel="Salvando…">Salvar alterações</SubmitButton>}
-        <Link href="/production" className="text-xs text-slate-500 hover:underline dark:text-slate-400">
+        <Link href={returnTo} className="text-xs text-slate-500 hover:underline dark:text-slate-400">
           {editingRun.isMultiFilament ? 'Voltar' : 'Cancelar'}
         </Link>
       </div>
