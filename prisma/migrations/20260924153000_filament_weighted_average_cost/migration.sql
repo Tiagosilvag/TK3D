@@ -94,6 +94,16 @@ WHERE f.id = c."oldId" AND c."oldId" <> c."canonicalId";
 
 DROP TABLE "_FilamentCanonical";
 
+-- DropIndex / CreateIndex: unicidade agora é só marca+material+cor (1 linha
+-- por SKU, sem rollNumber). PRECISA vir antes do ALTER TABLE abaixo --
+-- Postgres recusa DROP COLUMN "rollNumber" enquanto esse índice antigo
+-- ainda depende dela ("cannot drop column ... because other objects
+-- depend on it"). Bug real de incidente: a ordem original tinha o DROP
+-- COLUMN antes do DROP INDEX, o que quebrava `prisma migrate deploy` (e
+-- por tabela ser transacional, revertia tudo -- container nunca subia).
+DROP INDEX "Filament_manufacturer_material_colorName_rollNumber_key";
+CREATE UNIQUE INDEX "Filament_manufacturer_material_colorName_key" ON "Filament"("manufacturer", "material", "colorName");
+
 -- AlterTable: remove colunas do modelo por rolo, torna avgUnitCostPerGram
 -- obrigatório (já preenchido pra toda linha que sobrou acima).
 ALTER TABLE "Filament"
@@ -102,11 +112,6 @@ ALTER TABLE "Filament"
   DROP COLUMN "spoolWeightKg",
   DROP COLUMN "spoolPrice",
   DROP COLUMN "initialStockGrams";
-
--- DropIndex / CreateIndex: unicidade agora é só marca+material+cor (1 linha
--- por SKU, sem rollNumber).
-DROP INDEX "Filament_manufacturer_material_colorName_rollNumber_key";
-CREATE UNIQUE INDEX "Filament_manufacturer_material_colorName_key" ON "Filament"("manufacturer", "material", "colorName");
 
 -- AddForeignKey
 ALTER TABLE "FilamentPurchase" ADD CONSTRAINT "FilamentPurchase_filamentId_fkey" FOREIGN KEY ("filamentId") REFERENCES "Filament"("id") ON DELETE CASCADE ON UPDATE CASCADE;
