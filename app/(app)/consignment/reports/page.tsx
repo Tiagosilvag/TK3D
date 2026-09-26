@@ -1,8 +1,6 @@
 import { prisma } from '@/lib/prisma'
-import { formatCurrency } from '@/lib/format'
 import { SaleReportForm } from './SaleReportForm'
-import { deleteConsignmentSaleReport } from '@/actions/consignmentSaleReports'
-import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { EditableSaleReportRow, type SaleReportRowData } from './EditableSaleReportRow'
 import { DateRangeFilter } from '@/components/DateRangeFilter'
 import { resolveDateRange } from '@/lib/dateRange'
 
@@ -20,13 +18,28 @@ export default async function ConsignmentSaleReportsPage({
     prisma.consignmentSaleReport.findMany({
       where: { reportDate: { gte: range.gte, lte: range.lte } },
       orderBy: { reportDate: 'desc' },
-      include: { delivery: { include: { partner: true, product: true } } },
+      include: { delivery: { include: { partner: true, product: true, saleReports: true } } },
     }),
     prisma.consignmentDelivery.findMany({
       include: { partner: true, product: true, saleReports: true },
       orderBy: { deliveryDate: 'desc' },
     }),
   ])
+
+  const rows: SaleReportRowData[] = reports.map((r) => {
+    const alreadySoldExcludingSelf = r.delivery.saleReports.filter((x) => x.id !== r.id).reduce((sum, x) => sum + x.quantitySold, 0)
+    return {
+      id: r.id,
+      deliveryId: r.deliveryId,
+      reportDate: r.reportDate.toISOString(),
+      partnerName: r.delivery.partner.name,
+      productName: r.delivery.product.name,
+      quantitySold: r.quantitySold,
+      commissionPercent: r.commissionPercent.toNumber(),
+      unitPrice: r.unitPrice?.toNumber() ?? r.delivery.unitPrice.toNumber(),
+      maxQuantity: r.delivery.quantityDelivered - alreadySoldExcludingSelf,
+    }
+  })
 
   // Only deliveries with remaining stock make sense as a target for a new
   // sale report (getPartnerStock's remaining math, applied per delivery).
@@ -56,31 +69,16 @@ export default async function ConsignmentSaleReportsPage({
             <th>Parceiro</th>
             <th>Produto</th>
             <th className="text-center">Qtd. vendida</th>
+            <th className="text-center">Preço unit.</th>
             <th className="text-center">Comissão</th>
             <th className="text-center">Repasse</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {reports.map((r) => {
-            const unitPrice = r.unitPrice?.toNumber() ?? r.delivery.unitPrice.toNumber()
-            const commission = r.commissionPercent.toNumber()
-            const gross = r.quantitySold * unitPrice
-            const payout = gross * (1 - commission)
-            return (
-              <tr key={r.id} className="tk-row">
-                <td className="py-2">{r.reportDate.toLocaleDateString('pt-BR')}</td>
-                <td>{r.delivery.partner.name}</td>
-                <td>{r.delivery.product.name}</td>
-                <td className="text-center">{r.quantitySold}</td>
-                <td className="text-center">{(commission * 100).toFixed(0)}%</td>
-                <td className="text-center">{formatCurrency(payout)}</td>
-                <td>
-                  <ConfirmDeleteForm action={async () => { 'use server'; return await deleteConsignmentSaleReport(r.id) }} />
-                </td>
-              </tr>
-            )
-          })}
+          {rows.map((row) => (
+            <EditableSaleReportRow key={row.id} report={row} />
+          ))}
         </tbody>
       </table>
     </div>

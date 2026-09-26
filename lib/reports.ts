@@ -856,6 +856,20 @@ export interface ConsignmentAccessoryChip {
   colorHex: string | null
 }
 
+// Melhoria "editar tudo no consignado": linha de UMA entrega específica
+// (não o agregado por produto/cor que ConsignmentVariantBreakdown mostra) --
+// granularidade que devolveConsignmentDeliveryStock/deleteConsignmentDelivery
+// realmente operam, usada pelo PartnerStockSection pra devolver peças ao
+// próprio estoque ou remover uma entrega direto da tela do parceiro.
+export interface ConsignmentDeliveryLine {
+  deliveryId: string
+  deliveryDate: Date
+  delivered: number
+  sold: number
+  remaining: number
+  saleReportsCount: number
+}
+
 export interface ConsignmentVariantBreakdown {
   key: string | null // null = entregas sem cor registrada (produto sem variante, ou anteriores a este ajuste)
   label: string | null
@@ -864,6 +878,7 @@ export interface ConsignmentVariantBreakdown {
   sold: number
   remaining: number
   accessories: ConsignmentAccessoryChip[]
+  deliveries: ConsignmentDeliveryLine[]
 }
 
 export interface ConsignmentProductBreakdown {
@@ -881,6 +896,12 @@ export interface ConsignmentHistoryEvent {
   productName: string
   colorLabel: string | null
   quantity: number
+  // Melhoria "editar tudo no consignado": id do registro por trás do evento
+  // (ConsignmentDelivery pra 'entrega', ConsignmentSaleReport pra 'venda') --
+  // só usado hoje pra desfazer uma venda direto do Histórico (estoque volta
+  // pro parceiro na hora, mesmo cálculo de saldo que já existe em toda a
+  // tela: entregue - vendido).
+  id: string
 }
 
 // Melhoria "Parceiros de consignação": entrega individual com saldo > 0,
@@ -963,7 +984,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
     accessoriesByComboPair.set(pairKey, list)
   }
 
-  const byProduct = new Map<string, { productName: string; delivered: number; sold: number; variants: Map<string, { key: string | null; delivered: number; sold: number }> }>()
+  const byProduct = new Map<string, { productName: string; delivered: number; sold: number; variants: Map<string, { key: string | null; delivered: number; sold: number; deliveries: ConsignmentDeliveryLine[] }> }>()
   const history: ConsignmentHistoryEvent[] = []
   let totalSold = 0
   let commissionOwed = 0
@@ -991,10 +1012,18 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
     const product = byProduct.get(delivery.productId) ?? { productName: delivery.product.name, delivered: 0, sold: 0, variants: new Map() }
     product.delivered += delivery.quantityDelivered
     const variantMapKey = variantKey ?? '__none__'
-    const variant = product.variants.get(variantMapKey) ?? { key: variantKey, delivered: 0, sold: 0 }
+    const variant = product.variants.get(variantMapKey) ?? { key: variantKey, delivered: 0, sold: 0, deliveries: [] }
     variant.delivered += delivery.quantityDelivered
+    variant.deliveries.push({
+      deliveryId: delivery.id,
+      deliveryDate: delivery.deliveryDate,
+      delivered: delivery.quantityDelivered,
+      sold: deliverySold,
+      remaining: deliveryRemaining,
+      saleReportsCount: delivery.saleReports.length,
+    })
 
-    history.push({ date: delivery.deliveryDate, type: 'entrega', productName: delivery.product.name, colorLabel, quantity: delivery.quantityDelivered })
+    history.push({ date: delivery.deliveryDate, type: 'entrega', productName: delivery.product.name, colorLabel, quantity: delivery.quantityDelivered, id: delivery.id })
 
     for (const report of delivery.saleReports) {
       product.sold += report.quantitySold
@@ -1002,7 +1031,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
       totalSold += report.quantitySold
       const reportUnitPrice = report.unitPrice?.toNumber() ?? delivery.unitPrice.toNumber()
       commissionOwed += report.quantitySold * reportUnitPrice * report.commissionPercent.toNumber()
-      history.push({ date: report.reportDate, type: 'venda', productName: delivery.product.name, colorLabel, quantity: report.quantitySold })
+      history.push({ date: report.reportDate, type: 'venda', productName: delivery.product.name, colorLabel, quantity: report.quantitySold, id: report.id })
     }
 
     product.variants.set(variantMapKey, variant)
@@ -1025,6 +1054,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
       sold: v.sold,
       remaining: Math.max(0, v.delivered - v.sold),
       accessories: v.key ? (accessoriesByComboPair.get(`${productId}::${v.key}`) ?? []) : [],
+      deliveries: v.deliveries,
     })),
   }))
 

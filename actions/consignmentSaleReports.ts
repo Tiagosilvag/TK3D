@@ -86,6 +86,38 @@ export async function createConsignmentSaleReportBatch(formData: FormData): Prom
   return { success: true }
 }
 
+// Melhoria "editar tudo no consignado": corrige um relatório de venda já
+// registrado (quantidade/preço/comissão/data errados) sem precisar apagar e
+// recriar -- mesma checagem de saldo de createConsignmentSaleReport, só que
+// exclui o PRÓPRIO relatório da soma de "já vendido" (senão a quantidade
+// dele contaria contra si mesma e o saldo pareceria menor do que realmente
+// é). Reduzir quantitySold aqui já devolve a diferença pro saldo do
+// parceiro, mesmo cálculo derivado (entregue - vendido) que o delete usa.
+export async function updateConsignmentSaleReport(id: string, formData: FormData): Promise<ActionResult> {
+  const raw = Object.fromEntries(formData)
+  const parsed = consignmentSaleReportSchema.safeParse({
+    ...raw,
+    notes: raw.notes || null,
+    unitPrice: raw.unitPrice || null,
+  })
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+
+  const delivery = await prisma.consignmentDelivery.findUniqueOrThrow({
+    where: { id: parsed.data.deliveryId },
+    include: { saleReports: true },
+  })
+  const alreadySold = delivery.saleReports.filter((r) => r.id !== id).reduce((sum, r) => sum + r.quantitySold, 0)
+  const remaining = Math.max(0, delivery.quantityDelivered - alreadySold)
+  if (parsed.data.quantitySold > remaining) {
+    return { success: false, error: `Quantidade excede o saldo disponível (${remaining})` }
+  }
+
+  await prisma.consignmentSaleReport.update({ where: { id }, data: parsed.data })
+  revalidatePath('/consignment/reports')
+  revalidatePath('/consignment/deliveries')
+  return { success: true }
+}
+
 // Historical log like ProductionRun: physical delete only, no active field.
 export async function deleteConsignmentSaleReport(id: string): Promise<ActionResult> {
   await prisma.consignmentSaleReport.delete({ where: { id } })

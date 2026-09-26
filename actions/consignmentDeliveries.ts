@@ -114,3 +114,35 @@ export async function updateConsignmentDeliveryQuantity(id: string, formData: Fo
   revalidatePath('/consignment/deliveries')
   return { success: true }
 }
+
+// Pedido "caso eu queira pegar alguma peça que esteja com o parceiro eu
+// consigo, voltando pro meu estoque": mesma mecânica de
+// updateConsignmentDeliveryQuantity acima (reduzir quantityDelivered), só
+// que expressa como "quantas peças voltam" em vez de "novo total entregue"
+// -- mais direto pra usar a partir da tela do parceiro (PartnerStockSection),
+// que mostra o saldo COM ELA, não o total entregue. `decrement` evita
+// precisar reconstruir o total no servidor a partir de um valor que o
+// cliente já tinha calculado. "Meu estoque" nunca é um contador à parte
+// (CLAUDE.md "Estoque derivado") -- é produzido menos entregue, então esse
+// decrement sozinho já basta pra a peça reaparecer em /stock.
+export async function returnConsignmentDeliveryStock(id: string, formData: FormData): Promise<ActionResult> {
+  const quantityReturned = parseInt(String(formData.get('quantityReturned') ?? ''), 10)
+  if (!Number.isFinite(quantityReturned) || quantityReturned <= 0) {
+    return { success: false, error: 'Quantidade inválida' }
+  }
+
+  const delivery = await prisma.consignmentDelivery.findUniqueOrThrow({
+    where: { id },
+    include: { saleReports: true },
+  })
+  const alreadySold = delivery.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
+  const remaining = Math.max(0, delivery.quantityDelivered - alreadySold)
+  if (quantityReturned > remaining) {
+    return { success: false, error: `Não é possível devolver mais do que está com o parceiro (${remaining})` }
+  }
+
+  await prisma.consignmentDelivery.update({ where: { id }, data: { quantityDelivered: { decrement: quantityReturned } } })
+  revalidatePath('/consignment/deliveries')
+  revalidatePath('/consignment/partners')
+  return { success: true }
+}

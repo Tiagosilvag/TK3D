@@ -1,7 +1,10 @@
 'use client'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import type { ConsignmentProductBreakdown, ConsignmentSaleableDelivery } from '@/lib/reports'
+import { deleteConsignmentDelivery, returnConsignmentDeliveryStock } from '@/actions/consignmentDeliveries'
+import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { RegisterSaleForm } from './RegisterSaleForm'
 
 // Melhoria "Parceiros de consignação" §5: uma linha por PRODUTO (totais
@@ -19,6 +22,7 @@ export function PartnerStockSection({
   saleableDeliveries: ConsignmentSaleableDelivery[]
   defaultCommissionPercent: number
 }) {
+  const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [selected, setSelected] = useState<ConsignmentProductBreakdown | null>(null)
 
@@ -26,6 +30,37 @@ export function PartnerStockSection({
     setSelected(product)
     dialogRef.current?.showModal()
   }
+
+  // Melhoria "editar tudo no consignado": devolver peças ao próprio estoque
+  // e remover entrega agem na entrega específica (id), não no agregado por
+  // produto/cor -- depois de um sucesso, refresh() traz o `selected` já
+  // recalculado (mesma re-sincronização que DeliveriesExplorer já faz).
+  async function handleReturnStock(deliveryId: string, formData: FormData) {
+    const result = await returnConsignmentDeliveryStock(deliveryId, formData)
+    if (!result.success) {
+      alert(result.error)
+      return
+    }
+    router.refresh()
+  }
+
+  async function handleRemoveDelivery(deliveryId: string) {
+    const result = await deleteConsignmentDelivery(deliveryId)
+    if (result.success) router.refresh()
+    return result
+  }
+
+  // Bug fix (mesmo de DeliveriesExplorer): `selected` é um snapshot tirado
+  // em openDetail(). router.refresh() atualiza a prop `products`, mas
+  // `selected` nunca era re-sincronizado sozinho -- devolução/remoção
+  // pareciam não ter feito nada até fechar e reabrir a modal.
+  useEffect(() => {
+    setSelected((prev) => (prev ? (products.find((p) => p.productId === prev.productId) ?? null) : prev))
+  }, [products])
+
+  useEffect(() => {
+    if (selected === null && dialogRef.current?.open) dialogRef.current.close()
+  }, [selected])
 
   if (products.length === 0) {
     return (
@@ -100,6 +135,51 @@ export function PartnerStockSection({
                       Entregue {v.delivered} · Vendido {v.sold} · Com ela {v.remaining}
                     </span>
                   </div>
+
+                  {/* Melhoria "editar tudo no consignado": ação por ENTREGA específica
+                      (não dá pra devolver/remover o agregado por cor -- ele pode vir de
+                      vários lotes com datas diferentes), devolver só aparece quando
+                      sobra saldo com o parceiro; remover funciona sempre (cascata pros
+                      relatórios de venda dela, com aviso). */}
+                  <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-2 dark:border-slate-800">
+                    {v.deliveries.map((d) => (
+                      <div key={d.deliveryId} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="text-slate-400 dark:text-slate-500">
+                          {new Date(d.deliveryDate).toLocaleDateString('pt-BR')} · entregue {d.delivered}
+                          {d.sold > 0 && ` · vendido ${d.sold}`}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          {d.remaining > 0 && (
+                            <form action={(fd) => handleReturnStock(d.deliveryId, fd)} className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                name="quantityReturned"
+                                step="1"
+                                min={1}
+                                max={d.remaining}
+                                defaultValue={d.remaining}
+                                className="tk-input w-14 text-right"
+                              />
+                              <button type="submit" className="font-medium text-violet-600 hover:underline dark:text-violet-400">
+                                Devolver
+                              </button>
+                            </form>
+                          )}
+                          <ConfirmDeleteForm
+                            action={() => handleRemoveDelivery(d.deliveryId)}
+                            label="Remover"
+                            className="font-medium text-red-600 hover:underline dark:text-red-400"
+                            confirmMessage={
+                              d.saleReportsCount > 0
+                                ? `Remover esta entrega? Isso também apaga ${d.saleReportsCount} relatório(s) de venda já registrado(s) contra ela.`
+                                : 'Remover esta entrega?'
+                            }
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
                   {v.accessories.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {v.accessories.map((a) => (

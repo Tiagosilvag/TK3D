@@ -2,6 +2,8 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getConsignmentPartnerDetail } from '@/lib/reports'
 import { formatCurrency } from '@/lib/format'
+import { deleteConsignmentSaleReport } from '@/actions/consignmentSaleReports'
+import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { PartnerDetailHeader } from './PartnerDetailHeader'
 import { PartnerStockSection } from './PartnerStockSection'
 
@@ -67,6 +69,7 @@ export default async function ConsignmentPartnerDetailPage({ params }: { params:
                 <th>Produto</th>
                 <th>Cor</th>
                 <th className="text-center">Qtd.</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -77,6 +80,23 @@ export default async function ConsignmentPartnerDetailPage({ params }: { params:
                   <td>{event.productName}</td>
                   <td className="text-slate-500 dark:text-slate-400">{event.colorLabel ?? '—'}</td>
                   <td className="text-center">{event.quantity}</td>
+                  <td>
+                    {/* Melhoria "caso uma venda seja desfeita, o estoque volta pro
+                        parceiro": desfazer aqui mesmo, sem precisar ir pra Relatórios de
+                        venda -- saldo "Com ela" é sempre entregue - vendido, então apagar
+                        o relatório já devolve na hora. Entrega não ganha remover aqui
+                        (ação mais sensível, cascata pros relatórios -- fica só na seção
+                        "Estoque com o parceiro" acima e em Entregas, onde o aviso de
+                        cascata já aparece). */}
+                    {event.type === 'venda' && (
+                      <ConfirmDeleteForm
+                        action={async () => { 'use server'; return await deleteConsignmentSaleReport(event.id) }}
+                        label="Desfazer"
+                        className="text-xs font-medium text-red-600 hover:underline dark:text-red-400"
+                        confirmMessage="Desfazer esta venda? A quantidade volta pro saldo com o parceiro."
+                      />
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
