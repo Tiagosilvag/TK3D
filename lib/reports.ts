@@ -904,21 +904,34 @@ export interface ConsignmentHistoryEvent {
   id: string
 }
 
-// Melhoria "Parceiros de consignação": entrega individual com saldo > 0,
-// candidata a receber um novo relatório de venda (mesma granularidade de
-// ConsignmentSaleReport.deliveryId -- uma entrega específica, não o
-// agregado por produto/cor que `products` acima mostra).
+// Bug "registrar entregas separadas do mesmo produto+cor aparecia 2x no
+// Registrar venda, em vez de somar o saldo": até esse ajuste, cada
+// ConsignmentDelivery virava sua PRÓPRIA linha aqui, então 2 entregas do
+// mesmo produto+cor (2 lotes diferentes, ex.: entregue de novo numa visita
+// seguinte) mostravam 2 checkboxes idênticos com saldo pequeno cada, em vez
+// de 1 linha com o saldo somado -- confuso e obrigava marcar/preencher
+// quantidade em cada um separadamente pra vender o total. Agora agregado por
+// (productId, colorComboKey), com `deliveryIds` guardando as entregas que
+// compõem esse saldo, da mais ANTIGA pra mais NOVA (FIFO) --
+// createConsignmentSaleReportBatch consome nessa ordem quando a quantidade
+// vendida precisa "atravessar" mais de uma entrega, criando 1
+// ConsignmentSaleReport por entrega efetivamente tocada.
 export interface ConsignmentSaleableDelivery {
-  deliveryId: string
+  groupKey: string
+  productId: string
   productName: string
   colorLabel: string | null
   colorHex: string | null
   remaining: number
-  // Preço cadastrado na entrega -- pré-preenche o campo editável de preço
-  // unitário no modal "Registrar venda" (pedido "às vezes o valor é
-  // diferente do cadastrado na parceria"), sem obrigar a sobrescrever
-  // quando a venda foi pelo valor combinado de sempre.
+  // Preço da entrega mais antiga do grupo -- pré-preenche o campo editável
+  // de preço unitário no modal "Registrar venda" (pedido "às vezes o valor
+  // é diferente do cadastrado na parceria"), sem obrigar a sobrescrever
+  // quando a venda foi pelo valor combinado de sempre. Como a venda registra
+  // 1 preço só pro grupo inteiro (não 1 por entrega), esse preço é sempre
+  // gravado explicitamente em cada ConsignmentSaleReport gerado, nunca
+  // deixado null/"herda da entrega" -- ver createConsignmentSaleReportBatch.
   unitPrice: number
+  deliveryIds: string[]
 }
 
 export interface ConsignmentPartnerDetail {
@@ -989,29 +1002,41 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
   let totalSold = 0
   let commissionOwed = 0
 
-  const saleableDeliveries: ConsignmentSaleableDelivery[] = []
+  // Acumulador do grupo (productId, colorComboKey) pra saleableDeliveries --
+  // ver comentário de ConsignmentSaleableDelivery acima. `entries` guarda a
+  // entrega/data/saldo/preço de cada ConsignmentDelivery com saldo > 0 desse
+  // grupo; finalizado (ordenado por data, somado) depois do loop principal.
+  const saleableGroups = new Map<string, {
+    productId: string
+    productName: string
+    colorLabel: string | null
+    colorHex: string | null
+    entries: { deliveryId: string; deliveryDate: Date; remaining: number; unitPrice: number }[]
+  }>()
 
   for (const delivery of partner.deliveries) {
     const variantKey = delivery.colorComboKey
     const variantInfo = variantKey ? variantInfoByProductAndKey.get(`${delivery.productId}::${variantKey}`) : undefined
     const colorLabel = variantKey ? (variantInfo?.label ?? null) : null
+    const variantMapKey = variantKey ?? '__none__'
 
     const deliverySold = delivery.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
     const deliveryRemaining = Math.max(0, delivery.quantityDelivered - deliverySold)
     if (deliveryRemaining > 0) {
-      saleableDeliveries.push({
-        deliveryId: delivery.id,
+      const groupKey = `${delivery.productId}::${variantMapKey}`
+      const group = saleableGroups.get(groupKey) ?? {
+        productId: delivery.productId,
         productName: delivery.product.name,
         colorLabel,
         colorHex: variantInfo?.colorHex ?? null,
-        remaining: deliveryRemaining,
-        unitPrice: delivery.unitPrice.toNumber(),
-      })
+        entries: [],
+      }
+      group.entries.push({ deliveryId: delivery.id, deliveryDate: delivery.deliveryDate, remaining: deliveryRemaining, unitPrice: delivery.unitPrice.toNumber() })
+      saleableGroups.set(groupKey, group)
     }
 
     const product = byProduct.get(delivery.productId) ?? { productName: delivery.product.name, delivered: 0, sold: 0, variants: new Map() }
     product.delivered += delivery.quantityDelivered
-    const variantMapKey = variantKey ?? '__none__'
     const variant = product.variants.get(variantMapKey) ?? { key: variantKey, delivered: 0, sold: 0, deliveries: [] }
     variant.delivered += delivery.quantityDelivered
     variant.deliveries.push({
@@ -1039,6 +1064,20 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
   }
 
   history.sort((a, b) => b.date.getTime() - a.date.getTime())
+
+  const saleableDeliveries: ConsignmentSaleableDelivery[] = [...saleableGroups.entries()].map(([groupKey, group]) => {
+    const sortedEntries = [...group.entries].sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime())
+    return {
+      groupKey,
+      productId: group.productId,
+      productName: group.productName,
+      colorLabel: group.colorLabel,
+      colorHex: group.colorHex,
+      remaining: sortedEntries.reduce((sum, e) => sum + e.remaining, 0),
+      unitPrice: sortedEntries[0].unitPrice,
+      deliveryIds: sortedEntries.map((e) => e.deliveryId),
+    }
+  })
 
   const productsBreakdown: ConsignmentProductBreakdown[] = [...byProduct.entries()].map(([productId, { productName, delivered, sold, variants }]) => ({
     productId,

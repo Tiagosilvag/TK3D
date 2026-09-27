@@ -14,8 +14,10 @@ import {
 import {
   createConsignmentSaleReport,
   updateConsignmentSaleReport,
+  createConsignmentSaleReportBatch,
   getPartnerStock,
 } from '@/actions/consignmentSaleReports'
+import { getConsignmentPartnerDetail } from '@/lib/reports'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -357,5 +359,131 @@ describe('consignmentSaleReports actions', () => {
 
     const stock = await getPartnerStock(partner.id)
     expect(stock[0]).toMatchObject({ delivered: 10, sold: 2, remaining: 8 })
+  })
+})
+
+// Bug reportado ao vivo: "NO ESTOQUE COM O PARCEIRO FOI ADICIONADO 2
+// ENTREGAS, EM VEZ DELE SOMAR O TOTAL, ELE ADICIONOU 2 VEZES O MESMO
+// PRODUTO" -- 2 entregas separadas do mesmo produto+cor apareciam como 2
+// linhas distintas no modal "Registrar venda", em vez de 1 linha com o
+// saldo somado.
+describe('saleableDeliveries agrega por produto+cor (fix "2 entregas viravam 2 linhas")', () => {
+  it('getConsignmentPartnerDetail soma o saldo de 2 entregas do mesmo produto (sem cor) numa linha só, entrega mais antiga primeiro', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '3',
+      unitPrice: '20',
+      deliveryDate: '2026-09-01',
+    }))
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '5',
+      unitPrice: '22',
+      deliveryDate: '2026-09-10',
+    }))
+    const [older, newer] = await prisma.consignmentDelivery.findMany({
+      where: { partnerId: partner.id },
+      orderBy: { deliveryDate: 'asc' },
+    })
+
+    const detail = await getConsignmentPartnerDetail(partner.id)
+    expect(detail!.saleableDeliveries).toHaveLength(1)
+    const group = detail!.saleableDeliveries[0]
+    expect(group.remaining).toBe(8) // 3 + 5, não 2 linhas de 3 e 5
+    expect(group.deliveryIds).toEqual([older.id, newer.id]) // mais antiga primeiro (FIFO)
+    expect(group.unitPrice).toBeCloseTo(20) // preço da entrega mais antiga
+  })
+
+  it('createConsignmentSaleReportBatch consome a entrega mais antiga primeiro e só "atravessa" pra próxima quando necessário', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '3',
+      unitPrice: '20',
+      deliveryDate: '2026-09-01',
+    }))
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '5',
+      unitPrice: '22',
+      deliveryDate: '2026-09-10',
+    }))
+    const [older, newer] = await prisma.consignmentDelivery.findMany({
+      where: { partnerId: partner.id },
+      orderBy: { deliveryDate: 'asc' },
+    })
+    const detail = await getConsignmentPartnerDetail(partner.id)
+    const group = detail!.saleableDeliveries[0]
+
+    // Vende 4 -- esgota a entrega mais antiga (3) e "atravessa" 1 unidade
+    // pra entrega mais nova, virando 2 ConsignmentSaleReport (um por
+    // entrega efetivamente tocada), mesmo preço/comissão/data nos dois.
+    const batchFd = new FormData()
+    batchFd.set('reportDate', '2026-09-15')
+    batchFd.set('notes', '')
+    batchFd.set('itemsJson', JSON.stringify([
+      { deliveryIds: group.deliveryIds, quantitySold: 4, commissionPercent: 0.3, unitPrice: 21 },
+    ]))
+    const result = await createConsignmentSaleReportBatch(batchFd)
+    expect(result.success).toBe(true)
+
+    const reports = await prisma.consignmentSaleReport.findMany({ orderBy: { deliveryId: 'asc' } })
+    expect(reports).toHaveLength(2)
+    const olderReport = reports.find((r) => r.deliveryId === older.id)!
+    const newerReport = reports.find((r) => r.deliveryId === newer.id)!
+    expect(olderReport.quantitySold).toBe(3) // esgota a mais antiga inteira
+    expect(newerReport.quantitySold).toBe(1) // só o que sobrou
+    expect(olderReport.unitPrice?.toNumber()).toBeCloseTo(21) // preço explícito, igual nos dois
+    expect(newerReport.unitPrice?.toNumber()).toBeCloseTo(21)
+
+    // getPartnerStock é por ENTREGA (não agregado por produto) -- soma as 2
+    // linhas do mesmo produto pra conferir o total.
+    const stock = await getPartnerStock(partner.id)
+    const totals = stock.reduce((acc, s) => ({ delivered: acc.delivered + s.delivered, sold: acc.sold + s.sold, remaining: acc.remaining + s.remaining }), { delivered: 0, sold: 0, remaining: 0 })
+    expect(totals).toEqual({ delivered: 8, sold: 4, remaining: 4 })
+  })
+
+  it('createConsignmentSaleReportBatch recusa quando a quantidade excede o saldo somado do grupo inteiro, sem gravar nada', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '3',
+      unitPrice: '20',
+      deliveryDate: '2026-09-01',
+    }))
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '5',
+      unitPrice: '22',
+      deliveryDate: '2026-09-10',
+    }))
+    const detail = await getConsignmentPartnerDetail(partner.id)
+    const group = detail!.saleableDeliveries[0]
+
+    const batchFd = new FormData()
+    batchFd.set('reportDate', '2026-09-15')
+    batchFd.set('notes', '')
+    batchFd.set('itemsJson', JSON.stringify([
+      { deliveryIds: group.deliveryIds, quantitySold: 9, commissionPercent: 0.3, unitPrice: 21 }, // saldo total é 8
+    ]))
+    const result = await createConsignmentSaleReportBatch(batchFd)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('8')
+
+    const reports = await prisma.consignmentSaleReport.findMany()
+    expect(reports).toHaveLength(0)
   })
 })
