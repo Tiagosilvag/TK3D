@@ -249,7 +249,11 @@ export function RegisterSaleForm({
                     checked={row.checked}
                     onChange={(e) => updateRow(row.groupKey, {
                       checked: e.target.checked,
-                      quantitySold: e.target.checked && !row.quantitySold ? String(row.remaining) : row.quantitySold,
+                      // Pedido "padrão de consumo melhor ser 1 uni": marcar uma linha
+                      // sozinha pré-preenche com 1 (a maioria das vendas é unitária),
+                      // não o saldo inteiro -- "Marcar todas" continua vendendo o
+                      // saldo inteiro de cada linha (ação de lote, ver markAll()).
+                      quantitySold: e.target.checked && !row.quantitySold ? String(Math.min(1, row.remaining)) : row.quantitySold,
                     })}
                     className="mt-0.5 shrink-0 rounded border"
                   />
