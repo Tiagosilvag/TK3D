@@ -160,7 +160,7 @@ export async function getPartnerStock(partnerId: string) {
       productName: d.product.name,
       delivered: d.quantityDelivered,
       sold,
-      remaining: Math.max(0, d.quantityDelivered - sold),
+      remaining: Math.max(0, d.quantityDelivered - sold - d.returnedQuantity),
     }
   })
 }

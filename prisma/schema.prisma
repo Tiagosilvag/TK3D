@@ -1182,6 +1182,21 @@ model ConsignmentDelivery {
   colorComboKey     String?
   notes             String?
   createdAt         DateTime                @default(now())
+  // Melhoria "editar tudo no consignado" (revisão): quanto já voltou pro
+  // próprio estoque desta entrega (returnConsignmentDeliveryStock,
+  // actions/consignmentDeliveries.ts) -- NUNCA decrementa quantityDelivered
+  // diretamente (mesma filosofia de ProductionRun.status=CANCELADA: o fato
+  // histórico "quanto foi entregue" nunca é reescrito, só um estado à parte
+  // marca o que aconteceu depois). "Com ela" em toda tela é sempre
+  // quantityDelivered - vendido - returnedQuantity; quando esse resultado
+  // chega a 0 com returnedQuantity > 0 (não por ter sido tudo vendido), a
+  // entrega vira "Devolvida" na UI -- mesma lógica de uma ProductionRun
+  // CANCELADA: continua visível com os números originais, só ganha um
+  // estado que a exclui das somas ativas, com "Desfazer" (zera
+  // returnedQuantity, ao contrário de Produção que não tem un-cancelar --
+  // pedido explícito aqui) e "Apagar" (delete físico definitivo, sem volta,
+  // só some da tela quando já está devolvida).
+  returnedQuantity  Int                     @default(0)
   saleReports       ConsignmentSaleReport[]
 }
 

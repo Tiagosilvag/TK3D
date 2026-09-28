@@ -75,7 +75,7 @@ async function getRawProductAvailable(productId: string, needsAssembly: boolean)
   ])
   const produced = needsAssembly ? (assembledAgg._sum.quantity ?? 0) : (producedAgg._sum.quantitySuccess ?? 0)
   const soldDirect = soldAgg._sum.quantity ?? 0
-  const delivered = deliveries.reduce((sum, d) => sum + d.quantityDelivered, 0)
+  const delivered = deliveries.reduce((sum, d) => sum + d.quantityDelivered - d.returnedQuantity, 0)
   const adjustment = adjustmentAgg._sum.difference?.toNumber() ?? 0
   return Math.max(0, produced - soldDirect - delivered + adjustment - consumedAsComponent)
 }
@@ -90,10 +90,11 @@ async function getRawVariantAvailable(productId: string, colorComboKey: string, 
   const variant = breakdown.find((v) => v.key === colorComboKey)
   const produced = variant?.quantity ?? 0
   const [deliveredAgg, soldAgg] = await Promise.all([
-    prisma.consignmentDelivery.aggregate({ where: { productId, colorComboKey }, _sum: { quantityDelivered: true } }),
+    prisma.consignmentDelivery.aggregate({ where: { productId, colorComboKey }, _sum: { quantityDelivered: true, returnedQuantity: true } }),
     prisma.sale.aggregate({ where: { productId, colorComboKey }, _sum: { quantity: true } }),
   ])
-  return Math.max(0, produced - (deliveredAgg._sum.quantityDelivered ?? 0) - (soldAgg._sum.quantity ?? 0))
+  const delivered = (deliveredAgg._sum.quantityDelivered ?? 0) - (deliveredAgg._sum.returnedQuantity ?? 0)
+  return Math.max(0, produced - delivered - (soldAgg._sum.quantity ?? 0))
 }
 
 // Encomenda com variação personalizada: quanto dá pra montar AGORA pra um
