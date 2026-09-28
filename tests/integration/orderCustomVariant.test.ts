@@ -8,6 +8,7 @@ const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL }
 
 async function cleanup() {
   await prisma.orderReallocation.deleteMany()
+  await prisma.orderItem.deleteMany()
   await prisma.order.deleteMany()
   await prisma.productAssembly.deleteMany()
   await prisma.productionRun.deleteMany()
@@ -70,16 +71,21 @@ async function producePart(productId: string, partId: string, printerId: string,
   }))
 }
 
-function orderFdWithColors(productId: string, colorChoices: Record<string, string>, overrides: Record<string, string> = {}): FormData {
+// Melhoria "Pedidos com múltiplos itens": createOrder recebe o cabeçalho
+// solto + itemsJson com 1 item -- este helper monta esse envelope (mesmo
+// contrato que orderFd em orderReservations.test.ts), com colorChoicesJson
+// dentro do próprio item.
+function orderFdWithColors(productId: string, colorChoices: Record<string, string>, overrides: { quantity?: string; unitPrice?: string; deliveryDate?: string } = {}): FormData {
   return fd({
-    productId,
     channel: 'DIRETA',
-    quantity: '1',
-    unitPrice: '30',
     orderDate: '2026-09-01',
-    deliveryDate: '2026-09-20',
-    colorChoicesJson: JSON.stringify(colorChoices),
-    ...overrides,
+    deliveryDate: overrides.deliveryDate ?? '2026-09-20',
+    itemsJson: JSON.stringify([{
+      productId,
+      colorChoicesJson: JSON.stringify(colorChoices),
+      quantity: Number(overrides.quantity ?? '1'),
+      unitPrice: Number(overrides.unitPrice ?? '30'),
+    }]),
   })
 }
 
@@ -141,9 +147,9 @@ describe('createOrder com colorChoicesJson (encomenda personalizada)', () => {
     const result = await createOrder(orderFdWithColors(product.id, { [cabeca.id]: azul.id, [corpo.id]: azul.id }, { quantity: '2' }))
     expect(result.success).toBe(true)
 
-    const order = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
-    expect(order.status).toBe('PRONTO_RESERVADO')
-    expect(order.reservedQuantity).toBe(2)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect(item.status).toBe('PRONTO_RESERVADO')
+    expect(item.reservedQuantity).toBe(2)
   })
 
   it('peças soltas disponíveis na cor pedida (produzidas mas não montadas) -- pedido vira Aguardando montagem', async () => {
@@ -154,9 +160,9 @@ describe('createOrder com colorChoicesJson (encomenda personalizada)', () => {
     const result = await createOrder(orderFdWithColors(product.id, { [cabeca.id]: azul.id, [corpo.id]: azul.id }, { quantity: '2' }))
     expect(result.success).toBe(true)
 
-    const order = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
-    expect(order.status).toBe('AGUARDANDO_MONTAGEM')
-    expect(order.reservedQuantity).toBe(0)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect(item.status).toBe('AGUARDANDO_MONTAGEM')
+    expect(item.reservedQuantity).toBe(0)
   })
 
   it('nada disponível (cor nunca produzida) -- pedido vira Aguardando produção', async () => {
@@ -165,9 +171,9 @@ describe('createOrder com colorChoicesJson (encomenda personalizada)', () => {
     const result = await createOrder(orderFdWithColors(product.id, { [cabeca.id]: azul.id, [corpo.id]: azul.id }, { quantity: '1' }))
     expect(result.success).toBe(true)
 
-    const order = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
-    expect(order.status).toBe('AGUARDANDO_PRODUCAO')
-    expect(order.reservedQuantity).toBe(0)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect(item.status).toBe('AGUARDANDO_PRODUCAO')
+    expect(item.reservedQuantity).toBe(0)
   })
 
   it('rejeita combinação com peça de receita fixa recebendo escolha de cor', async () => {
@@ -207,8 +213,8 @@ describe('getOrderDemandQueue -- isolamento por cor entre pedidos do mesmo produ
     expect(orderAzul.success).toBe(true)
 
     const [refreshedVermelho, refreshedAzul] = await Promise.all([
-      prisma.order.findFirstOrThrow({ where: { productId: product.id, colorComboKey: { contains: vermelho.id } } }),
-      prisma.order.findFirstOrThrow({ where: { productId: product.id, colorComboKey: { contains: azul.id } } }),
+      prisma.orderItem.findFirstOrThrow({ where: { productId: product.id, colorComboKey: { contains: vermelho.id } } }),
+      prisma.orderItem.findFirstOrThrow({ where: { productId: product.id, colorComboKey: { contains: azul.id } } }),
     ])
     // Vermelho tem peça solta disponível -- vira Aguardando montagem.
     expect(refreshedVermelho.status).toBe('AGUARDANDO_MONTAGEM')
@@ -217,13 +223,13 @@ describe('getOrderDemandQueue -- isolamento por cor entre pedidos do mesmo produ
     expect(refreshedAzul.status).toBe('AGUARDANDO_PRODUCAO')
 
     const queue = await getOrderDemandQueue()
-    const assemblyRow = queue.assemblyRows.find((r) => r.orderId === refreshedVermelho.id)
+    const assemblyRow = queue.assemblyRows.find((r) => r.orderItemId === refreshedVermelho.id)
     expect(assemblyRow).toBeDefined()
     expect(assemblyRow?.neededUnits).toBe(1)
 
     // A linha de produção do pedido azul deve pedir a peça em AZUL
     // especificamente (comboLabel), não em qualquer cor.
-    const productionRowsForAzul = queue.productionRows.filter((r) => r.orderId === refreshedAzul.id)
+    const productionRowsForAzul = queue.productionRows.filter((r) => r.orderItemId === refreshedAzul.id)
     expect(productionRowsForAzul.length).toBeGreaterThan(0)
     for (const row of productionRowsForAzul) {
       expect(row.filamentIds).toEqual([azul.id])
@@ -247,17 +253,15 @@ describe('confirmAssembly reconcilia pedido genérico (sem cor específica)', ()
     // Pedido genérico, criado ANTES de qualquer peça existir -- nasce
     // Aguardando produção, sem colorComboKey nenhum.
     const orderResult = await createOrder(fd({
-      productId: product.id,
       channel: 'DIRETA',
-      quantity: '1',
-      unitPrice: '30',
       orderDate: '2026-09-01',
       deliveryDate: '2026-09-20',
+      itemsJson: JSON.stringify([{ productId: product.id, quantity: 1, unitPrice: 30 }]),
     }))
     expect(orderResult.success).toBe(true)
-    const genericOrder = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
-    expect(genericOrder.colorComboKey).toBeNull()
-    expect(genericOrder.status).toBe('AGUARDANDO_PRODUCAO')
+    const genericItem = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect(genericItem.colorComboKey).toBeNull()
+    expect(genericItem.status).toBe('AGUARDANDO_PRODUCAO')
 
     // Produz e monta 1 unidade inteira numa cor ESPECÍFICA (azul) -- o
     // pedido genérico não pediu cor nenhuma, então deveria aceitar
@@ -274,14 +278,14 @@ describe('confirmAssembly reconcilia pedido genérico (sem cor específica)', ()
     }))
     expect(assemble.success).toBe(true)
 
-    const refreshed = await prisma.order.findUniqueOrThrow({ where: { id: genericOrder.id } })
+    const refreshed = await prisma.orderItem.findUniqueOrThrow({ where: { id: genericItem.id } })
     expect(refreshed.status).toBe('PRONTO_RESERVADO')
     expect(refreshed.reservedQuantity).toBe(1)
 
     // A fila de demanda de Produção não deve mais pedir peça nenhuma pra
     // este pedido -- já está totalmente coberto pela unidade pronta.
     const queue = await getOrderDemandQueue()
-    expect(queue.productionRows.some((r) => r.orderId === genericOrder.id)).toBe(false)
-    expect(queue.assemblyRows.some((r) => r.orderId === genericOrder.id)).toBe(false)
+    expect(queue.productionRows.some((r) => r.orderItemId === genericItem.id)).toBe(false)
+    expect(queue.assemblyRows.some((r) => r.orderItemId === genericItem.id)).toBe(false)
   })
 })

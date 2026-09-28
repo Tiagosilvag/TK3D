@@ -9,8 +9,12 @@ export default async function OrdersPage() {
     prisma.order.findMany({
       orderBy: { deliveryDate: 'asc' },
       include: {
-        product: true,
-        reallocationsLost: { include: { toOrder: { select: { orderNumber: true } } }, orderBy: { createdAt: 'desc' } },
+        items: {
+          include: {
+            product: true,
+            reallocationsLost: { include: { toOrderItem: { include: { order: { select: { orderNumber: true } } } } }, orderBy: { createdAt: 'desc' } },
+          },
+        },
       },
     }),
     // Brinde nunca é vendido sozinho -- excluído do seletor (já filtrado
@@ -19,8 +23,8 @@ export default async function OrdersPage() {
   ])
 
   // Mesmo dado (variantes por produto) alimenta o seletor do OrderForm E
-  // a resolução de label/cor de cada pedido já registrado na tabela --
-  // um único fetch, dois usos.
+  // a resolução de label/cor de cada item já registrado na tabela -- um
+  // único fetch, dois usos.
   const variantByKey = new Map<string, { label: string; colorHex: string | null }>()
   for (const p of variantProducts) {
     for (const v of p.variants) variantByKey.set(`${p.productId}::${v.key}`, { label: v.label, colorHex: v.colorHex })
@@ -33,30 +37,34 @@ export default async function OrdersPage() {
     variants: p.variants.map((v) => ({ key: v.key, label: v.label, colorHex: v.colorHex, available: v.available })),
   }))
 
-  const rows: OrderRow[] = orders.map((o) => {
-    const variant = o.colorComboKey ? variantByKey.get(`${o.productId}::${o.colorComboKey}`) : undefined
-    return {
-      id: o.id,
-      orderDate: o.orderDate.toISOString(),
-      deliveryDate: o.deliveryDate.toISOString(),
-      channel: o.channel,
-      productName: o.product.name,
-      colorLabel: variant?.label ?? null,
-      colorHex: variant?.colorHex ?? null,
-      quantity: o.quantity,
-      reservedQuantity: o.reservedQuantity,
-      unitPrice: o.unitPrice.toNumber(),
-      buyerOrPlatform: o.buyerOrPlatform,
-      orderNumber: o.orderNumber,
-      status: o.status,
-      saleId: o.saleId,
-      reallocationsLost: o.reallocationsLost.map((r) => ({
-        quantity: r.quantity,
-        toOrderNumber: r.toOrder.orderNumber,
-        createdAt: r.createdAt.toISOString(),
-      })),
-    }
-  })
+  const rows: OrderRow[] = orders.map((o) => ({
+    id: o.id,
+    orderNumber: o.orderNumber,
+    orderDate: o.orderDate.toISOString(),
+    deliveryDate: o.deliveryDate.toISOString(),
+    channel: o.channel,
+    buyerOrPlatform: o.buyerOrPlatform,
+    notes: o.notes,
+    items: o.items.map((item) => {
+      const variant = item.colorComboKey ? variantByKey.get(`${item.productId}::${item.colorComboKey}`) : undefined
+      return {
+        id: item.id,
+        productName: item.product.name,
+        colorLabel: variant?.label ?? null,
+        colorHex: variant?.colorHex ?? null,
+        quantity: item.quantity,
+        reservedQuantity: item.reservedQuantity,
+        unitPrice: item.unitPrice.toNumber(),
+        status: item.status,
+        saleId: item.saleId,
+        reallocationsLost: item.reallocationsLost.map((r) => ({
+          quantity: r.quantity,
+          toOrderNumber: r.toOrderItem.order.orderNumber,
+          createdAt: r.createdAt.toISOString(),
+        })),
+      }
+    }),
+  }))
 
   return (
     <div className="tk-page">

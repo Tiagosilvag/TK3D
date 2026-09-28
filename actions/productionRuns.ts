@@ -65,7 +65,7 @@ async function maybeReconcileAfterProduction(productId: string, filamentId: stri
     await reconcileOrderReservations(productId, filamentId)
     return
   }
-  const pendingCombos = await prisma.order.findMany({
+  const pendingCombos = await prisma.orderItem.findMany({
     where: { productId, status: { notIn: ['ENTREGUE', 'CANCELADO'] } },
     select: { colorComboKey: true },
     distinct: ['colorComboKey'],

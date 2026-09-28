@@ -993,7 +993,7 @@ export async function confirmAssembly(formData: FormData): Promise<ActionResult>
   // maybeReconcileAfterProduction (actions/productionRuns.ts): reconcilia
   // TODO colorComboKey pendente deste produto, não só o que acabou de ser
   // montado -- barato/idempotente quando nada mudou pra um combo.
-  const pendingCombos = await prisma.order.findMany({
+  const pendingCombos = await prisma.orderItem.findMany({
     where: { productId, status: { notIn: ['ENTREGUE', 'CANCELADO'] } },
     select: { colorComboKey: true },
     distinct: ['colorComboKey'],

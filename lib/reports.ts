@@ -647,7 +647,7 @@ export async function getProductVariantStockOptions(): Promise<ProductVariantSto
     // Melhoria "Pedidos com reserva de estoque": mesmo raciocínio de
     // getOwnStockSummary -- pedido não-terminal já reservou a variante
     // pra si, desconta de "available" abaixo.
-    prisma.order.groupBy({ by: ['productId', 'colorComboKey'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { reservedQuantity: true } }),
+    prisma.orderItem.groupBy({ by: ['productId', 'colorComboKey'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { reservedQuantity: true } }),
   ])
   const deliveredByProductAndKey = new Map<string, number>()
   for (const d of alreadyDelivered) {
@@ -711,13 +711,13 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
     // ENTREGUE assumiu o papel de status terminal que CONCLUIDO tinha
     // (melhoria "Pedidos com reserva de estoque") -- CANCELADO é o outro
     // terminal, também fora da conta de "em produção".
-    prisma.order.groupBy({ by: ['productId'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { quantity: true } }),
+    prisma.orderItem.groupBy({ by: ['productId'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { quantity: true } }),
     // Melhoria "Pedidos com reserva de estoque": peça já reservada por um
     // pedido não-terminal some do Disponível -- mesmo raciocínio de Sale/
     // ConsignmentDelivery, só que reservedQuantity é recalculado por
     // lib/orderReservations.ts#reconcileOrderReservations, não um fato
     // permanente gravado direto.
-    prisma.order.groupBy({ by: ['productId'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { reservedQuantity: true } }),
+    prisma.orderItem.groupBy({ by: ['productId'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { reservedQuantity: true } }),
   ])
 
   // Melhoria "Produto-como-componente": quanto de cada produto já foi

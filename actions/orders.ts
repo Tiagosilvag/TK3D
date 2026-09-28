@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { orderSchema, orderStatusEnum } from '@/lib/validation/order'
+import { orderHeaderSchema, orderItemSchema, orderStatusEnum } from '@/lib/validation/order'
 import { getProductCostBreakdown } from '@/actions/products'
 import { consumePackagingForSale } from '@/actions/sales'
 import { resolveSalePlatformFee } from '@/actions/marketplacePlatforms'
@@ -15,32 +15,6 @@ import { revalidatePath } from 'next/cache'
 import type { Prisma, OrderChannel, OrderStatus, SaleChannel } from '@prisma/client'
 
 type ActionResult = { success: boolean; error?: string; reallocations?: OrderReallocationEvent[] }
-
-function parse(formData: FormData, colorComboKeyOverride?: string) {
-  const raw = Object.fromEntries(formData)
-  return orderSchema.safeParse({
-    ...raw,
-    // Bug "pedido genérico fica travado em falta produzir pra sempre":
-    // o <select name="colorComboKey"> de OrderForm.tsx sempre existe no
-    // DOM (mesmo pra produto que já tem variante conhecida, mas o
-    // comprador não pediu cor específica) -- FormData sempre manda o
-    // campo, "" quando nada foi escolhido. `??` só troca null/undefined,
-    // nunca "" -- colorComboKey acabava gravado como STRING VAZIA, não
-    // null. reconcileOrderReservations/maxAssemblableUnitsForCombo
-    // (lib/orderReservations.ts) fazem `colorComboKey === null` pra
-    // decidir "pedido genérico" (pool agregado) vs "combo específico"
-    // (getRawVariantAvailable, que procura uma variante com key === "" --
-    // nunca existe) -- "" nunca bate em `=== null`, cai sempre no
-    // caminho de variante específica, que nunca acha nada e trava
-    // reservedQuantity em 0 pra sempre, não importa quanto estoque exista.
-    // `||` trata "" igual null/undefined -- sempre um pedido genérico de
-    // verdade quando nenhuma cor foi escolhida.
-    colorComboKey: colorComboKeyOverride || raw.colorComboKey || null,
-    buyerOrPlatform: raw.buyerOrPlatform || null,
-    orderNumber: raw.orderNumber || null,
-    notes: raw.notes || null,
-  })
-}
 
 export interface OrderablePartOption {
   partId: string
@@ -97,22 +71,12 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
   })
 }
 
-// Melhoria "Pedidos com reserva de estoque": depois de criar o pedido,
-// tenta reservar do estoque disponível na hora (reconcileOrderReservations
-// recalcula a fila inteira daquele produto+variação, do zero, por
-// prioridade de prazo) -- se isso tomar peça de outro pedido que já
-// tinha reserva (só acontece quando o pedido novo é mais urgente que um
-// já reservado), os eventos voltam no ActionResult pro form mostrar o
-// aviso passageiro (só existe aqui -- produção/montagem nunca "roubam"
-// reserva de ninguém, só preenchem buraco, ver lib/orderReservations.ts).
-// Encomenda com variação personalizada: quando o formulário manda
-// colorChoicesJson ({ partId: filamentId }, do CustomVariantPicker),
-// revalida contra as peças REAIS do produto (nunca confia cegamente no
-// client) antes de virar colorComboKey -- toda peça citada precisa
-// existir, ser de cor variável (não receita fixa) e apontar pra um
-// filamento que existe. Cálculo de serializeColorChoices fica sempre no
-// servidor (nunca no client, que não importa lib/reports.ts -- é
-// server-only, usa Prisma).
+// Encomenda com variação personalizada: valida um colorChoicesJson
+// ({ partId: filamentId }, do CustomVariantPicker) contra as peças REAIS
+// do produto (nunca confia cegamente no client) antes de virar
+// colorComboKey. Cálculo de serializeColorChoices fica sempre no servidor
+// (nunca no client, que não importa lib/reports.ts -- é server-only, usa
+// Prisma).
 async function resolveCustomColorComboKey(productId: string, colorChoicesJson: string): Promise<{ colorComboKey: string } | { error: string }> {
   let raw: unknown
   try {
@@ -141,20 +105,70 @@ async function resolveCustomColorComboKey(productId: string, colorChoicesJson: s
   return { colorComboKey: serializeColorChoices(choices) }
 }
 
+// Melhoria "Pedidos com múltiplos itens": um pedido agora é 1 cabeçalho
+// (channel/datas/comprador/número/observações, preenchido uma vez) + N
+// itens (1 produto+cor+quantidade+preço cada) -- o formulário manda os
+// campos do cabeçalho soltos e um `itemsJson` com a lista inteira (mesmo
+// padrão de createSaleBatch/createConsignmentDeliveryBatch: tudo cria de
+// uma vez, numa transação só). Cada item pode trazer seu próprio
+// `colorChoicesJson` (do CustomVariantPicker), resolvido pra colorComboKey
+// individualmente. Depois de criar, reconcilia cada par (productId,
+// colorComboKey) distinto entre os itens novos -- exatamente como
+// createOrder fazia pra 1 item só antes, só que em lote; os eventos de
+// realocação de todos os itens voltam juntos pro form mostrar o aviso.
 export async function createOrder(formData: FormData): Promise<ActionResult> {
-  const colorChoicesJson = formData.get('colorChoicesJson')
-  let colorComboKeyOverride: string | undefined
-  if (typeof colorChoicesJson === 'string' && colorChoicesJson) {
-    const productId = String(formData.get('productId') ?? '')
-    const resolved = await resolveCustomColorComboKey(productId, colorChoicesJson)
-    if ('error' in resolved) return { success: false, error: resolved.error }
-    colorComboKeyOverride = resolved.colorComboKey
+  const raw = Object.fromEntries(formData)
+  const headerParsed = orderHeaderSchema.safeParse({
+    ...raw,
+    buyerOrPlatform: raw.buyerOrPlatform || null,
+    orderNumber: raw.orderNumber || null,
+    notes: raw.notes || null,
+  })
+  if (!headerParsed.success) return { success: false, error: headerParsed.error.issues[0].message }
+
+  let rawItems: unknown = []
+  try {
+    rawItems = JSON.parse(String(raw.itemsJson ?? '[]'))
+  } catch {
+    rawItems = []
+  }
+  if (!Array.isArray(rawItems) || rawItems.length === 0) {
+    return { success: false, error: 'Adicione pelo menos um item ao pedido' }
   }
 
-  const parsed = parse(formData, colorComboKeyOverride)
-  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
-  const order = await prisma.order.create({ data: parsed.data })
-  const reallocations = await reconcileOrderReservations(order.productId, order.colorComboKey)
+  const resolvedItems: { productId: string; colorComboKey: string | null; quantity: number; unitPrice: number }[] = []
+  for (const rawItem of rawItems as Record<string, unknown>[]) {
+    let colorComboKey = (typeof rawItem.colorComboKey === 'string' ? rawItem.colorComboKey : null) || null
+    if (typeof rawItem.colorChoicesJson === 'string' && rawItem.colorChoicesJson) {
+      const resolved = await resolveCustomColorComboKey(String(rawItem.productId ?? ''), rawItem.colorChoicesJson)
+      if ('error' in resolved) return { success: false, error: resolved.error }
+      colorComboKey = resolved.colorComboKey
+    }
+    const itemParsed = orderItemSchema.safeParse({ productId: rawItem.productId, colorComboKey, quantity: rawItem.quantity, unitPrice: rawItem.unitPrice })
+    if (!itemParsed.success) return { success: false, error: itemParsed.error.issues[0].message }
+    resolvedItems.push({
+      productId: itemParsed.data.productId,
+      colorComboKey: itemParsed.data.colorComboKey ?? null,
+      quantity: itemParsed.data.quantity,
+      unitPrice: itemParsed.data.unitPrice,
+    })
+  }
+
+  await prisma.order.create({
+    data: {
+      ...headerParsed.data,
+      items: { create: resolvedItems },
+    },
+  })
+
+  const distinctPairs = new Map<string, { productId: string; colorComboKey: string | null }>()
+  for (const item of resolvedItems) distinctPairs.set(`${item.productId}::${item.colorComboKey ?? ''}`, item)
+
+  const reallocations: OrderReallocationEvent[] = []
+  for (const { productId, colorComboKey } of distinctPairs.values()) {
+    reallocations.push(...(await reconcileOrderReservations(productId, colorComboKey)))
+  }
+
   revalidatePath('/orders')
   revalidatePath('/stock')
   revalidatePath('/production')
@@ -180,68 +194,68 @@ const ORDER_CHANNEL_PLATFORM_LABEL: Record<OrderChannel, string> = {
 
 const updateStatusSchema = z.object({ status: orderStatusEnum })
 
-// Muda o status do pedido; ao chegar em ENTREGUE pela primeira vez (nunca
-// se já tiver saleId -- idempotente contra clique duplo/reentrada), cria a
-// Sale correspondente com o costSnapshot já congelado (mesmo padrão de
-// createSale em actions/sales.ts) e vincula via Order.saleId. "Dar baixa
-// no estoque" continua sendo só essa Sale entrando na conta de
-// getOwnStockSummary -- sem contador separado. Melhoria "Pedidos com
-// reserva de estoque": ENTREGUE assumiu o papel que CONCLUIDO tinha (esse
-// último vira legado, nunca mais escrito); os status intermediários
+// Muda o status de um ITEM do pedido (não o pedido inteiro -- cada item
+// tem seu próprio ciclo de vida desde "Pedidos com múltiplos itens"); ao
+// chegar em ENTREGUE pela primeira vez (nunca se já tiver saleId --
+// idempotente contra clique duplo/reentrada), cria a Sale correspondente
+// com o costSnapshot já congelado (mesmo padrão de createSale em
+// actions/sales.ts), puxando canal/comprador/número do CABEÇALHO (Order)
+// via include, e vincula via OrderItem.saleId. Os status intermediários
 // (AGUARDANDO_PRODUCAO/PARCIAL_.../AGUARDANDO_MONTAGEM/PRONTO_RESERVADO)
-// não são mais setados por aqui -- são derivados por
-// reconcileOrderReservations, a UI só mostra (ver OrderStatusForm.tsx).
-export async function updateOrderStatus(id: string, formData: FormData): Promise<ActionResult> {
+// não são setados por aqui -- são derivados por reconcileOrderReservations,
+// a UI só mostra (ver OrderStatusForm.tsx).
+export async function updateOrderItemStatus(id: string, formData: FormData): Promise<ActionResult> {
   const parsed = updateStatusSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
-  const order = await prisma.order.findUniqueOrThrow({ where: { id } })
+  const item = await prisma.orderItem.findUniqueOrThrow({ where: { id }, include: { order: true } })
 
-  if (parsed.data.status !== 'ENTREGUE' || order.saleId) {
-    await prisma.order.update({ where: { id }, data: { status: parsed.data.status } })
+  if (parsed.data.status !== 'ENTREGUE' || item.saleId) {
+    await prisma.orderItem.update({ where: { id }, data: { status: parsed.data.status } })
     revalidatePath('/orders')
     return { success: true }
   }
 
-  const breakdown = await getProductCostBreakdown(order.productId)
-  const saleChannel = ORDER_CHANNEL_TO_SALE_CHANNEL[order.channel]
-  const platformFee = await resolveSalePlatformFee(saleChannel, order.unitPrice.toNumber(), order.productId)
+  const breakdown = await getProductCostBreakdown(item.productId)
+  const saleChannel = ORDER_CHANNEL_TO_SALE_CHANNEL[item.order.channel]
+  const platformFee = await resolveSalePlatformFee(saleChannel, item.unitPrice.toNumber(), item.productId)
   const snapshot = buildSaleCostSnapshot(
     breakdown,
-    order.quantity,
-    platformFee ? { feePercent: platformFee.feePercent, feeFixed: platformFee.feeFixed, amountTotal: platformFee.feeAmountPerUnit * order.quantity } : undefined,
+    item.quantity,
+    platformFee ? { feePercent: platformFee.feePercent, feeFixed: platformFee.feeFixed, amountTotal: platformFee.feeAmountPerUnit * item.quantity } : undefined,
   )
 
   await prisma.$transaction(async (tx) => {
     const sale = await tx.sale.create({
       data: {
         channel: saleChannel,
-        productId: order.productId,
-        colorComboKey: order.colorComboKey,
-        quantity: order.quantity,
-        unitPrice: order.unitPrice,
+        productId: item.productId,
+        colorComboKey: item.colorComboKey,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
         saleDate: new Date(),
-        buyerOrPlatform: order.buyerOrPlatform ?? ORDER_CHANNEL_PLATFORM_LABEL[order.channel],
-        notes: order.orderNumber ? `Pedido #${order.orderNumber}` : null,
+        buyerOrPlatform: item.order.buyerOrPlatform ?? ORDER_CHANNEL_PLATFORM_LABEL[item.order.channel],
+        notes: item.order.orderNumber ? `Pedido #${item.order.orderNumber}` : null,
         costSnapshot: snapshot as unknown as Prisma.InputJsonValue,
         // Melhoria "Vendas: múltiplos produtos numa venda": Sale.batchId é
-        // NOT NULL -- pedido concluído sempre vira uma venda de 1 item só,
-        // então recebe seu próprio lote (mesmo raciocínio de createSale).
+        // NOT NULL -- item de pedido concluído sempre vira uma venda de 1
+        // item só, então recebe seu próprio lote (mesmo raciocínio de
+        // createSale).
         batchId: randomUUID(),
       },
     })
-    await tx.order.update({ where: { id }, data: { status: 'ENTREGUE', saleId: sale.id } })
+    await tx.orderItem.update({ where: { id }, data: { status: 'ENTREGUE', saleId: sale.id } })
     // Melhoria "Histórico de consumo": mesmo consumo de embalagem que
-    // createSale aplica (actions/sales.ts) -- pedido concluído vira Sale
+    // createSale aplica (actions/sales.ts) -- item concluído vira Sale
     // aqui direto (nunca chama createSale), então precisa do mesmo passo.
-    await consumePackagingForSale(tx, sale.id, order.productId, order.quantity)
+    await consumePackagingForSale(tx, sale.id, item.productId, item.quantity)
   })
 
   // ENTREGUE é terminal -- sai da conta de "reservado", reconcilia pra
   // dar a próxima peça (se sobrar alguma, o que não deveria acontecer já
-  // que este pedido só chega aqui com reservedQuantity == quantity, mas
+  // que este item só chega aqui com reservedQuantity == quantity, mas
   // roda mesmo assim por segurança/consistência).
-  await reconcileOrderReservations(order.productId, order.colorComboKey)
+  await reconcileOrderReservations(item.productId, item.colorComboKey)
 
   revalidatePath('/orders')
   revalidatePath('/sales')
@@ -250,22 +264,27 @@ export async function updateOrderStatus(id: string, formData: FormData): Promise
   return { success: true }
 }
 
-// Melhoria "Pedidos com reserva de estoque": cancelar é diferente de
-// excluir -- o pedido continua existindo (histórico), só vira terminal
-// (CANCELADO) e sai da conta de "reservado"/fila de demanda.
-// reservedQuantity NÃO é zerado (fica como registro do que este pedido
-// chegou a ter, mesma filosofia de nunca reescrever fato passado --
-// costSnapshot é o precedente) -- quem muda é a exclusão de CANCELADO da
-// soma de "reservado" em lib/reports.ts, então a peça já volta a contar
-// como Disponível sem precisar apagar nada; reconcileOrderReservations
-// roda em seguida pra dar a peça liberada pro próximo pedido da fila.
+// Melhoria "Pedidos com múltiplos itens": cancelar age no PEDIDO (todos os
+// itens ainda não terminais de uma vez), já que a ação fica no cabeçalho
+// na tela -- item já ENTREGUE (virou Sale) ou já CANCELADO fica intocado.
+// Mesma filosofia de sempre: reservedQuantity NÃO é zerado (fica como
+// registro do que aquele item chegou a ter), reconcileOrderReservations
+// roda em seguida pra dar a peça liberada pro próximo item da fila.
 export async function cancelOrder(id: string): Promise<ActionResult> {
-  const order = await prisma.order.findUniqueOrThrow({ where: { id } })
-  if (order.saleId) {
-    return { success: false, error: 'Este pedido já foi entregue e virou uma venda — cancele a venda em Vendas, se necessário.' }
+  const order = await prisma.order.findUniqueOrThrow({ where: { id }, include: { items: true } })
+  const targets = order.items.filter((i) => i.status !== 'CANCELADO' && i.status !== 'ENTREGUE')
+  if (targets.length === 0) {
+    return { success: false, error: 'Nenhum item pendente pra cancelar (já entregue ou cancelado).' }
   }
-  await prisma.order.update({ where: { id }, data: { status: 'CANCELADO' } })
-  const reallocations = await reconcileOrderReservations(order.productId, order.colorComboKey)
+  await prisma.orderItem.updateMany({ where: { id: { in: targets.map((t) => t.id) } }, data: { status: 'CANCELADO' } })
+
+  const distinctPairs = new Map<string, { productId: string; colorComboKey: string | null }>()
+  for (const t of targets) distinctPairs.set(`${t.productId}::${t.colorComboKey ?? ''}`, t)
+  const reallocations: OrderReallocationEvent[] = []
+  for (const { productId, colorComboKey } of distinctPairs.values()) {
+    reallocations.push(...(await reconcileOrderReservations(productId, colorComboKey)))
+  }
+
   revalidatePath('/orders')
   revalidatePath('/stock')
   revalidatePath('/production')
@@ -273,16 +292,26 @@ export async function cancelOrder(id: string): Promise<ActionResult> {
   return { success: true, reallocations }
 }
 
-// Só pedidos ainda não entregues podem ser removidos -- uma vez com Sale
-// vinculada, a Sale é o registro real da transação (deleteSale, se for o
-// caso, já existe em actions/sales.ts).
+// Só pedido sem NENHUM item entregue pode ser removido -- uma vez com
+// Sale vinculada, a Sale é o registro real da transação (deleteSale, se
+// for o caso, já existe em actions/sales.ts). Order.items usa onDelete:
+// Cascade (schema.prisma) -- apagar o cabeçalho já leva os itens junto;
+// se algum item tiver reallocation associada, o delete falha (FK
+// RESTRICT em OrderReallocation), mesmo comportamento que já existia
+// antes de Order virar cabeçalho+itens.
 export async function deleteOrder(id: string): Promise<ActionResult> {
-  const order = await prisma.order.findUniqueOrThrow({ where: { id } })
-  if (order.saleId) {
-    return { success: false, error: 'Este pedido já foi entregue e virou uma venda — remova a venda em Vendas, se necessário.' }
+  const order = await prisma.order.findUniqueOrThrow({ where: { id }, include: { items: true } })
+  if (order.items.some((i) => i.saleId)) {
+    return { success: false, error: 'Este pedido já tem item(ns) entregue(s) que viraram venda — remova a venda em Vendas, se necessário.' }
   }
+  const pairs = new Map<string, { productId: string; colorComboKey: string | null }>()
+  for (const i of order.items) pairs.set(`${i.productId}::${i.colorComboKey ?? ''}`, i)
+
   await prisma.order.delete({ where: { id } })
-  await reconcileOrderReservations(order.productId, order.colorComboKey)
+
+  for (const { productId, colorComboKey } of pairs.values()) {
+    await reconcileOrderReservations(productId, colorComboKey)
+  }
   revalidatePath('/orders')
   revalidatePath('/stock')
   revalidatePath('/production')
@@ -290,20 +319,21 @@ export async function deleteOrder(id: string): Promise<ActionResult> {
   return { success: true }
 }
 
-// Melhoria "Fila de demanda em Produção/Montagem": 1 linha por (pedido,
-// peça-ou-produto) que ainda falta pra fechar aquele pedido -- só pedido
-// não-terminal com quantity > reservedQuantity entra aqui. Produto sem
-// componente nenhum (não precisa de montagem) só pode faltar "produzir o
-// produto direto" -- entra em productionRows. Produto que precisa de
-// montagem quebra o que falta em, por peça: quanto dá pra cobrir com peça
-// JÁ produzida esperando montagem (assemblyRows) e quanto ainda falta
-// produzir de cada peça (productionRows) -- reivindicando de um "pool"
-// corrido por peça (inicializado do que getAssemblyStatus reporta como
-// disponível agora), na mesma ordem de prioridade por prazo que
-// reconcileOrderReservations usa pra reserva de verdade, pra não
-// superestimar quando 2+ pedidos disputam a mesma peça na exibição.
+// Melhoria "Fila de demanda em Produção/Montagem": 1 linha por (item de
+// pedido, peça-ou-produto) que ainda falta pra fechar aquele item -- só
+// item não-terminal com quantity > reservedQuantity entra aqui. Produto
+// sem componente nenhum (não precisa de montagem) só pode faltar
+// "produzir o produto direto" -- entra em productionRows. Produto que
+// precisa de montagem quebra o que falta em, por peça: quanto dá pra
+// cobrir com peça JÁ produzida esperando montagem (assemblyRows) e quanto
+// ainda falta produzir de cada peça (productionRows) -- reivindicando de
+// um "pool" corrido por peça (inicializado do que getAssemblyStatus
+// reporta como disponível agora), na mesma ordem de prioridade por prazo
+// que reconcileOrderReservations usa pra reserva de verdade (o prazo
+// agora mora no cabeçalho -- ordena via `order.deliveryDate`), pra não
+// superestimar quando 2+ itens disputam a mesma peça na exibição.
 export interface OrderDemandRow {
-  orderId: string
+  orderItemId: string
   orderNumber: string | null
   channel: OrderChannel
   buyerOrPlatform: string | null
@@ -316,23 +346,26 @@ export interface OrderDemandRow {
   neededUnits: number
   reservedQuantity: number
   quantity: number
-  // Encomenda com variação personalizada: colorComboKey inteiro do
-  // pedido (todas as peças), pra Montagem pré-selecionar a combinação
-  // certa; comboLabel/filamentIds são só da PEÇA desta linha (produção
-  // só imprime uma peça por vez), null quando o pedido não tem cor
-  // específica ou a peça é receita fixa.
+  // Encomenda com variação personalizada: colorComboKey inteiro do item
+  // (todas as peças), pra Montagem pré-selecionar a combinação certa;
+  // comboLabel/filamentIds são só da PEÇA desta linha (produção só
+  // imprime uma peça por vez), null quando o item não tem cor específica
+  // ou a peça é receita fixa.
   colorComboKey: string | null
   comboLabel: string | null
   filamentIds: string[] | null
 }
 
 export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDemandRow[]; assemblyRows: OrderDemandRow[] }> {
-  const orders = await prisma.order.findMany({
+  const items = await prisma.orderItem.findMany({
     where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } },
-    include: { product: { include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } } } },
-    orderBy: [{ deliveryDate: 'asc' }, { createdAt: 'asc' }],
+    include: {
+      product: { include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } } },
+      order: { select: { orderNumber: true, channel: true, buyerOrPlatform: true, deliveryDate: true } },
+    },
+    orderBy: [{ order: { deliveryDate: 'asc' } }, { createdAt: 'asc' }],
   })
-  const pending = orders.filter((o) => o.quantity > o.reservedQuantity)
+  const pending = items.filter((i) => i.quantity > i.reservedQuantity)
   if (pending.length === 0) return { productionRows: [], assemblyRows: [] }
 
   const productionRows: OrderDemandRow[] = []
@@ -347,7 +380,7 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
   // exatamente pra uma cor que ainda falta imprimir -- então
   // status.parts[].colorOptions (só lista combo JÁ produzido alguma vez,
   // getAssemblyStatus) nunca vai ter o rótulo dela. Pra peça de cor
-  // variável, o combo escolhido no pedido é sempre 1 filamentId sozinho
+  // variável, o combo escolhido no item é sempre 1 filamentId sozinho
   // (resolveCustomColorComboKey só aceita escolha assim), então dá pra
   // resolver o rótulo direto no catálogo -- carregado uma vez só, sob
   // demanda (nenhuma linha com colorComboKey, nenhuma query).
@@ -360,21 +393,21 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
     return filamentById.get(filamentId)?.colorName ?? null
   }
 
-  for (const order of pending) {
-    const shortfall = order.quantity - order.reservedQuantity
-    const product = order.product
+  for (const item of pending) {
+    const shortfall = item.quantity - item.reservedQuantity
+    const product = item.product
     const base = {
-      orderId: order.id,
-      orderNumber: order.orderNumber,
-      channel: order.channel,
-      buyerOrPlatform: order.buyerOrPlatform,
-      deliveryDate: order.deliveryDate,
-      status: order.status,
+      orderItemId: item.id,
+      orderNumber: item.order.orderNumber,
+      channel: item.order.channel,
+      buyerOrPlatform: item.order.buyerOrPlatform,
+      deliveryDate: item.order.deliveryDate,
+      status: item.status,
       productId: product.id,
       productName: product.name,
-      reservedQuantity: order.reservedQuantity,
-      quantity: order.quantity,
-      colorComboKey: order.colorComboKey,
+      reservedQuantity: item.reservedQuantity,
+      quantity: item.quantity,
+      colorComboKey: item.colorComboKey,
     }
 
     const needsAssembly = productNeedsAssembly({
@@ -403,13 +436,13 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
     }
     const { parts, pool, comboPools } = cacheByProduct.get(product.id)!
 
-    // Encomenda com variação personalizada: pedido com colorComboKey só
+    // Encomenda com variação personalizada: item com colorComboKey só
     // reivindica a fatia do combo que ELE pediu (nunca a soma de todas
-    // as cores da peça); pedido sem variante continua reivindicando o
-    // pool agregado de sempre, drenando de qualquer combo (não importa
-    // a cor pra ele) -- mantém os dois tipos de pedido consumindo do
-    // MESMO estoque físico subjacente, sem contar a peça duas vezes.
-    const choices = order.colorComboKey ? deserializeColorChoices(order.colorComboKey) : null
+    // as cores da peça); item sem variante continua reivindicando o pool
+    // agregado de sempre, drenando de qualquer combo (não importa a cor
+    // pra ele) -- mantém os dois tipos de item consumindo do MESMO
+    // estoque físico subjacente, sem contar a peça duas vezes.
+    const choices = item.colorComboKey ? deserializeColorChoices(item.colorComboKey) : null
 
     function availableForPart(partId: string): number {
       const combos = comboPools.get(partId)
@@ -443,8 +476,8 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
       const option = part?.colorOptions?.find((o) => o.key === chosenKey)
       if (option) return { comboLabel: option.label, filamentIds: option.filamentIds }
       // Cor nunca produzida pra essa peça -- sem entrada em colorOptions
-      // (produced-only). O combo de um pedido é sempre 1 filamentId
-      // sozinho pra peça de cor variável, então resolve pelo catálogo.
+      // (produced-only). O combo de um item é sempre 1 filamentId sozinho
+      // pra peça de cor variável, então resolve pelo catálogo.
       const label = await getFilamentLabel(chosenKey)
       return label ? { comboLabel: label, filamentIds: [chosenKey] } : { comboLabel: null, filamentIds: null }
     }
@@ -482,9 +515,9 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
 }
 
 // Bug "pedido antigo fica travado mostrando falta produzir pra sempre":
-// botão manual (DemandQueuePanel) pra varrer e reconciliar TODO pedido
-// pendente de uma vez -- corrige pedidos cuja reconciliação deveria ter
-// rodado num evento passado mas ficou pra trás (ex.: criados antes de um
+// botão manual (DemandQueuePanel) pra varrer e reconciliar TODO item
+// pendente de uma vez -- corrige item cuja reconciliação deveria ter
+// rodado num evento passado mas ficou pra trás (ex.: criado antes de um
 // fix de escopo de reconciliação), sem precisar esperar outro evento do
 // mesmo produto+combo disparar por acaso.
 export async function syncOrderReservations(): Promise<ActionResult> {
