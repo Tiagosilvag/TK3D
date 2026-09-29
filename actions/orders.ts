@@ -38,7 +38,15 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
   const [status, parts, filaments] = await Promise.all([
     getAssemblyStatus(productId),
     prisma.productPart.findMany({ where: { productId }, include: { filamentComponents: { include: { filament: true } } } }),
-    prisma.filament.findMany({ orderBy: { colorName: 'asc' } }),
+    // Bug "não fazia sentido pedir cor sem filamento em estoque": só
+    // filamento com currentStockGrams > 0 entra no catálogo de "cor nunca
+    // produzida" abaixo -- pedir uma cor que a loja não tem NENHUM grama
+    // pra imprimir sempre travava em "Registrar produção" (estoque
+    // insuficiente), um beco sem saída. Não afeta combo JÁ PRODUZIDO
+    // (existing.values() mais abaixo, fora deste filter) -- esses
+    // continuam pedíveis mesmo com o filamento cru esgotado depois, porque
+    // já existe peça física pronta daquela cor em algum lugar.
+    prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { colorName: 'asc' } }),
   ])
 
   const partById = new Map(parts.map((p) => [p.id, p]))

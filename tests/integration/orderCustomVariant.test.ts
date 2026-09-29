@@ -225,6 +225,42 @@ describe('bug "sem opção de variação nova pra produto simples": variação p
     expect(options[0].colorOptions.map((o) => o.key).sort()).toEqual([azul.id, vermelho.id].sort())
   })
 
+  // Bug "não fazia sentido pedir cor sem filamento em estoque": pedir uma
+  // cor cujo filamento cru tem 0g sempre travava depois em "Registrar
+  // produção" (estoque insuficiente) -- beco sem saída. Filamento com 0g
+  // não deveria nem aparecer como opção pedível.
+  it('filamento com 0g de estoque não aparece no catálogo de cor nunca produzida', async () => {
+    const { product, vermelho } = await createSimpleProduct()
+    const preto = await prisma.filament.create({ data: { manufacturer: 'F2', material: 'PLA', colorName: 'Preto', colorHex: '#000000', currentStockGrams: 0, avgUnitCostPerGram: 80 / 1000 } })
+    const options = await getOrderablePartOptions(product.id)
+    const keys = options[0].colorOptions.map((o) => o.key)
+    expect(keys).toContain(vermelho.id)
+    expect(keys).not.toContain(preto.id)
+  })
+
+  it('filamento com 0g de estoque continua pedível se já foi produzido antes (peça física já existe)', async () => {
+    const { product, printer, vermelho } = await createSimpleProduct()
+    await createProductionRun(fd({
+      productId: product.id,
+      printerId: printer.id,
+      filamentId: vermelho.id,
+      date: '2026-09-01',
+      quantityPlanned: '1',
+      quantitySuccess: '1',
+      quantityFailed: '0',
+      gramsUsed: '10',
+      gramsWasted: '0',
+      timeWastedHours: '0',
+    }))
+    // Esgota o filamento DEPOIS de já ter produzido com ele.
+    await prisma.filament.update({ where: { id: vermelho.id }, data: { currentStockGrams: 0 } })
+
+    const options = await getOrderablePartOptions(product.id)
+    const option = options[0].colorOptions.find((o) => o.key === vermelho.id)
+    expect(option).toBeDefined()
+    expect(option?.available).toBe(1)
+  })
+
   it('colorComboKey vira o filamentId PURO (nunca o formato serializado partId:comboKey)', async () => {
     const { product, azul } = await createSimpleProduct()
     const result = await createOrder(orderFdWithColors(product.id, { [product.id]: azul.id }))
