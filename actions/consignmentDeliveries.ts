@@ -1,10 +1,15 @@
 'use server'
 import { randomUUID } from 'crypto'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { consignmentDeliverySchema, consignmentDeliveryBatchSchema } from '@/lib/validation/consignment'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
+
+function isForeignKeyConstraintError(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003'
+}
 
 function parse(formData: FormData) {
   const raw = Object.fromEntries(formData)
@@ -79,10 +84,22 @@ export async function createConsignmentDeliveryBatch(formData: FormData): Promis
 // does). The UI (DeliveriesExplorer) warns how many reports will go with it
 // before confirming.
 export async function deleteConsignmentDelivery(id: string): Promise<ActionResult> {
-  await prisma.$transaction([
-    prisma.consignmentSaleReport.deleteMany({ where: { deliveryId: id } }),
-    prisma.consignmentDelivery.delete({ where: { id } }),
-  ])
+  try {
+    await prisma.$transaction([
+      prisma.consignmentSaleReport.deleteMany({ where: { deliveryId: id } }),
+      prisma.consignmentDelivery.delete({ where: { id } }),
+    ])
+  } catch (err) {
+    // Bug "Excluir antes de Cancelar dá um bug" (mesma classe, ver
+    // actions/orders.ts#deleteOrder): janela de corrida rara -- um
+    // ConsignmentSaleReport novo criado pra esta entrega entre o
+    // deleteMany acima e o delete, por uma requisição concorrente. Sem
+    // isso, a FK RESTRICT propagaria um erro cru pra tela.
+    if (isForeignKeyConstraintError(err)) {
+      return { success: false, error: 'Não foi possível excluir esta entrega porque um relatório de venda foi registrado para ela nesse meio-tempo. Tente novamente.' }
+    }
+    throw err
+  }
   revalidatePath('/consignment/deliveries')
   revalidatePath('/consignment/reports')
   return { success: true }

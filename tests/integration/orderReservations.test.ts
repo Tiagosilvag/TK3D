@@ -159,6 +159,35 @@ describe('reconcileOrderReservations (via createOrder)', () => {
     expect(log[0]).toMatchObject({ fromOrderItemId: itemA.id, toOrderItemId: itemB.id, quantity: 1 })
   })
 
+  // Bug "Excluir antes de Cancelar dá um bug": um item que já perdeu peça
+  // reservada por realocação (cenário acima) tem uma linha em
+  // OrderReallocation apontando pra ele (fromOrderItemId) -- excluir o
+  // PEDIDO desse item direto (Order.items usa onDelete: Cascade) tentava
+  // apagar o OrderItem junto, o que violava a FK RESTRICT de
+  // OrderReallocation e propagava um erro cru pra tela, em vez de devolver
+  // uma mensagem explicando que cancelar (nunca apaga a linha, só muda o
+  // status) resolve.
+  it('excluir um pedido que já teve peça realocada devolve erro amigável, nunca lança exceção', async () => {
+    const { product, printer, filament } = await createSupportRecords()
+    await produce(product.id, printer.id, filament.id, '1')
+
+    const resultA = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1' }, { deliveryDate: '2026-09-25' }))
+    expect(resultA.success).toBe(true)
+    const itemA = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+
+    const resultB = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1' }, { deliveryDate: '2026-09-10' }))
+    expect(resultB.success).toBe(true)
+    expect(resultB.reallocations).toHaveLength(1)
+
+    const deleteResult = await deleteOrder(itemA.orderId)
+    expect(deleteResult.success).toBe(false)
+    expect(deleteResult.error).toMatch(/cancele/i)
+
+    // Nunca apagado -- só a mensagem de erro, sem exceção não tratada.
+    const stillExists = await prisma.orderItem.findUnique({ where: { id: itemA.id } })
+    expect(stillExists).not.toBeNull()
+  })
+
   it('cancelar um pedido reservado libera a peça pro próximo pedido pendente da fila', async () => {
     const { product, printer, filament } = await createSupportRecords()
     await produce(product.id, printer.id, filament.id, '1')

@@ -363,6 +363,14 @@ export interface ProductVariantBreakdownRow {
   // montagem é anterior ao rastreamento de colorChoices (mesmo caso em
   // que `label` também não existe pra essa variante).
   attrs: VariantAttr[]
+  // Bug "MULTFILA PRETO continua selecionável sem estoque": filamento(s)
+  // cru(s) por trás desta variante, usado por getProductVariantStockOptions
+  // (via orders/page.tsx) pra travar a escolha de cor em Pedidos quando
+  // nenhum tem estoque > 0 agora -- só populado pro caso !needsAssembly
+  // (peça de 1 filamento só, mesma convenção do resto do arquivo); nulo
+  // pro caso composto/montagem, onde uma variante pode envolver acessório/
+  // componente além de filamento (fora de escopo deste ajuste).
+  filamentIds: string[] | null
 }
 
 // Peça (ProductPart) é a própria peça impressa que compõe o produto --
@@ -460,6 +468,7 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
           // mesmo -- sempre hierarquia "produto" (é o produto em si, não um
           // complemento nem um acessório aplicado).
           attrs: [{ name: 'Cor', value: label, tier: 'produto' as const, colorHexes: f?.colorHex ? [f.colorHex] : [] }],
+          filamentIds: [r.filamentId],
         }
       })
       .sort((a, b) => b.quantity - a.quantity)
@@ -598,7 +607,7 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
   }
 
   return Array.from(totals.entries())
-    .map(([key, { label, quantity, colorHex, attrs }]) => ({ key, label, quantity, colorHex, attrs }))
+    .map(([key, { label, quantity, colorHex, attrs }]) => ({ key, label, quantity, colorHex, attrs, filamentIds: null }))
     .sort((a, b) => b.quantity - a.quantity)
 }
 
@@ -612,6 +621,8 @@ export interface ProductVariantStockOption {
   // em /stock), repassado aqui pra SaleForm.tsx/sales/page.tsx poderem
   // renderizar chips em vez de um texto corrido único.
   attrs: VariantAttr[]
+  // Ver comentário em ProductVariantBreakdownRow -- repassado igual.
+  filamentIds: string[] | null
 }
 
 export interface ProductVariantStockInfo {
@@ -699,6 +710,7 @@ export async function getProductVariantStockOptions(): Promise<ProductVariantSto
         colorHex: v.colorHex,
         available: Math.max(0, v.quantity - (deliveredByProductAndKey.get(`${p.id}::${v.key}`) ?? 0) - (soldByProductAndKey.get(`${p.id}::${v.key}`) ?? 0) - (reservedByProductAndKey.get(`${p.id}::${v.key}`) ?? 0)),
         attrs: v.attrs,
+        filamentIds: v.filamentIds,
       })),
     }
   }))

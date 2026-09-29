@@ -6,7 +6,7 @@ import { OrdersExplorer, type OrderRow } from './OrdersExplorer'
 export const dynamic = 'force-dynamic'
 
 export default async function OrdersPage() {
-  const [orders, variantProducts] = await Promise.all([
+  const [orders, variantProducts, filaments] = await Promise.all([
     prisma.order.findMany({
       orderBy: { deliveryDate: 'asc' },
       include: {
@@ -21,7 +21,14 @@ export default async function OrdersPage() {
     // Brinde nunca é vendido sozinho -- excluído do seletor (já filtrado
     // dentro de getProductVariantStockOptions).
     getProductVariantStockOptions(),
+    // Bug "MULTFILA PRETO continua selecionável sem estoque": pra escolher
+    // cor num pedido NOVO (diferente de Vendas/Entregas, que vendem peça
+    // física já pronta -- aqui pode ser encomenda, produzida só depois),
+    // filamento precisa ter estoque > 0 agora, produzida antes ou não (ver
+    // filtro de `products` abaixo).
+    prisma.filament.findMany({ select: { id: true, currentStockGrams: true } }),
   ])
+  const filamentStockById = new Map(filaments.map((f) => [f.id, f.currentStockGrams.toNumber()]))
 
   // Mesmo dado (variantes por produto) alimenta o seletor do OrderForm E
   // a resolução de label/cor de cada item já registrado na tabela -- um
@@ -35,7 +42,9 @@ export default async function OrdersPage() {
     productId: p.productId,
     productName: p.productName,
     needsAssembly: p.needsAssembly,
-    variants: p.variants.map((v) => ({ key: v.key, label: v.label, colorHex: v.colorHex, available: v.available })),
+    variants: p.variants
+      .filter((v) => v.filamentIds === null || v.filamentIds.every((id) => (filamentStockById.get(id) ?? 0) > 0))
+      .map((v) => ({ key: v.key, label: v.label, colorHex: v.colorHex, available: v.available })),
   }))
 
   // Bug "não mostra a cor da variação criada": variantByKey só cobre combo

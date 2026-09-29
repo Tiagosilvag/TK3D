@@ -10,6 +10,10 @@ function isUniqueConstraintError(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
 }
 
+function isForeignKeyConstraintError(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003'
+}
+
 // Bug 4: "CLICKER" e "Clicker" cadastrados como tipos diferentes. Todo nome
 // é normalizado pra "Primeira maiúscula, resto minúsculo" antes de salvar,
 // e a checagem de duplicata (abaixo) é case-insensitive -- então dois tipos
@@ -61,13 +65,25 @@ export async function renameAccessoryType(id: string, formData: FormData): Promi
 
 // Guard: um tipo em uso (referenciado por ao menos um Accessory) não pode
 // ser removido -- excluí-lo quebraria a FK Accessory.type -> accessory_types
-// e apagaria a categoria de acessórios já cadastrados sob esse nome.
+// e apagaria a categoria de acessórios já cadastrados sob esse nome. A
+// contagem acima cobre o caso comum, mas ainda existe uma janela de corrida
+// (acessório novo criado com esse tipo entre a contagem e o delete) -- try/
+// catch pro P2003 evita propagar um erro cru pra tela nesse caso raro
+// (mesmo padrão de isForeignKeyConstraintError em accessories/filaments/
+// supplies/printers/orders).
 export async function deleteAccessoryType(id: string): Promise<ActionResult> {
   const inUse = await prisma.accessory.count({ where: { type: id } })
   if (inUse > 0) {
     return { success: false, error: `Este tipo está em uso por ${inUse} acessório(s) e não pode ser removido.` }
   }
-  await prisma.accessoryTypeRecord.delete({ where: { id } })
+  try {
+    await prisma.accessoryTypeRecord.delete({ where: { id } })
+  } catch (err) {
+    if (isForeignKeyConstraintError(err)) {
+      return { success: false, error: 'Este tipo de acessório está sendo usado por algum acessório e não pode ser removido.' }
+    }
+    throw err
+  }
   revalidatePath('/accessories')
   return { success: true }
 }

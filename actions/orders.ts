@@ -12,9 +12,17 @@ import { getAssemblyStatus, type AssemblyPartColorOption } from '@/actions/assem
 import { serializeColorChoices, deserializeColorChoices } from '@/lib/reports'
 import { reconcileOrderReservations, reconcileAllPendingOrders, type OrderReallocationEvent } from '@/lib/orderReservations'
 import { revalidatePath } from 'next/cache'
-import type { Prisma, OrderChannel, OrderStatus, SaleChannel } from '@prisma/client'
+import { Prisma } from '@prisma/client'
+import type { OrderChannel, OrderStatus, SaleChannel } from '@prisma/client'
 
 type ActionResult = { success: boolean; error?: string; reallocations?: OrderReallocationEvent[] }
+
+// Bug "Excluir antes de Cancelar dá um bug": mesmo padrão de
+// actions/accessories.ts/filaments.ts/supplies.ts/printers.ts pra FK
+// RESTRICT -- ver comentário em deleteOrder abaixo.
+function isForeignKeyConstraintError(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003'
+}
 
 export interface OrderablePartOption {
   partId: string
@@ -380,10 +388,16 @@ export async function cancelOrder(id: string): Promise<ActionResult> {
 // Só pedido sem NENHUM item entregue pode ser removido -- uma vez com
 // Sale vinculada, a Sale é o registro real da transação (deleteSale, se
 // for o caso, já existe em actions/sales.ts). Order.items usa onDelete:
-// Cascade (schema.prisma) -- apagar o cabeçalho já leva os itens junto;
-// se algum item tiver reallocation associada, o delete falha (FK
-// RESTRICT em OrderReallocation), mesmo comportamento que já existia
-// antes de Order virar cabeçalho+itens.
+// Cascade (schema.prisma) -- apagar o cabeçalho já leva os itens junto.
+//
+// Bug "Excluir antes de Cancelar dá um bug": se algum item já teve uma
+// realocação de peça (ganhou ou perdeu prioridade pra outro pedido --
+// OrderReallocation, log permanente, nunca editado), o delete violava a FK
+// RESTRICT dessa tabela e propagava um erro cru pra tela (Application
+// error), em vez de uma mensagem explicando o que fazer -- cancelar
+// primeiro (só muda o status do item, nunca apaga a linha, então nunca
+// esbarra nesse RESTRICT) resolve. Mesmo padrão de isForeignKeyConstraintError
+// já usado em accessories/filaments/supplies/printers pra esse tipo de FK.
 export async function deleteOrder(id: string): Promise<ActionResult> {
   const order = await prisma.order.findUniqueOrThrow({ where: { id }, include: { items: true } })
   if (order.items.some((i) => i.saleId)) {
@@ -392,7 +406,14 @@ export async function deleteOrder(id: string): Promise<ActionResult> {
   const pairs = new Map<string, { productId: string; colorComboKey: string | null }>()
   for (const i of order.items) pairs.set(`${i.productId}::${i.colorComboKey ?? ''}`, i)
 
-  await prisma.order.delete({ where: { id } })
+  try {
+    await prisma.order.delete({ where: { id } })
+  } catch (err) {
+    if (isForeignKeyConstraintError(err)) {
+      return { success: false, error: 'Este pedido tem histórico de realocação de peça com outro pedido e não pode ser excluído direto — cancele os itens pendentes primeiro (opção "Cancelar").' }
+    }
+    throw err
+  }
 
   for (const { productId, colorComboKey } of pairs.values()) {
     await reconcileOrderReservations(productId, colorComboKey)
