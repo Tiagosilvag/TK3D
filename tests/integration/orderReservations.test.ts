@@ -7,6 +7,7 @@ const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL }
 
 async function cleanup() {
   await prisma.orderReallocation.deleteMany()
+  await prisma.orderItem.deleteMany()
   await prisma.order.deleteMany()
   await prisma.productAssembly.deleteMany()
   await prisma.productionRun.deleteMany()
@@ -41,14 +42,23 @@ async function createSupportRecords() {
   return { printer, filament, product }
 }
 
-function orderFd(overrides: Record<string, string> = {}): FormData {
+// Melhoria "Pedidos com múltiplos itens": createOrder agora recebe o
+// cabeçalho solto + um itemsJson com 1 item só (mesmo contrato que o
+// formulário usa pra N itens) -- este helper reproduz exatamente o caso
+// de 1 item, preservando os testes de reconcileOrderReservations que só
+// se importam com o item em si.
+function orderFd(item: { productId: string; colorComboKey?: string; quantity: string; unitPrice?: string }, headerOverrides: Record<string, string> = {}): FormData {
   return fd({
     channel: 'DIRETA',
-    quantity: '1',
-    unitPrice: '30',
     orderDate: '2026-09-01',
     deliveryDate: '2026-09-20',
-    ...overrides,
+    ...headerOverrides,
+    itemsJson: JSON.stringify([{
+      productId: item.productId,
+      colorComboKey: item.colorComboKey ?? null,
+      quantity: Number(item.quantity),
+      unitPrice: Number(item.unitPrice ?? '30'),
+    }]),
   })
 }
 
@@ -73,9 +83,9 @@ describe('reconcileOrderReservations (via createOrder)', () => {
     const result = await createOrder(orderFd({ productId: product.id, quantity: '2' }))
     expect(result.success).toBe(true)
 
-    const order = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
-    expect(order.status).toBe('AGUARDANDO_PRODUCAO')
-    expect(order.reservedQuantity).toBe(0)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect(item.status).toBe('AGUARDANDO_PRODUCAO')
+    expect(item.reservedQuantity).toBe(0)
   })
 
   it('pedido com estoque total disponível reserva tudo e vira Pronto — reservado', async () => {
@@ -85,26 +95,26 @@ describe('reconcileOrderReservations (via createOrder)', () => {
     const result = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '3' }))
     expect(result.success).toBe(true)
 
-    const order = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
-    expect(order.status).toBe('PRONTO_RESERVADO')
-    expect(order.reservedQuantity).toBe(3)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect(item.status).toBe('PRONTO_RESERVADO')
+    expect(item.reservedQuantity).toBe(3)
   })
 
   it('bug "string vazia trava reserva pra sempre": colorComboKey="" (select sempre presente no form, mesmo sem cor escolhida) grava null e reserva normalmente', async () => {
     const { product, printer, filament } = await createSupportRecords()
     await produce(product.id, printer.id, filament.id, '3')
 
-    // OrderForm.tsx sempre manda o campo colorComboKey no FormData (mesmo
-    // "" quando o comprador não escolheu cor nenhuma) -- criar o pedido
-    // com "" explícito reproduz exatamente esse caso, em vez de omitir o
-    // campo (que o zod trataria como undefined, nunca reproduziu o bug).
+    // OrderForm.tsx sempre manda o campo colorComboKey no item (mesmo ""
+    // quando o comprador não escolheu cor nenhuma) -- criar o item com ""
+    // explícito reproduz exatamente esse caso, em vez de omitir o campo
+    // (que o zod trataria como undefined, nunca reproduziu o bug).
     const result = await createOrder(orderFd({ productId: product.id, colorComboKey: '', quantity: '3' }))
     expect(result.success).toBe(true)
 
-    const order = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
-    expect(order.colorComboKey).toBeNull()
-    expect(order.status).toBe('PRONTO_RESERVADO')
-    expect(order.reservedQuantity).toBe(3)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect(item.colorComboKey).toBeNull()
+    expect(item.status).toBe('PRONTO_RESERVADO')
+    expect(item.reservedQuantity).toBe(3)
   })
 
   it('pedido com estoque parcial reserva o que existe e vira Parcial — aguardando produção', async () => {
@@ -114,9 +124,9 @@ describe('reconcileOrderReservations (via createOrder)', () => {
     const result = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '3' }))
     expect(result.success).toBe(true)
 
-    const order = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
-    expect(order.status).toBe('PARCIAL_AGUARDANDO_PRODUCAO')
-    expect(order.reservedQuantity).toBe(1)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect(item.status).toBe('PARCIAL_AGUARDANDO_PRODUCAO')
+    expect(item.reservedQuantity).toBe(1)
   })
 
   it('pedido novo com prazo mais urgente toma a peça de um pedido já reservado (realocação por prioridade)', async () => {
@@ -124,56 +134,56 @@ describe('reconcileOrderReservations (via createOrder)', () => {
     await produce(product.id, printer.id, filament.id, '1')
 
     // Pedido A: prazo mais longe (25/09), fica com a única peça disponível.
-    const resultA = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1', deliveryDate: '2026-09-25' }))
+    const resultA = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1' }, { deliveryDate: '2026-09-25' }))
     expect(resultA.success).toBe(true)
-    const orderA = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
-    expect(orderA.status).toBe('PRONTO_RESERVADO')
+    const itemA = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect(itemA.status).toBe('PRONTO_RESERVADO')
 
     // Pedido B: prazo mais urgente (10/09) -- deve tomar a peça de A.
-    const resultB = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1', deliveryDate: '2026-09-10' }))
+    const resultB = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1' }, { deliveryDate: '2026-09-10' }))
     expect(resultB.success).toBe(true)
     expect(resultB.reallocations).toHaveLength(1)
-    expect(resultB.reallocations?.[0]).toMatchObject({ fromOrderId: orderA.id, quantity: 1 })
+    expect(resultB.reallocations?.[0]).toMatchObject({ fromOrderItemId: itemA.id, quantity: 1 })
 
-    const [refreshedA, orderB] = await Promise.all([
-      prisma.order.findUniqueOrThrow({ where: { id: orderA.id } }),
-      prisma.order.findFirstOrThrow({ where: { productId: product.id, id: { not: orderA.id } } }),
+    const [refreshedA, itemB] = await Promise.all([
+      prisma.orderItem.findUniqueOrThrow({ where: { id: itemA.id } }),
+      prisma.orderItem.findFirstOrThrow({ where: { productId: product.id, id: { not: itemA.id } } }),
     ])
     expect(refreshedA.status).toBe('AGUARDANDO_PRODUCAO')
     expect(refreshedA.reservedQuantity).toBe(0)
-    expect(orderB.status).toBe('PRONTO_RESERVADO')
-    expect(orderB.reservedQuantity).toBe(1)
+    expect(itemB.status).toBe('PRONTO_RESERVADO')
+    expect(itemB.reservedQuantity).toBe(1)
 
     const log = await prisma.orderReallocation.findMany({ where: { productId: product.id } })
     expect(log).toHaveLength(1)
-    expect(log[0]).toMatchObject({ fromOrderId: orderA.id, toOrderId: orderB.id, quantity: 1 })
+    expect(log[0]).toMatchObject({ fromOrderItemId: itemA.id, toOrderItemId: itemB.id, quantity: 1 })
   })
 
   it('cancelar um pedido reservado libera a peça pro próximo pedido pendente da fila', async () => {
     const { product, printer, filament } = await createSupportRecords()
     await produce(product.id, printer.id, filament.id, '1')
 
-    const resultA = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1', deliveryDate: '2026-09-10' }))
-    const orderA = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
-    expect(orderA.status).toBe('PRONTO_RESERVADO')
+    const resultA = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1' }, { deliveryDate: '2026-09-10' }))
+    const itemA = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id }, include: { order: true } })
+    expect(itemA.status).toBe('PRONTO_RESERVADO')
     void resultA
 
     // Pedido C: sem estoque no momento em que foi criado (A já tinha a
     // única peça), fica esperando.
-    await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1', deliveryDate: '2026-09-15' }))
-    const orderC = await prisma.order.findFirstOrThrow({ where: { productId: product.id, id: { not: orderA.id } } })
-    expect(orderC.status).toBe('AGUARDANDO_PRODUCAO')
+    await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1' }, { deliveryDate: '2026-09-15' }))
+    const itemC = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id, id: { not: itemA.id } } })
+    expect(itemC.status).toBe('AGUARDANDO_PRODUCAO')
 
-    const cancelResult = await cancelOrder(orderA.id)
+    const cancelResult = await cancelOrder(itemA.orderId)
     expect(cancelResult.success).toBe(true)
 
     const [refreshedA, refreshedC] = await Promise.all([
-      prisma.order.findUniqueOrThrow({ where: { id: orderA.id } }),
-      prisma.order.findUniqueOrThrow({ where: { id: orderC.id } }),
+      prisma.orderItem.findUniqueOrThrow({ where: { id: itemA.id } }),
+      prisma.orderItem.findUniqueOrThrow({ where: { id: itemC.id } }),
     ])
     expect(refreshedA.status).toBe('CANCELADO')
     // Histórico preservado -- cancelar nunca reescreve reservedQuantity
-    // retroativamente, só exclui o pedido da soma de "reservado" (mesma
+    // retroativamente, só exclui o item da soma de "reservado" (mesma
     // filosofia de nunca reescrever fato passado que costSnapshot já usa).
     expect(refreshedA.reservedQuantity).toBe(1)
     expect(refreshedC.status).toBe('PRONTO_RESERVADO')
@@ -184,16 +194,16 @@ describe('reconcileOrderReservations (via createOrder)', () => {
     const { product, printer, filament } = await createSupportRecords()
     await produce(product.id, printer.id, filament.id, '1')
 
-    await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1', deliveryDate: '2026-09-10' }))
-    const orderA = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
+    await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1' }, { deliveryDate: '2026-09-10' }))
+    const itemA = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
 
-    await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1', deliveryDate: '2026-09-15' }))
-    const orderC = await prisma.order.findFirstOrThrow({ where: { productId: product.id, id: { not: orderA.id } } })
+    await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '1' }, { deliveryDate: '2026-09-15' }))
+    const itemC = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id, id: { not: itemA.id } } })
 
-    const deleteResult = await deleteOrder(orderA.id)
+    const deleteResult = await deleteOrder(itemA.orderId)
     expect(deleteResult.success).toBe(true)
 
-    const refreshedC = await prisma.order.findUniqueOrThrow({ where: { id: orderC.id } })
+    const refreshedC = await prisma.orderItem.findUniqueOrThrow({ where: { id: itemC.id } })
     expect(refreshedC.status).toBe('PRONTO_RESERVADO')
     expect(refreshedC.reservedQuantity).toBe(1)
   })
@@ -203,16 +213,16 @@ describe('reconcileOrderReservations (via createOrder)', () => {
     await produce(product.id, printer.id, filament.id, '1')
 
     await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '3' }))
-    const order = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
-    expect(order.status).toBe('PARCIAL_AGUARDANDO_PRODUCAO')
-    expect(order.reservedQuantity).toBe(1)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect(item.status).toBe('PARCIAL_AGUARDANDO_PRODUCAO')
+    expect(item.reservedQuantity).toBe(1)
 
     // Mais produção da MESMA cor -- nenhuma referência ao pedido aqui,
     // simula o fluxo normal de "Registrar produção" na tela de Produção.
     const productionResult = await produce(product.id, printer.id, filament.id, '2')
     expect(productionResult.success).toBe(true)
 
-    const refreshed = await prisma.order.findUniqueOrThrow({ where: { id: order.id } })
+    const refreshed = await prisma.orderItem.findUniqueOrThrow({ where: { id: item.id } })
     expect(refreshed.status).toBe('PRONTO_RESERVADO')
     expect(refreshed.reservedQuantity).toBe(3)
   })
@@ -267,15 +277,15 @@ describe('reconcileOrderReservations dispara sozinho ao produzir PEÇA de produt
 
     const orderResult = await createOrder(orderFd({ productId: product.id, quantity: '1' }))
     expect(orderResult.success).toBe(true)
-    const order = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
-    expect(order.status).toBe('AGUARDANDO_PRODUCAO')
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect(item.status).toBe('AGUARDANDO_PRODUCAO')
 
     // Produz a última peça que faltava -- nenhuma referência ao pedido
     // aqui, mesmo padrão de "Registrar produção" na tela de Produção.
     const productionResult = await producePart(product.id, parts['CORPO'].id, printer.id, filament.id, '1')
     expect(productionResult.success).toBe(true)
 
-    const refreshed = await prisma.order.findUniqueOrThrow({ where: { id: order.id } })
+    const refreshed = await prisma.orderItem.findUniqueOrThrow({ where: { id: item.id } })
     expect(refreshed.status).toBe('AGUARDANDO_MONTAGEM')
     expect(refreshed.reservedQuantity).toBe(0)
   })

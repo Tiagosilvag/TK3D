@@ -209,8 +209,17 @@ export function DeliveryBatchForm({
           {selectedProduct.variants.length > 0 ? (
             <>
               <p className="text-sm text-slate-500 dark:text-slate-400">Informe a quantidade de cada variação disponível em estoque.</p>
+              {/* Pedido "aqui também deve aparecer somente o que tem
+                  disponível": uma variação com 0 em estoque não pode ser
+                  entregue a um parceiro (não existe pra dar), então some
+                  da lista em vez de aparecer com o campo desabilitado. */}
+              {selectedProduct.variants.every((v) => v.available <= 0) && (
+                <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+                  Nenhuma variação deste produto tem estoque disponível pra entregar.
+                </p>
+              )}
               <div className="space-y-2">
-                {selectedProduct.variants.map((v) => (
+                {selectedProduct.variants.filter((v) => v.available > 0).map((v) => (
                   // Bug "modal esticada": rótulo de variante multi-cor pode ficar
                   // bem longo (ex.: "CANECA: BEGE/NUDE, CHOCOLATE: BRANCO + MARROM,
                   // CORAÇÃO: VERMELHO, CORRENTE — DOURADO, MOSQUETÃO: MARROM") --

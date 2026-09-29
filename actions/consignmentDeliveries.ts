@@ -90,11 +90,12 @@ export async function deleteConsignmentDelivery(id: string): Promise<ActionResul
 
 // Melhoria "ajustar a quantidade" (mesmo pedido do bug acima): corrige uma
 // entrega já registrada (quantidade errada) sem precisar apagar e recriar
-// -- min de `quantitySold` (não dá pra baixar pra menos do que já foi
-// vendido; vender mais não é limitado, é só aumentar a entrega). Estoque
-// disponível em toda tela (Parceiros, Relatórios de venda, esta mesma
-// lista) é sempre derivado de quantityDelivered - vendido ao vivo, nunca um
-// contador redundante, então este update já reflete em tudo sozinho.
+// -- min de `quantitySold + returnedQuantity` (não dá pra baixar pra menos
+// do que já saiu, seja vendido ou devolvido; aumentar não é limitado). Bug
+// "editar tudo no consignado" (revisão): esta função corrige o FATO original
+// (quanto realmente foi entregue), diferente de returnConsignmentDeliveryStock
+// abaixo (que registra uma devolução física em cima do fato já correto) --
+// as duas nunca se confundem porque cada uma mexe num campo diferente.
 export async function updateConsignmentDeliveryQuantity(id: string, formData: FormData): Promise<ActionResult> {
   const quantityDelivered = parseInt(String(formData.get('quantityDelivered') ?? ''), 10)
   if (!Number.isFinite(quantityDelivered) || quantityDelivered <= 0) {
@@ -106,11 +107,71 @@ export async function updateConsignmentDeliveryQuantity(id: string, formData: Fo
     include: { saleReports: true },
   })
   const alreadySold = delivery.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
-  if (quantityDelivered < alreadySold) {
-    return { success: false, error: `Quantidade não pode ser menor que o já vendido (${alreadySold})` }
+  const floor = alreadySold + delivery.returnedQuantity
+  if (quantityDelivered < floor) {
+    return { success: false, error: `Quantidade não pode ser menor que o já vendido/devolvido (${floor})` }
   }
 
   await prisma.consignmentDelivery.update({ where: { id }, data: { quantityDelivered } })
   revalidatePath('/consignment/deliveries')
+  return { success: true }
+}
+
+// Pedido "caso eu queira pegar alguma peça que esteja com o parceiro eu
+// consigo, voltando pro meu estoque" + revisão "quero que ao devolver marque
+// igual quando é cancelado, com opção de desfazer/apagar -- a mesma lógica
+// de produção": ao contrário da 1ª volta desta função (que decrementava
+// quantityDelivered direto), agora incrementa `returnedQuantity` --
+// quantityDelivered nunca é reescrito, fica como fato histórico congelado
+// pra sempre (igual ProductionRun.status=CANCELADA nunca apaga
+// quantityPlanned/quantitySuccess da run cancelada). "Com ela" em toda tela
+// já é derivado de quantityDelivered - vendido - returnedQuantity (lib/
+// reports.ts), então este increment sozinho já reflete em tudo, inclusive
+// "Meu estoque" (CLAUDE.md "Estoque derivado").
+export async function returnConsignmentDeliveryStock(id: string, formData: FormData): Promise<ActionResult> {
+  const quantityReturned = parseInt(String(formData.get('quantityReturned') ?? ''), 10)
+  if (!Number.isFinite(quantityReturned) || quantityReturned <= 0) {
+    return { success: false, error: 'Quantidade inválida' }
+  }
+
+  const delivery = await prisma.consignmentDelivery.findUniqueOrThrow({
+    where: { id },
+    include: { saleReports: true },
+  })
+  const alreadySold = delivery.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
+  const remaining = Math.max(0, delivery.quantityDelivered - alreadySold - delivery.returnedQuantity)
+  if (quantityReturned > remaining) {
+    return { success: false, error: `Não é possível devolver mais do que está com o parceiro (${remaining})` }
+  }
+
+  await prisma.consignmentDelivery.update({ where: { id }, data: { returnedQuantity: { increment: quantityReturned } } })
+  revalidatePath('/consignment/deliveries')
+  revalidatePath('/consignment/partners')
+  return { success: true }
+}
+
+// Pedido "quero q tenha a opção de desfazer também uma devolução, se marcou
+// errado -- mas somente qnd ele fica devolvido": zera returnedQuantity,
+// trazendo a entrega de volta ao estado "com o parceiro" de antes de
+// qualquer devolução -- só permitido quando a entrega está no estado
+// "Devolvida" (saldo zerado POR devolução, não por venda; ver
+// PartnerStockSection.tsx), pra não desfazer uma devolução parcial que
+// ainda deixa saldo ativo (essa continua editável direto pelo campo de
+// quantidade, sem precisar de "desfazer"). Diferente de Produção (que não
+// tem "reativar" uma run CANCELADA) -- pedido explícito aqui, atendido.
+export async function undoConsignmentDeliveryReturn(id: string): Promise<ActionResult> {
+  const delivery = await prisma.consignmentDelivery.findUniqueOrThrow({
+    where: { id },
+    include: { saleReports: true },
+  })
+  const alreadySold = delivery.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
+  const remaining = Math.max(0, delivery.quantityDelivered - alreadySold - delivery.returnedQuantity)
+  if (!(remaining === 0 && delivery.returnedQuantity > 0)) {
+    return { success: false, error: 'Esta entrega não está devolvida' }
+  }
+
+  await prisma.consignmentDelivery.update({ where: { id }, data: { returnedQuantity: 0 } })
+  revalidatePath('/consignment/deliveries')
+  revalidatePath('/consignment/partners')
   return { success: true }
 }

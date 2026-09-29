@@ -9,11 +9,16 @@ import {
   createConsignmentDelivery,
   deleteConsignmentDelivery,
   updateConsignmentDeliveryQuantity,
+  returnConsignmentDeliveryStock,
+  undoConsignmentDeliveryReturn,
 } from '@/actions/consignmentDeliveries'
 import {
   createConsignmentSaleReport,
+  updateConsignmentSaleReport,
+  createConsignmentSaleReportBatch,
   getPartnerStock,
 } from '@/actions/consignmentSaleReports'
+import { getConsignmentPartnerDetail } from '@/lib/reports'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -163,6 +168,133 @@ describe('consignmentDeliveries actions', () => {
     const updated = await prisma.consignmentDelivery.findUniqueOrThrow({ where: { id: delivery.id } })
     expect(updated.quantityDelivered).toBe(6)
   })
+
+  // Pedido "caso eu queira pegar alguma peça que esteja com o parceiro eu
+  // consigo também, voltando pro meu estoque": returnConsignmentDeliveryStock
+  // decrementa quantityDelivered -- como "meu estoque" é sempre derivado
+  // (produzido - entregue), esse decrement sozinho já basta pra peça
+  // reaparecer no próprio estoque, sem contador redundante pra sincronizar.
+  // Revisão "quero que ao devolver marque igual quando é cancelado, a mesma
+  // lógica de produção": devolver NUNCA reescreve quantityDelivered (fato
+  // histórico congelado, igual ProductionRun.status=CANCELADA nunca apaga
+  // quantityPlanned/quantitySuccess) -- incrementa returnedQuantity, um
+  // campo à parte.
+  it('devolve peças ao próprio estoque via returnedQuantity, sem nunca reescrever quantityDelivered', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '10',
+      unitPrice: '25',
+      deliveryDate: '2026-09-01',
+    }))
+    const delivery = await prisma.consignmentDelivery.findFirstOrThrow({ where: { partnerId: partner.id } })
+
+    await createConsignmentSaleReport(fd({
+      deliveryId: delivery.id,
+      quantitySold: '3',
+      reportDate: '2026-09-05',
+      commissionPercent: '0.3',
+    }))
+    // 10 entregues - 3 vendidos = 7 com o parceiro (saldo devolvível).
+
+    const tooMany = await returnConsignmentDeliveryStock(delivery.id, fd({ quantityReturned: '8' }))
+    expect(tooMany.success).toBe(false)
+    expect(tooMany.error).toBe('Não é possível devolver mais do que está com o parceiro (7)')
+
+    const ok = await returnConsignmentDeliveryStock(delivery.id, fd({ quantityReturned: '4' }))
+    expect(ok.success).toBe(true)
+    const updated = await prisma.consignmentDelivery.findUniqueOrThrow({ where: { id: delivery.id } })
+    expect(updated.quantityDelivered).toBe(10) // nunca muda -- fato histórico
+    expect(updated.returnedQuantity).toBe(4)
+
+    // Devolver exatamente o restante do saldo (3) deve funcionar também.
+    const rest = await returnConsignmentDeliveryStock(delivery.id, fd({ quantityReturned: '3' }))
+    expect(rest.success).toBe(true)
+    const finalDelivery = await prisma.consignmentDelivery.findUniqueOrThrow({ where: { id: delivery.id } })
+    expect(finalDelivery.quantityDelivered).toBe(10) // ainda intacto
+    expect(finalDelivery.returnedQuantity).toBe(7) // 4 + 3 -- saldo zerado (10 - 3 vendidos - 7 devolvidos)
+  })
+
+  it('getConsignmentPartnerDetail marca "Devolvida" só quando o saldo zera por devolução, não por venda', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+
+    // Entrega A: será totalmente devolvida.
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id, productId: product.id, quantityDelivered: '2', unitPrice: '25', deliveryDate: '2026-09-01',
+    }))
+    // Entrega B: será totalmente vendida (não deve virar "Devolvida").
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id, productId: product.id, quantityDelivered: '3', unitPrice: '25', deliveryDate: '2026-09-02',
+    }))
+    const [deliveryA, deliveryB] = await prisma.consignmentDelivery.findMany({ where: { partnerId: partner.id }, orderBy: { deliveryDate: 'asc' } })
+
+    await returnConsignmentDeliveryStock(deliveryA.id, fd({ quantityReturned: '2' }))
+    await createConsignmentSaleReport(fd({ deliveryId: deliveryB.id, quantitySold: '3', reportDate: '2026-09-05', commissionPercent: '0.3' }))
+
+    const detail = await getConsignmentPartnerDetail(partner.id)
+    const lines = detail!.products[0].variants[0].deliveries
+    const lineA = lines.find((l) => l.deliveryId === deliveryA.id)!
+    const lineB = lines.find((l) => l.deliveryId === deliveryB.id)!
+
+    expect(lineA.remaining).toBe(0)
+    expect(lineA.returnedQuantity).toBe(2)
+    expect(lineA.delivered).toBe(2) // fato histórico intacto
+
+    expect(lineB.remaining).toBe(0)
+    expect(lineB.returnedQuantity).toBe(0) // zerou por VENDA, não por devolução -- não é "Devolvida"
+    expect(lineB.sold).toBe(3)
+  })
+
+  it('undoConsignmentDeliveryReturn zera returnedQuantity, só quando totalmente devolvida', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id, productId: product.id, quantityDelivered: '5', unitPrice: '25', deliveryDate: '2026-09-01',
+    }))
+    const delivery = await prisma.consignmentDelivery.findFirstOrThrow({ where: { partnerId: partner.id } })
+
+    // Devolução parcial (2 de 5): ainda sobra saldo ativo -- desfazer deve
+    // recusar (a linha ainda não está no estado "Devolvida").
+    await returnConsignmentDeliveryStock(delivery.id, fd({ quantityReturned: '2' }))
+    const tooEarly = await undoConsignmentDeliveryReturn(delivery.id)
+    expect(tooEarly.success).toBe(false)
+    expect(tooEarly.error).toBe('Esta entrega não está devolvida')
+
+    // Devolve o restante -- agora sim "Devolvida" (saldo 0 via devolução).
+    await returnConsignmentDeliveryStock(delivery.id, fd({ quantityReturned: '3' }))
+    const undone = await undoConsignmentDeliveryReturn(delivery.id)
+    expect(undone.success).toBe(true)
+    const restored = await prisma.consignmentDelivery.findUniqueOrThrow({ where: { id: delivery.id } })
+    expect(restored.returnedQuantity).toBe(0)
+    expect(restored.quantityDelivered).toBe(5) // nunca mudou
+
+    const stock = await getPartnerStock(partner.id)
+    expect(stock[0]).toMatchObject({ delivered: 5, sold: 0, remaining: 5 }) // de volta com o parceiro
+  })
+
+  it('deleteConsignmentDelivery remove uma entrega Devolvida em definitivo', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id, productId: product.id, quantityDelivered: '2', unitPrice: '25', deliveryDate: '2026-09-01',
+    }))
+    const delivery = await prisma.consignmentDelivery.findFirstOrThrow({ where: { partnerId: partner.id } })
+    await returnConsignmentDeliveryStock(delivery.id, fd({ quantityReturned: '2' }))
+
+    const result = await deleteConsignmentDelivery(delivery.id)
+    expect(result.success).toBe(true)
+    const gone = await prisma.consignmentDelivery.findUnique({ where: { id: delivery.id } })
+    expect(gone).toBeNull()
+
+    // undoConsignmentDeliveryReturn não faz mais sentido pra uma entrega
+    // apagada -- confirma que some da tela (a linha some do partner stock).
+    const detail = await getConsignmentPartnerDetail(partner.id)
+    expect(detail!.products).toHaveLength(0)
+  })
 })
 
 describe('consignmentSaleReports actions', () => {
@@ -231,5 +363,213 @@ describe('consignmentSaleReports actions', () => {
 
     const reports = await prisma.consignmentSaleReport.findMany({ where: { deliveryId: delivery.id } })
     expect(reports).toHaveLength(1)
+  })
+
+  // Melhoria "editar tudo no consignado": relatório de venda já registrado
+  // vira editável (quantidade/preço/comissão/data) em vez de só apagar-e-
+  // recriar -- a checagem de saldo exclui a PRÓPRIA quantidade da soma de
+  // "já vendido" (senão ela contaria contra si mesma).
+  it('edita um relatório de venda existente, recalculando o saldo sem contar a própria quantidade', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '10',
+      unitPrice: '25',
+      deliveryDate: '2026-09-01',
+    }))
+    const delivery = await prisma.consignmentDelivery.findFirstOrThrow({ where: { partnerId: partner.id } })
+
+    await createConsignmentSaleReport(fd({
+      deliveryId: delivery.id,
+      quantitySold: '4',
+      reportDate: '2026-09-05',
+      commissionPercent: '0.3',
+    }))
+    const report = await prisma.consignmentSaleReport.findFirstOrThrow({ where: { deliveryId: delivery.id } })
+
+    // Aumentar pra 9 (dentro do saldo de 10, já que a própria quantidade não
+    // conta contra si mesma) deve funcionar.
+    const ok = await updateConsignmentSaleReport(report.id, fd({
+      deliveryId: delivery.id,
+      quantitySold: '9',
+      reportDate: '2026-09-06',
+      commissionPercent: '0.25',
+      unitPrice: '30',
+    }))
+    expect(ok.success).toBe(true)
+    const updated = await prisma.consignmentSaleReport.findUniqueOrThrow({ where: { id: report.id } })
+    expect(updated.quantitySold).toBe(9)
+    expect(updated.commissionPercent.toNumber()).toBeCloseTo(0.25)
+    expect(updated.unitPrice?.toNumber()).toBeCloseTo(30)
+
+    // Passar de 10 (saldo total da entrega) deve ser recusado.
+    const tooMany = await updateConsignmentSaleReport(report.id, fd({
+      deliveryId: delivery.id,
+      quantitySold: '11',
+      reportDate: '2026-09-06',
+      commissionPercent: '0.25',
+    }))
+    expect(tooMany.success).toBe(false)
+    expect(tooMany.error).toBe('Quantidade excede o saldo disponível (10)')
+  })
+
+  it('edição que reduz a quantidade vendida devolve a diferença pro saldo com o parceiro', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '10',
+      unitPrice: '25',
+      deliveryDate: '2026-09-01',
+    }))
+    const delivery = await prisma.consignmentDelivery.findFirstOrThrow({ where: { partnerId: partner.id } })
+
+    await createConsignmentSaleReport(fd({
+      deliveryId: delivery.id,
+      quantitySold: '7',
+      reportDate: '2026-09-05',
+      commissionPercent: '0.3',
+    }))
+    const report = await prisma.consignmentSaleReport.findFirstOrThrow({ where: { deliveryId: delivery.id } })
+
+    const result = await updateConsignmentSaleReport(report.id, fd({
+      deliveryId: delivery.id,
+      quantitySold: '2',
+      reportDate: '2026-09-05',
+      commissionPercent: '0.3',
+    }))
+    expect(result.success).toBe(true)
+
+    const stock = await getPartnerStock(partner.id)
+    expect(stock[0]).toMatchObject({ delivered: 10, sold: 2, remaining: 8 })
+  })
+})
+
+// Bug reportado ao vivo: "NO ESTOQUE COM O PARCEIRO FOI ADICIONADO 2
+// ENTREGAS, EM VEZ DELE SOMAR O TOTAL, ELE ADICIONOU 2 VEZES O MESMO
+// PRODUTO" -- 2 entregas separadas do mesmo produto+cor apareciam como 2
+// linhas distintas no modal "Registrar venda", em vez de 1 linha com o
+// saldo somado.
+describe('saleableDeliveries agrega por produto+cor (fix "2 entregas viravam 2 linhas")', () => {
+  it('getConsignmentPartnerDetail soma o saldo de 2 entregas do mesmo produto (sem cor) numa linha só, entrega mais antiga primeiro', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '3',
+      unitPrice: '20',
+      deliveryDate: '2026-09-01',
+    }))
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '5',
+      unitPrice: '22',
+      deliveryDate: '2026-09-10',
+    }))
+    const [older, newer] = await prisma.consignmentDelivery.findMany({
+      where: { partnerId: partner.id },
+      orderBy: { deliveryDate: 'asc' },
+    })
+
+    const detail = await getConsignmentPartnerDetail(partner.id)
+    expect(detail!.saleableDeliveries).toHaveLength(1)
+    const group = detail!.saleableDeliveries[0]
+    expect(group.remaining).toBe(8) // 3 + 5, não 2 linhas de 3 e 5
+    expect(group.deliveryIds).toEqual([older.id, newer.id]) // mais antiga primeiro (FIFO)
+    expect(group.unitPrice).toBeCloseTo(20) // preço da entrega mais antiga
+  })
+
+  it('createConsignmentSaleReportBatch consome a entrega mais antiga primeiro e só "atravessa" pra próxima quando necessário', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '3',
+      unitPrice: '20',
+      deliveryDate: '2026-09-01',
+    }))
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '5',
+      unitPrice: '22',
+      deliveryDate: '2026-09-10',
+    }))
+    const [older, newer] = await prisma.consignmentDelivery.findMany({
+      where: { partnerId: partner.id },
+      orderBy: { deliveryDate: 'asc' },
+    })
+    const detail = await getConsignmentPartnerDetail(partner.id)
+    const group = detail!.saleableDeliveries[0]
+
+    // Vende 4 -- esgota a entrega mais antiga (3) e "atravessa" 1 unidade
+    // pra entrega mais nova, virando 2 ConsignmentSaleReport (um por
+    // entrega efetivamente tocada), mesmo preço/comissão/data nos dois.
+    const batchFd = new FormData()
+    batchFd.set('reportDate', '2026-09-15')
+    batchFd.set('notes', '')
+    batchFd.set('itemsJson', JSON.stringify([
+      { deliveryIds: group.deliveryIds, quantitySold: 4, commissionPercent: 0.3, unitPrice: 21 },
+    ]))
+    const result = await createConsignmentSaleReportBatch(batchFd)
+    expect(result.success).toBe(true)
+
+    const reports = await prisma.consignmentSaleReport.findMany({ orderBy: { deliveryId: 'asc' } })
+    expect(reports).toHaveLength(2)
+    const olderReport = reports.find((r) => r.deliveryId === older.id)!
+    const newerReport = reports.find((r) => r.deliveryId === newer.id)!
+    expect(olderReport.quantitySold).toBe(3) // esgota a mais antiga inteira
+    expect(newerReport.quantitySold).toBe(1) // só o que sobrou
+    expect(olderReport.unitPrice?.toNumber()).toBeCloseTo(21) // preço explícito, igual nos dois
+    expect(newerReport.unitPrice?.toNumber()).toBeCloseTo(21)
+
+    // getPartnerStock é por ENTREGA (não agregado por produto) -- soma as 2
+    // linhas do mesmo produto pra conferir o total.
+    const stock = await getPartnerStock(partner.id)
+    const totals = stock.reduce((acc, s) => ({ delivered: acc.delivered + s.delivered, sold: acc.sold + s.sold, remaining: acc.remaining + s.remaining }), { delivered: 0, sold: 0, remaining: 0 })
+    expect(totals).toEqual({ delivered: 8, sold: 4, remaining: 4 })
+  })
+
+  it('createConsignmentSaleReportBatch recusa quando a quantidade excede o saldo somado do grupo inteiro, sem gravar nada', async () => {
+    const { product } = await createSupportRecords()
+    const partner = await prisma.consignmentPartner.create({ data: { name: 'Loja', defaultCommissionPercent: 0.3 } })
+
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '3',
+      unitPrice: '20',
+      deliveryDate: '2026-09-01',
+    }))
+    await createConsignmentDelivery(fd({
+      partnerId: partner.id,
+      productId: product.id,
+      quantityDelivered: '5',
+      unitPrice: '22',
+      deliveryDate: '2026-09-10',
+    }))
+    const detail = await getConsignmentPartnerDetail(partner.id)
+    const group = detail!.saleableDeliveries[0]
+
+    const batchFd = new FormData()
+    batchFd.set('reportDate', '2026-09-15')
+    batchFd.set('notes', '')
+    batchFd.set('itemsJson', JSON.stringify([
+      { deliveryIds: group.deliveryIds, quantitySold: 9, commissionPercent: 0.3, unitPrice: 21 }, // saldo total é 8
+    ]))
+    const result = await createConsignmentSaleReportBatch(batchFd)
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('8')
+
+    const reports = await prisma.consignmentSaleReport.findMany()
+    expect(reports).toHaveLength(0)
   })
 })

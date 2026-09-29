@@ -410,7 +410,7 @@ model Product {
   sales                 Sale[]
   consignmentDeliveries ConsignmentDelivery[]
   photos                ProductPhoto[]
-  orders                Order[]
+  orderItems            OrderItem[]
   orderReallocations    OrderReallocation[]
   stockConsumptions     StockConsumption[]
   // Melhoria "Produto-como-componente": o que ESTE produto usa como
@@ -977,7 +977,7 @@ model Sale {
   // mesmo comportamento já usado em Entregas.
   batchId         String
   createdAt       DateTime    @default(now())
-  order           Order?
+  orderItem       OrderItem?
 
   @@index([batchId])
 }
@@ -1065,9 +1065,44 @@ enum OrderStatus {
   CANCELADO
 }
 
+// Melhoria "Pedidos com múltiplos itens": Order virou só o CABEÇALHO
+// (canal/comprador/datas/número/observações, compartilhado por todos os
+// itens de uma mesma submissão) -- tudo que antes era "o pedido" (produto,
+// cor, quantidade, preço, reserva, status) migrou pra OrderItem, 1 linha
+// por produto+cor pedido. deliveryDate fica só aqui (1 prazo por pedido,
+// não por item) -- reconcileOrderReservations continua ordenando por
+// prioridade de prazo via `item.order.deliveryDate` (join), nunca um
+// campo duplicado em OrderItem. Migration 20260928020000 recriou 1
+// OrderItem pra cada Order pré-existente, reaproveitando o MESMO id
+// (Order antigo virou cabeçalho + 1 item seu, sem inventar histórico).
 model Order {
   id              String       @id @default(cuid())
   channel         OrderChannel
+  orderDate       DateTime
+  // Quando precisa estar pronto/entregue -- separado de orderDate (quando
+  // foi feito). É o campo que decide prioridade entre itens de pedidos
+  // diferentes disputando a mesma peça (reconcileOrderReservations ordena
+  // por este campo via o item, mais próximo primeiro).
+  deliveryDate    DateTime
+  // Mesmo nome de campo que Sale.buyerOrPlatform, pro mesmo conceito.
+  buyerOrPlatform String?
+  orderNumber     String?
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  items           OrderItem[]
+}
+
+// 1 produto+cor+quantidade+preço pedido, com seu próprio ciclo de vida
+// (reserva/status/venda) -- vários OrderItem compartilham 1 Order
+// (cabeçalho). O motor de reserva (lib/orderReservations.ts) sempre
+// operou por (productId, colorComboKey), nunca pelo pedido inteiro --
+// essa granularidade já existia antes de Order virar cabeçalho+itens,
+// só migrou de campo escalar de Order pra campo escalar de OrderItem.
+model OrderItem {
+  id              String       @id @default(cuid())
+  orderId         String
+  order           Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
   productId       String
   product         Product      @relation(fields: [productId], references: [id])
   // Melhoria "Pedidos com reserva de estoque": mesma convenção de
@@ -1077,17 +1112,6 @@ model Order {
   colorComboKey   String?
   quantity        Int
   unitPrice       Decimal      @db.Decimal(10, 2)
-  orderDate       DateTime
-  // Quando precisa estar pronto/entregue -- separado de orderDate (quando
-  // foi feito). É o campo que decide prioridade entre pedidos disputando
-  // a mesma peça (reconcileOrderReservations ordena por este campo, mais
-  // próximo primeiro). NOT NULL sem default -- pedido antigo (anterior a
-  // este campo existir) é backfillado com orderDate na migration
-  // seguinte (mesmo padrão de Sale.batchId, ver CLAUDE.md), única data
-  // que existia pra aproximar.
-  deliveryDate    DateTime
-  // Mesmo nome de campo que Sale.buyerOrPlatform, pro mesmo conceito.
-  buyerOrPlatform String?
   // Quanto de `quantity` já está garantido do estoque físico agora --
   // NUNCA editado à mão nem incrementado por uma action isolada, sempre
   // recalculado do zero por reconcileOrderReservations toda vez que o
@@ -1096,45 +1120,45 @@ model Order {
   // aplicada a uma alocação por prioridade em vez de uma soma simples).
   reservedQuantity Int         @default(0)
   status          OrderStatus  @default(AGUARDANDO_PRODUCAO)
-  orderNumber     String?
-  notes           String?
   saleId          String?      @unique
   sale            Sale?        @relation(fields: [saleId], references: [id])
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
-  // Toda vez que este pedido PERDEU peça reservada pra outro mais urgente
+  // Toda vez que este item PERDEU peça reservada pra outro mais urgente
   // (reallocationsLost) ou GANHOU peça que era de outro (reallocationsWon)
   // -- log permanente escrito por reconcileOrderReservations, nunca
   // editado à mão. Alimenta a etiqueta "⚠ N peça(s) realocada(s)..." na
   // tela de Pedidos (sempre visível, em qualquer tela que listar o
-  // pedido) -- o aviso PASSAGEIRO (banner que aparece e some) é
+  // item) -- o aviso PASSAGEIRO (banner que aparece e some) é
   // diferente disso: só existe no retorno de createOrder/cancelOrder/
   // deleteOrder pra aquela chamada específica, nunca lido de volta do
   // banco.
   reallocationsLost OrderReallocation[] @relation("ReallocationFrom")
   reallocationsWon  OrderReallocation[] @relation("ReallocationTo")
+
+  @@index([orderId])
 }
 
-// Log permanente de toda realocação de peça entre pedidos por prioridade
-// de prazo -- só existe reconciliação "roubando" peça de alguém quando um
-// pedido novo/editado tem prazo mais urgente que um pedido que já tinha
-// reserva pro mesmo produto+variação (produção/montagem só ADICIONAM
-// estoque, nunca tomam de ninguém -- ver comentário em
+// Log permanente de toda realocação de peça entre ITENS de pedido por
+// prioridade de prazo -- só existe reconciliação "roubando" peça de
+// alguém quando um item novo/editado tem prazo mais urgente que um item
+// que já tinha reserva pro mesmo produto+variação (produção/montagem só
+// ADICIONAM estoque, nunca tomam de ninguém -- ver comentário em
 // lib/orderReservations.ts).
 model OrderReallocation {
-  id            String   @id @default(cuid())
-  productId     String
-  product       Product  @relation(fields: [productId], references: [id])
-  colorComboKey String?
-  quantity      Int
-  fromOrderId   String
-  fromOrder     Order    @relation("ReallocationFrom", fields: [fromOrderId], references: [id])
-  toOrderId     String
-  toOrder       Order    @relation("ReallocationTo", fields: [toOrderId], references: [id])
-  createdAt     DateTime @default(now())
+  id                String    @id @default(cuid())
+  productId         String
+  product           Product   @relation(fields: [productId], references: [id])
+  colorComboKey     String?
+  quantity          Int
+  fromOrderItemId   String
+  fromOrderItem     OrderItem @relation("ReallocationFrom", fields: [fromOrderItemId], references: [id])
+  toOrderItemId     String
+  toOrderItem       OrderItem @relation("ReallocationTo", fields: [toOrderItemId], references: [id])
+  createdAt         DateTime  @default(now())
 
-  @@index([fromOrderId])
-  @@index([toOrderId])
+  @@index([fromOrderItemId])
+  @@index([toOrderItemId])
 }
 
 model ConsignmentPartner {
@@ -1182,6 +1206,21 @@ model ConsignmentDelivery {
   colorComboKey     String?
   notes             String?
   createdAt         DateTime                @default(now())
+  // Melhoria "editar tudo no consignado" (revisão): quanto já voltou pro
+  // próprio estoque desta entrega (returnConsignmentDeliveryStock,
+  // actions/consignmentDeliveries.ts) -- NUNCA decrementa quantityDelivered
+  // diretamente (mesma filosofia de ProductionRun.status=CANCELADA: o fato
+  // histórico "quanto foi entregue" nunca é reescrito, só um estado à parte
+  // marca o que aconteceu depois). "Com ela" em toda tela é sempre
+  // quantityDelivered - vendido - returnedQuantity; quando esse resultado
+  // chega a 0 com returnedQuantity > 0 (não por ter sido tudo vendido), a
+  // entrega vira "Devolvida" na UI -- mesma lógica de uma ProductionRun
+  // CANCELADA: continua visível com os números originais, só ganha um
+  // estado que a exclui das somas ativas, com "Desfazer" (zera
+  // returnedQuantity, ao contrário de Produção que não tem un-cancelar --
+  // pedido explícito aqui) e "Apagar" (delete físico definitivo, sem volta,
+  // só some da tela quando já está devolvida).
+  returnedQuantity  Int                     @default(0)
   saleReports       ConsignmentSaleReport[]
 }
 

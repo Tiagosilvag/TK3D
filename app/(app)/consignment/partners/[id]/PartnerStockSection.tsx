@@ -1,7 +1,10 @@
 'use client'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import type { ConsignmentProductBreakdown, ConsignmentSaleableDelivery } from '@/lib/reports'
+import { deleteConsignmentDelivery, returnConsignmentDeliveryStock, undoConsignmentDeliveryReturn } from '@/actions/consignmentDeliveries'
+import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { RegisterSaleForm } from './RegisterSaleForm'
 
 // Melhoria "Parceiros de consignação" §5: uma linha por PRODUTO (totais
@@ -19,13 +22,64 @@ export function PartnerStockSection({
   saleableDeliveries: ConsignmentSaleableDelivery[]
   defaultCommissionPercent: number
 }) {
+  const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [selected, setSelected] = useState<ConsignmentProductBreakdown | null>(null)
+  // Pedido "opção de devolver apenas 1 ou tudo": o campo de quantidade é
+  // não-controlado (defaultValue), então o botão "(tudo)" precisa de uma
+  // referência direta ao <input> daquela entrega pra escrever nele -- um Map
+  // por deliveryId em vez de 1 ref por linha, já que a lista é dinâmica.
+  const quantityInputRefs = useRef<Map<string, HTMLInputElement>>(new Map())
 
   function openDetail(product: ConsignmentProductBreakdown) {
     setSelected(product)
     dialogRef.current?.showModal()
   }
+
+  // Melhoria "editar tudo no consignado": devolver peças ao próprio estoque
+  // e remover entrega agem na entrega específica (id), não no agregado por
+  // produto/cor -- depois de um sucesso, refresh() traz o `selected` já
+  // recalculado (mesma re-sincronização que DeliveriesExplorer já faz).
+  async function handleReturnStock(deliveryId: string, formData: FormData) {
+    const result = await returnConsignmentDeliveryStock(deliveryId, formData)
+    if (!result.success) {
+      alert(result.error)
+      return
+    }
+    router.refresh()
+  }
+
+  async function handleRemoveDelivery(deliveryId: string) {
+    const result = await deleteConsignmentDelivery(deliveryId)
+    if (result.success) router.refresh()
+    return result
+  }
+
+  // Pedido "quero a opção de desfazer também uma devolução, se marcou
+  // errado -- mas somente qnd ele fica devolvido": zera returnedQuantity,
+  // trazendo a entrega de volta ao estado normal (com o parceiro de novo).
+  // Sem confirmação (ação reversível, ao contrário de Remover) -- mesma
+  // ausência de confirm() que "Devolver" já tinha.
+  async function handleUndoReturn(deliveryId: string) {
+    const result = await undoConsignmentDeliveryReturn(deliveryId)
+    if (!result.success) {
+      alert(result.error)
+      return
+    }
+    router.refresh()
+  }
+
+  // Bug fix (mesmo de DeliveriesExplorer): `selected` é um snapshot tirado
+  // em openDetail(). router.refresh() atualiza a prop `products`, mas
+  // `selected` nunca era re-sincronizado sozinho -- devolução/remoção
+  // pareciam não ter feito nada até fechar e reabrir a modal.
+  useEffect(() => {
+    setSelected((prev) => (prev ? (products.find((p) => p.productId === prev.productId) ?? null) : prev))
+  }, [products])
+
+  useEffect(() => {
+    if (selected === null && dialogRef.current?.open) dialogRef.current.close()
+  }, [selected])
 
   if (products.length === 0) {
     return (
@@ -89,7 +143,19 @@ export function PartnerStockSection({
             </div>
 
             <div className="space-y-3">
-              {selected.variants.map((v) => (
+              {/* Bug "variações zeradas ainda aparecem": uma cor cujo total
+                  entregue chegou a 0 sem passar pelo novo returnedQuantity
+                  (entrega devolvida pela lógica ANTIGA, anterior a este
+                  campo -- quantityDelivered já foi sobrescrito pra 0 no
+                  banco, sem meio de saber que "foi devolvida") não tem mais
+                  nada útil pra mostrar aqui: nenhuma entrega dela passa no
+                  isReturned (returnedQuantity fica 0 pra sempre nesses
+                  casos legados) nem sobra saldo pra devolver, só um bloco
+                  vazio 0/0/0. Uma cor devolvida pelo fluxo NOVO nunca cai
+                  aqui -- quantityDelivered continua > 0 (nunca reescrito),
+                  só returnedQuantity sobe, então v.delivered permanece o
+                  valor histórico real. */}
+              {selected.variants.filter((v) => v.delivered > 0).map((v) => (
                 <div key={v.key ?? '__none__'} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
                   <div className="flex items-center justify-between gap-2">
                     <span className="flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -100,6 +166,93 @@ export function PartnerStockSection({
                       Entregue {v.delivered} · Vendido {v.sold} · Com ela {v.remaining}
                     </span>
                   </div>
+
+                  {/* Melhoria "editar tudo no consignado" (revisão "a mesma lógica de
+                      produção"): ação por ENTREGA específica (não dá pra devolver/
+                      remover o agregado por cor -- ele pode vir de vários lotes com
+                      datas diferentes). Uma entrega cujo saldo chegou a 0 POR DEVOLUÇÃO
+                      (não por ter sido tudo vendido) vira "Devolvida" -- mesmo
+                      tratamento de uma ProductionRun CANCELADA: continua visível com
+                      os números originais (nunca reescritos), badge marca o estado,
+                      "Desfazer" volta a ficar com o parceiro (zera returnedQuantity),
+                      "Remover" apaga em definitivo (só aí some da tela). */}
+                  <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-2 dark:border-slate-800">
+                    {v.deliveries.map((d) => {
+                      const isReturned = d.remaining === 0 && d.returnedQuantity > 0
+                      return (
+                        <div key={d.deliveryId} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                          <span className="flex flex-wrap items-center gap-1.5 text-slate-400 dark:text-slate-500">
+                            {new Date(d.deliveryDate).toLocaleDateString('pt-BR')} · entregue {d.delivered}
+                            {d.sold > 0 && ` · vendido ${d.sold}`}
+                            {isReturned && (
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                Devolvida
+                              </span>
+                            )}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            {isReturned && (
+                              <button
+                                type="button"
+                                onClick={() => handleUndoReturn(d.deliveryId)}
+                                className="font-medium text-violet-600 hover:underline dark:text-violet-400"
+                              >
+                                Desfazer
+                              </button>
+                            )}
+                            {!isReturned && d.remaining > 0 && (
+                              <form action={(fd) => handleReturnStock(d.deliveryId, fd)} className="flex items-center gap-1">
+                                <input
+                                  ref={(el) => {
+                                    if (el) quantityInputRefs.current.set(d.deliveryId, el)
+                                    else quantityInputRefs.current.delete(d.deliveryId)
+                                  }}
+                                  type="number"
+                                  name="quantityReturned"
+                                  step="1"
+                                  min={1}
+                                  max={d.remaining}
+                                  // Pedido "se tem 2, quero a opção de devolver apenas 1 ou
+                                  // tudo": default 1 (maioria das devoluções é unitária,
+                                  // mesmo raciocínio do default de quantidade em Registrar
+                                  // venda) -- "(tudo)" abaixo preenche o saldo inteiro com 1
+                                  // clique quando for o caso.
+                                  defaultValue={Math.min(1, d.remaining)}
+                                  className="tk-input w-14 text-right"
+                                />
+                                <button type="submit" className="font-medium text-violet-600 hover:underline dark:text-violet-400">
+                                  Devolver
+                                </button>
+                                {d.remaining > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const input = quantityInputRefs.current.get(d.deliveryId)
+                                      if (input) input.value = String(d.remaining)
+                                    }}
+                                    className="text-slate-400 hover:text-violet-600 dark:text-slate-500 dark:hover:text-violet-400"
+                                  >
+                                    (tudo)
+                                  </button>
+                                )}
+                              </form>
+                            )}
+                            <ConfirmDeleteForm
+                              action={() => handleRemoveDelivery(d.deliveryId)}
+                              label="Remover"
+                              className="font-medium text-red-600 hover:underline dark:text-red-400"
+                              confirmMessage={
+                                d.saleReportsCount > 0
+                                  ? `Remover esta entrega? Isso também apaga ${d.saleReportsCount} relatório(s) de venda já registrado(s) contra ela.`
+                                  : 'Remover esta entrega?'
+                              }
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
                   {v.accessories.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {v.accessories.map((a) => (

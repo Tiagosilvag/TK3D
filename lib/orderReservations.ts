@@ -35,9 +35,9 @@ export interface OrderReallocationEvent {
   productId: string
   colorComboKey: string | null
   quantity: number
-  fromOrderId: string
+  fromOrderItemId: string
   fromOrderNumber: string | null
-  toOrderId: string
+  toOrderItemId: string
   toOrderNumber: string | null
 }
 
@@ -75,7 +75,7 @@ async function getRawProductAvailable(productId: string, needsAssembly: boolean)
   ])
   const produced = needsAssembly ? (assembledAgg._sum.quantity ?? 0) : (producedAgg._sum.quantitySuccess ?? 0)
   const soldDirect = soldAgg._sum.quantity ?? 0
-  const delivered = deliveries.reduce((sum, d) => sum + d.quantityDelivered, 0)
+  const delivered = deliveries.reduce((sum, d) => sum + d.quantityDelivered - d.returnedQuantity, 0)
   const adjustment = adjustmentAgg._sum.difference?.toNumber() ?? 0
   return Math.max(0, produced - soldDirect - delivered + adjustment - consumedAsComponent)
 }
@@ -90,10 +90,11 @@ async function getRawVariantAvailable(productId: string, colorComboKey: string, 
   const variant = breakdown.find((v) => v.key === colorComboKey)
   const produced = variant?.quantity ?? 0
   const [deliveredAgg, soldAgg] = await Promise.all([
-    prisma.consignmentDelivery.aggregate({ where: { productId, colorComboKey }, _sum: { quantityDelivered: true } }),
+    prisma.consignmentDelivery.aggregate({ where: { productId, colorComboKey }, _sum: { quantityDelivered: true, returnedQuantity: true } }),
     prisma.sale.aggregate({ where: { productId, colorComboKey }, _sum: { quantity: true } }),
   ])
-  return Math.max(0, produced - (deliveredAgg._sum.quantityDelivered ?? 0) - (soldAgg._sum.quantity ?? 0))
+  const delivered = (deliveredAgg._sum.quantityDelivered ?? 0) - (deliveredAgg._sum.returnedQuantity ?? 0)
+  return Math.max(0, produced - delivered - (soldAgg._sum.quantity ?? 0))
 }
 
 // Encomenda com variação personalizada: quanto dá pra montar AGORA pra um
@@ -143,17 +144,23 @@ export async function reconcileOrderReservations(
   // pedido genérico (getRawProductAvailable) em vez de tentar achar uma
   // variante "" que nunca existe (getRawVariantAvailable, sempre 0).
   const colorComboKey = colorComboKeyInput || null
-  const [product, orders] = await Promise.all([
+  const [product, items] = await Promise.all([
     prisma.product.findUniqueOrThrow({
       where: { id: productId },
       include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
     }),
-    prisma.order.findMany({
+    // Melhoria "Pedidos com múltiplos itens": a fila de alocação sempre
+    // operou por (productId, colorComboKey), nunca pelo pedido inteiro --
+    // migrou de prisma.order pra prisma.orderItem sem mudar a granularidade.
+    // A prioridade por prazo continua vindo de deliveryDate, que agora mora
+    // no cabeçalho (Order) -- ordena pelo relacionamento.
+    prisma.orderItem.findMany({
       where: { productId, colorComboKey, status: { notIn: TERMINAL_STATUSES } },
-      orderBy: [{ deliveryDate: 'asc' }, { createdAt: 'asc' }],
+      include: { order: { select: { deliveryDate: true, orderNumber: true } } },
+      orderBy: [{ order: { deliveryDate: 'asc' } }, { createdAt: 'asc' }],
     }),
   ])
-  if (orders.length === 0) return []
+  if (items.length === 0) return []
 
   const needsAssembly = productNeedsAssembly({
     isComposite: product.isComposite,
@@ -171,18 +178,18 @@ export async function reconcileOrderReservations(
   const maxAssemblableUnits = assemblyStatus ? maxAssemblableUnitsForCombo(assemblyStatus, colorComboKey) : 0
 
   let remaining = claimable
-  const results = orders.map((o) => {
-    const assign = Math.min(remaining, o.quantity)
+  const results = items.map((item) => {
+    const assign = Math.min(remaining, item.quantity)
     remaining -= assign
-    return { order: o, newReserved: assign, newStatus: computeOrderStatus(o.quantity, assign, needsAssembly, maxAssemblableUnits) }
+    return { item, newReserved: assign, newStatus: computeOrderStatus(item.quantity, assign, needsAssembly, maxAssemblableUnits) }
   })
 
-  const changed = results.filter((r) => r.newReserved !== r.order.reservedQuantity || r.newStatus !== r.order.status)
+  const changed = results.filter((r) => r.newReserved !== r.item.reservedQuantity || r.newStatus !== r.item.status)
   if (changed.length === 0) return []
 
   // Diffa reservedQuantity antigo vs novo pra achar quem perdeu ("loser",
   // delta negativo) e quem ganhou ("winner", delta positivo) -- só
-  // acontece quando a composição da fila mudou (pedido novo/editado
+  // acontece quando a composição da fila mudou (item novo/editado
   // entrando com prioridade maior), nunca só por mais estoque aparecer
   // (mais estoque só preenche buraco de quem tava esperando, nunca tira
   // de quem já tinha). Faz um "netting" genérico entre as duas listas --
@@ -191,9 +198,9 @@ export async function reconcileOrderReservations(
   const losers: { id: string; orderNumber: string | null; qty: number }[] = []
   const winners: { id: string; orderNumber: string | null; qty: number }[] = []
   for (const r of results) {
-    const delta = r.newReserved - r.order.reservedQuantity
-    if (delta < 0) losers.push({ id: r.order.id, orderNumber: r.order.orderNumber, qty: -delta })
-    else if (delta > 0) winners.push({ id: r.order.id, orderNumber: r.order.orderNumber, qty: delta })
+    const delta = r.newReserved - r.item.reservedQuantity
+    if (delta < 0) losers.push({ id: r.item.id, orderNumber: r.item.order.orderNumber, qty: -delta })
+    else if (delta > 0) winners.push({ id: r.item.id, orderNumber: r.item.order.orderNumber, qty: delta })
   }
   const events: OrderReallocationEvent[] = []
   let li = 0
@@ -204,9 +211,9 @@ export async function reconcileOrderReservations(
       productId,
       colorComboKey,
       quantity: take,
-      fromOrderId: losers[li].id,
+      fromOrderItemId: losers[li].id,
       fromOrderNumber: losers[li].orderNumber,
-      toOrderId: winners[wi].id,
+      toOrderItemId: winners[wi].id,
       toOrderNumber: winners[wi].orderNumber,
     })
     losers[li].qty -= take
@@ -217,7 +224,7 @@ export async function reconcileOrderReservations(
 
   await prisma.$transaction([
     ...changed.map((r) =>
-      prisma.order.update({ where: { id: r.order.id }, data: { reservedQuantity: r.newReserved, status: r.newStatus } }),
+      prisma.orderItem.update({ where: { id: r.item.id }, data: { reservedQuantity: r.newReserved, status: r.newStatus } }),
     ),
     ...events.map((e) =>
       prisma.orderReallocation.create({
@@ -225,8 +232,8 @@ export async function reconcileOrderReservations(
           productId: e.productId,
           colorComboKey: e.colorComboKey,
           quantity: e.quantity,
-          fromOrderId: e.fromOrderId,
-          toOrderId: e.toOrderId,
+          fromOrderItemId: e.fromOrderItemId,
+          toOrderItemId: e.toOrderItemId,
         },
       }),
     ),
@@ -248,7 +255,7 @@ export async function reconcileOrderReservations(
 // um -- barato/idempotente quando nada mudou, mesma garantia de
 // reconcileOrderReservations.
 export async function reconcileAllPendingOrders(): Promise<void> {
-  const pending = await prisma.order.findMany({
+  const pending = await prisma.orderItem.findMany({
     where: { status: { notIn: TERMINAL_STATUSES } },
     select: { productId: true, colorComboKey: true },
     distinct: ['productId', 'colorComboKey'],

@@ -66,16 +66,26 @@ export const consignmentSaleReportSchema = z.object({
 // mesmo padrão de lote de productionRunBatchSchema (checkbox por linha no
 // modal, 1 submissão cria N ConsignmentSaleReport). reportDate/notes são
 // únicos pro lote inteiro (mesma data de registro pra tudo que a pessoa
-// marcou); cada item mantém sua própria entrega/quantidade/comissão (a
-// comissão pode variar por entrega se o parceiro tiver combinado algo
-// diferente daquela vez).
+// marcou); cada item mantém sua própria quantidade/comissão (a comissão
+// pode variar por entrega se o parceiro tiver combinado algo diferente
+// daquela vez).
+//
+// Bug "2 entregas do mesmo produto+cor apareciam como 2 linhas em vez de 1
+// com o saldo somado": um item agora representa um GRUPO produto+cor
+// (ConsignmentSaleableDelivery, lib/reports.ts), não mais uma entrega
+// única -- `deliveryIds` traz as entregas que compõem esse grupo (mais
+// antiga primeiro); createConsignmentSaleReportBatch consome nessa ordem
+// (FIFO) até cobrir quantitySold, criando 1 ConsignmentSaleReport por
+// entrega efetivamente tocada.
 export const consignmentSaleReportBatchItemSchema = z.object({
-  deliveryId: z.string().min(1, 'Selecione uma entrega'),
+  deliveryIds: z.array(z.string().min(1)).min(1, 'Selecione ao menos uma entrega'),
   quantitySold: z.coerce.number().int('Quantidade deve ser um número inteiro').positive('Quantidade deve ser maior que zero'),
   commissionPercent: z.coerce.number().min(0, 'Comissão não pode ser negativa').max(1, 'Comissão não pode ser maior que 100%'),
-  // Preço unitário desta linha, quando diferente do cadastrado na entrega
-  // (mesma convenção de consignmentSaleReportSchema.unitPrice acima).
-  unitPrice: z.coerce.number().positive('Preço deve ser maior que zero').optional().nullable(),
+  // Preço unitário desta venda -- sempre gravado explicitamente em cada
+  // ConsignmentSaleReport gerado (nunca null/"herda da entrega"), já que 1
+  // grupo pode abranger entregas com preços cadastrados diferentes entre
+  // si (ver comentário de ConsignmentSaleableDelivery.unitPrice).
+  unitPrice: z.coerce.number().positive('Preço deve ser maior que zero'),
 })
 
 export const consignmentSaleReportBatchSchema = z.object({

@@ -7,11 +7,11 @@ import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
 
 interface SaleRow {
-  deliveryId: string
+  groupKey: string
+  deliveryIds: string[]
   productName: string
   colorLabel: string | null
   remaining: number
-  defaultUnitPrice: number
   checked: boolean
   quantitySold: string
   unitPrice: string
@@ -19,11 +19,11 @@ interface SaleRow {
 
 function buildRows(deliveries: ConsignmentSaleableDelivery[]): SaleRow[] {
   return deliveries.map((d) => ({
-    deliveryId: d.deliveryId,
+    groupKey: d.groupKey,
+    deliveryIds: d.deliveryIds,
     productName: d.productName,
     colorLabel: d.colorLabel,
     remaining: d.remaining,
-    defaultUnitPrice: d.unitPrice,
     checked: false,
     quantitySold: '',
     unitPrice: String(d.unitPrice),
@@ -34,13 +34,16 @@ function buildRows(deliveries: ConsignmentSaleableDelivery[]): SaleRow[] {
 // "quero poder selecionar TODOS os produtos entregues e disponíveis pra
 // lançar a venda de uma vez": a 1ª volta deste modal só deixava escolher
 // UMA entrega por submissão (<select> único); agora vira uma lista com
-// checkbox por entrega (mesmo padrão de "Registrar produção" -- marcar
-// várias peças e registrar tudo numa submissão só), com "Marcar todas"
-// pra já vender o saldo inteiro de cada produto disponível de uma vez.
-// Data do relatório e observações são únicas pro lote inteiro; cada linha
-// mantém sua própria entrega/quantidade/preço (createConsignmentSaleReportBatch
-// em actions/consignmentSaleReports.ts cria 1 ConsignmentSaleReport por
-// linha marcada, tudo numa transação só).
+// checkbox por LINHA (uma linha = 1 produto+cor, com o saldo de todas as
+// entregas daquele combo já somado -- ver ConsignmentSaleableDelivery em
+// lib/reports.ts -- mesmo padrão de "Registrar produção": marcar várias
+// peças e registrar tudo numa submissão só), com "Marcar todas" pra já
+// vender o saldo inteiro de cada produto disponível de uma vez. Data do
+// relatório e observações são únicas pro lote inteiro; cada linha manda
+// sua própria quantidade/preço (createConsignmentSaleReportBatch em
+// actions/consignmentSaleReports.ts distribui a quantidade pelas entregas
+// do grupo, mais antiga primeiro, criando 1 ConsignmentSaleReport por
+// entrega efetivamente tocada, tudo numa transação só).
 //
 // Bug "modal com rolagem horizontal / texto sem quebrar": cada linha era um
 // <label> flex sem min-w-0 -- um flex item sem min-w-0 nunca encolhe abaixo
@@ -76,6 +79,7 @@ export function RegisterSaleForm({
   const [reportDate, setReportDate] = useState(today())
   const [notes, setNotes] = useState('')
   const [bulkPrice, setBulkPrice] = useState('')
+  const [search, setSearch] = useState('')
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -89,18 +93,31 @@ export function RegisterSaleForm({
     setRows(buildRows(deliveries))
     setReportDate(today())
     setNotes('')
+    setSearch('')
   }
 
-  function updateRow(deliveryId: string, patch: Partial<SaleRow>) {
-    setRows((prev) => prev.map((r) => (r.deliveryId === deliveryId ? { ...r, ...patch } : r)))
+  function updateRow(groupKey: string, patch: Partial<SaleRow>) {
+    setRows((prev) => prev.map((r) => (r.groupKey === groupKey ? { ...r, ...patch } : r)))
   }
+
+  // Pedido "opção de busca ao fazer a venda do parceiro": lista de produtos
+  // disponíveis pode ter dezenas de combinações produto+cor (parceiro com
+  // muito estoque) -- filtro client-side por nome/cor, sem ida ao servidor
+  // (os dados já estão todos carregados). "Marcar todas"/"Desmarcar todas"
+  // passam a agir só sobre o que está visível com o filtro atual (com busca
+  // vazia, continua sendo todas -- comportamento de sempre).
+  const normalizedSearch = search.trim().toLowerCase()
+  const filteredRows = normalizedSearch
+    ? rows.filter((r) => `${r.productName} ${r.colorLabel ?? ''}`.toLowerCase().includes(normalizedSearch))
+    : rows
+  const filteredKeys = new Set(filteredRows.map((r) => r.groupKey))
 
   function markAll() {
-    setRows((prev) => prev.map((r) => ({ ...r, checked: true, quantitySold: String(r.remaining) })))
+    setRows((prev) => prev.map((r) => (filteredKeys.has(r.groupKey) ? { ...r, checked: true, quantitySold: String(r.remaining) } : r)))
   }
 
   function unmarkAll() {
-    setRows((prev) => prev.map((r) => ({ ...r, checked: false })))
+    setRows((prev) => prev.map((r) => (filteredKeys.has(r.groupKey) ? { ...r, checked: false } : r)))
   }
 
   // Pedido "opção de adicionar um valor para todas as unidades em massa":
@@ -139,15 +156,12 @@ export function RegisterSaleForm({
     fd.set(
       'itemsJson',
       JSON.stringify(
-        checkedRows.map((r) => {
-          const price = parseFloat(r.unitPrice)
-          return {
-            deliveryId: r.deliveryId,
-            quantitySold: parseInt(r.quantitySold, 10),
-            commissionPercent: defaultCommissionPercent,
-            unitPrice: price !== r.defaultUnitPrice ? price : null,
-          }
-        }),
+        checkedRows.map((r) => ({
+          deliveryIds: r.deliveryIds,
+          quantitySold: parseInt(r.quantitySold, 10),
+          commissionPercent: defaultCommissionPercent,
+          unitPrice: parseFloat(r.unitPrice),
+        })),
       ),
     )
     const result = await createConsignmentSaleReportBatch(fd)
@@ -197,6 +211,14 @@ export function RegisterSaleForm({
             </div>
           </div>
 
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar por produto ou cor…"
+            className="tk-input-full"
+          />
+
           <div className="flex items-center gap-2 rounded-lg bg-slate-50 p-2 dark:bg-slate-800/60">
             <label className="flex-1 text-xs text-slate-500 dark:text-slate-400">
               Aplicar preço unit. (R$) a todas
@@ -216,15 +238,22 @@ export function RegisterSaleForm({
           </div>
 
           <div className="space-y-2">
-            {rows.map((row) => (
-              <div key={row.deliveryId} className={`rounded-lg border p-2 ${row.checked ? 'border-slate-200 dark:border-slate-700' : 'border-slate-100 dark:border-slate-800'}`}>
+            {filteredRows.length === 0 && (
+              <p className="py-4 text-center text-sm text-slate-400 dark:text-slate-500">Nenhum produto encontrado.</p>
+            )}
+            {filteredRows.map((row) => (
+              <div key={row.groupKey} className={`rounded-lg border p-2 ${row.checked ? 'border-slate-200 dark:border-slate-700' : 'border-slate-100 dark:border-slate-800'}`}>
                 <label className="flex items-start gap-2 text-sm">
                   <input
                     type="checkbox"
                     checked={row.checked}
-                    onChange={(e) => updateRow(row.deliveryId, {
+                    onChange={(e) => updateRow(row.groupKey, {
                       checked: e.target.checked,
-                      quantitySold: e.target.checked && !row.quantitySold ? String(row.remaining) : row.quantitySold,
+                      // Pedido "padrão de consumo melhor ser 1 uni": marcar uma linha
+                      // sozinha pré-preenche com 1 (a maioria das vendas é unitária),
+                      // não o saldo inteiro -- "Marcar todas" continua vendendo o
+                      // saldo inteiro de cada linha (ação de lote, ver markAll()).
+                      quantitySold: e.target.checked && !row.quantitySold ? String(Math.min(1, row.remaining)) : row.quantitySold,
                     })}
                     className="mt-0.5 shrink-0 rounded border"
                   />
@@ -242,7 +271,7 @@ export function RegisterSaleForm({
                       min="1"
                       max={row.remaining}
                       value={row.quantitySold}
-                      onChange={(e) => updateRow(row.deliveryId, { quantitySold: e.target.value, checked: true })}
+                      onChange={(e) => updateRow(row.groupKey, { quantitySold: e.target.value, checked: true })}
                       disabled={!row.checked}
                       className="tk-input-full"
                     />
@@ -254,7 +283,7 @@ export function RegisterSaleForm({
                       step="0.01"
                       min="0.01"
                       value={row.unitPrice}
-                      onChange={(e) => updateRow(row.deliveryId, { unitPrice: e.target.value, checked: true })}
+                      onChange={(e) => updateRow(row.groupKey, { unitPrice: e.target.value, checked: true })}
                       disabled={!row.checked}
                       className="tk-input-full"
                     />

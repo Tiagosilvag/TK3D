@@ -642,17 +642,19 @@ export async function getProductVariantStockOptions(): Promise<ProductVariantSto
   if (products.length === 0) return []
 
   const [alreadyDelivered, alreadySold, alreadyReserved] = await Promise.all([
-    prisma.consignmentDelivery.groupBy({ by: ['productId', 'colorComboKey'], _sum: { quantityDelivered: true } }),
+    prisma.consignmentDelivery.groupBy({ by: ['productId', 'colorComboKey'], _sum: { quantityDelivered: true, returnedQuantity: true } }),
     prisma.sale.groupBy({ by: ['productId', 'colorComboKey'], _sum: { quantity: true } }),
     // Melhoria "Pedidos com reserva de estoque": mesmo raciocínio de
     // getOwnStockSummary -- pedido não-terminal já reservou a variante
     // pra si, desconta de "available" abaixo.
-    prisma.order.groupBy({ by: ['productId', 'colorComboKey'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { reservedQuantity: true } }),
+    prisma.orderItem.groupBy({ by: ['productId', 'colorComboKey'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { reservedQuantity: true } }),
   ])
   const deliveredByProductAndKey = new Map<string, number>()
   for (const d of alreadyDelivered) {
     if (!d.colorComboKey) continue
-    deliveredByProductAndKey.set(`${d.productId}::${d.colorComboKey}`, d._sum.quantityDelivered ?? 0)
+    // Devolvido (returnedQuantity) já voltou pro próprio estoque -- não
+    // conta mais como "entregue" pra fins de disponibilidade.
+    deliveredByProductAndKey.set(`${d.productId}::${d.colorComboKey}`, (d._sum.quantityDelivered ?? 0) - (d._sum.returnedQuantity ?? 0))
   }
   const soldByProductAndKey = new Map<string, number>()
   for (const s of alreadySold) {
@@ -709,13 +711,13 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
     // ENTREGUE assumiu o papel de status terminal que CONCLUIDO tinha
     // (melhoria "Pedidos com reserva de estoque") -- CANCELADO é o outro
     // terminal, também fora da conta de "em produção".
-    prisma.order.groupBy({ by: ['productId'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { quantity: true } }),
+    prisma.orderItem.groupBy({ by: ['productId'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { quantity: true } }),
     // Melhoria "Pedidos com reserva de estoque": peça já reservada por um
     // pedido não-terminal some do Disponível -- mesmo raciocínio de Sale/
     // ConsignmentDelivery, só que reservedQuantity é recalculado por
     // lib/orderReservations.ts#reconcileOrderReservations, não um fato
     // permanente gravado direto.
-    prisma.order.groupBy({ by: ['productId'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { reservedQuantity: true } }),
+    prisma.orderItem.groupBy({ by: ['productId'], where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } }, _sum: { reservedQuantity: true } }),
   ])
 
   // Melhoria "Produto-como-componente": quanto de cada produto já foi
@@ -761,7 +763,9 @@ export async function getOwnStockSummary(): Promise<OwnStockRow[]> {
   const deliveredMap = new Map<string, { delivered: number; consignmentSold: number }>()
   for (const d of deliveries) {
     const entry = deliveredMap.get(d.productId) ?? { delivered: 0, consignmentSold: 0 }
-    entry.delivered += d.quantityDelivered
+    // Devolvido já voltou pro próprio estoque -- desconta do total "entregue
+    // a parceiros" (senão ficaria contado como fora quando já voltou).
+    entry.delivered += d.quantityDelivered - d.returnedQuantity
     entry.consignmentSold += d.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
     deliveredMap.set(d.productId, entry)
   }
@@ -830,12 +834,12 @@ export interface ConsignmentPartnerListSummary {
 export async function getConsignmentPartnerSummary(): Promise<ConsignmentPartnerListSummary[]> {
   const deliveries = await prisma.consignmentDelivery.findMany({
     where: { partner: { active: true } },
-    select: { partnerId: true, quantityDelivered: true, saleReports: { select: { quantitySold: true } } },
+    select: { partnerId: true, quantityDelivered: true, returnedQuantity: true, saleReports: { select: { quantitySold: true } } },
   })
   const totals = new Map<string, number>()
   for (const d of deliveries) {
     const sold = d.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
-    totals.set(d.partnerId, (totals.get(d.partnerId) ?? 0) + Math.max(0, d.quantityDelivered - sold))
+    totals.set(d.partnerId, (totals.get(d.partnerId) ?? 0) + Math.max(0, d.quantityDelivered - sold - d.returnedQuantity))
   }
   return [...totals.entries()].map(([partnerId, itemsWithPartner]) => ({ partnerId, itemsWithPartner }))
 }
@@ -856,6 +860,26 @@ export interface ConsignmentAccessoryChip {
   colorHex: string | null
 }
 
+// Melhoria "editar tudo no consignado": linha de UMA entrega específica
+// (não o agregado por produto/cor que ConsignmentVariantBreakdown mostra) --
+// granularidade que returnConsignmentDeliveryStock/deleteConsignmentDelivery
+// realmente operam, usada pelo PartnerStockSection pra devolver peças ao
+// próprio estoque ou remover uma entrega direto da tela do parceiro.
+// `delivered` é SEMPRE o quantityDelivered bruto/original -- nunca reescrito
+// por uma devolução (mesma filosofia de ProductionRun.status=CANCELADA
+// nunca apagar os números da run) -- `returnedQuantity` é o que já voltou;
+// `remaining === 0 && returnedQuantity > 0` é o estado "Devolvida" que a UI
+// trata à parte (badge + Desfazer/Apagar, em vez dos controles de Devolver).
+export interface ConsignmentDeliveryLine {
+  deliveryId: string
+  deliveryDate: Date
+  delivered: number
+  sold: number
+  returnedQuantity: number
+  remaining: number
+  saleReportsCount: number
+}
+
 export interface ConsignmentVariantBreakdown {
   key: string | null // null = entregas sem cor registrada (produto sem variante, ou anteriores a este ajuste)
   label: string | null
@@ -864,6 +888,7 @@ export interface ConsignmentVariantBreakdown {
   sold: number
   remaining: number
   accessories: ConsignmentAccessoryChip[]
+  deliveries: ConsignmentDeliveryLine[]
 }
 
 export interface ConsignmentProductBreakdown {
@@ -881,23 +906,42 @@ export interface ConsignmentHistoryEvent {
   productName: string
   colorLabel: string | null
   quantity: number
+  // Melhoria "editar tudo no consignado": id do registro por trás do evento
+  // (ConsignmentDelivery pra 'entrega', ConsignmentSaleReport pra 'venda') --
+  // só usado hoje pra desfazer uma venda direto do Histórico (estoque volta
+  // pro parceiro na hora, mesmo cálculo de saldo que já existe em toda a
+  // tela: entregue - vendido).
+  id: string
 }
 
-// Melhoria "Parceiros de consignação": entrega individual com saldo > 0,
-// candidata a receber um novo relatório de venda (mesma granularidade de
-// ConsignmentSaleReport.deliveryId -- uma entrega específica, não o
-// agregado por produto/cor que `products` acima mostra).
+// Bug "registrar entregas separadas do mesmo produto+cor aparecia 2x no
+// Registrar venda, em vez de somar o saldo": até esse ajuste, cada
+// ConsignmentDelivery virava sua PRÓPRIA linha aqui, então 2 entregas do
+// mesmo produto+cor (2 lotes diferentes, ex.: entregue de novo numa visita
+// seguinte) mostravam 2 checkboxes idênticos com saldo pequeno cada, em vez
+// de 1 linha com o saldo somado -- confuso e obrigava marcar/preencher
+// quantidade em cada um separadamente pra vender o total. Agora agregado por
+// (productId, colorComboKey), com `deliveryIds` guardando as entregas que
+// compõem esse saldo, da mais ANTIGA pra mais NOVA (FIFO) --
+// createConsignmentSaleReportBatch consome nessa ordem quando a quantidade
+// vendida precisa "atravessar" mais de uma entrega, criando 1
+// ConsignmentSaleReport por entrega efetivamente tocada.
 export interface ConsignmentSaleableDelivery {
-  deliveryId: string
+  groupKey: string
+  productId: string
   productName: string
   colorLabel: string | null
   colorHex: string | null
   remaining: number
-  // Preço cadastrado na entrega -- pré-preenche o campo editável de preço
-  // unitário no modal "Registrar venda" (pedido "às vezes o valor é
-  // diferente do cadastrado na parceria"), sem obrigar a sobrescrever
-  // quando a venda foi pelo valor combinado de sempre.
+  // Preço da entrega mais antiga do grupo -- pré-preenche o campo editável
+  // de preço unitário no modal "Registrar venda" (pedido "às vezes o valor
+  // é diferente do cadastrado na parceria"), sem obrigar a sobrescrever
+  // quando a venda foi pelo valor combinado de sempre. Como a venda registra
+  // 1 preço só pro grupo inteiro (não 1 por entrega), esse preço é sempre
+  // gravado explicitamente em cada ConsignmentSaleReport gerado, nunca
+  // deixado null/"herda da entrega" -- ver createConsignmentSaleReportBatch.
   unitPrice: number
+  deliveryIds: string[]
 }
 
 export interface ConsignmentPartnerDetail {
@@ -963,38 +1007,61 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
     accessoriesByComboPair.set(pairKey, list)
   }
 
-  const byProduct = new Map<string, { productName: string; delivered: number; sold: number; variants: Map<string, { key: string | null; delivered: number; sold: number }> }>()
+  const byProduct = new Map<string, { productName: string; delivered: number; sold: number; returned: number; variants: Map<string, { key: string | null; delivered: number; sold: number; returned: number; deliveries: ConsignmentDeliveryLine[] }> }>()
   const history: ConsignmentHistoryEvent[] = []
   let totalSold = 0
   let commissionOwed = 0
 
-  const saleableDeliveries: ConsignmentSaleableDelivery[] = []
+  // Acumulador do grupo (productId, colorComboKey) pra saleableDeliveries --
+  // ver comentário de ConsignmentSaleableDelivery acima. `entries` guarda a
+  // entrega/data/saldo/preço de cada ConsignmentDelivery com saldo > 0 desse
+  // grupo; finalizado (ordenado por data, somado) depois do loop principal.
+  const saleableGroups = new Map<string, {
+    productId: string
+    productName: string
+    colorLabel: string | null
+    colorHex: string | null
+    entries: { deliveryId: string; deliveryDate: Date; remaining: number; unitPrice: number }[]
+  }>()
 
   for (const delivery of partner.deliveries) {
     const variantKey = delivery.colorComboKey
     const variantInfo = variantKey ? variantInfoByProductAndKey.get(`${delivery.productId}::${variantKey}`) : undefined
     const colorLabel = variantKey ? (variantInfo?.label ?? null) : null
+    const variantMapKey = variantKey ?? '__none__'
 
     const deliverySold = delivery.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
-    const deliveryRemaining = Math.max(0, delivery.quantityDelivered - deliverySold)
+    const deliveryRemaining = Math.max(0, delivery.quantityDelivered - deliverySold - delivery.returnedQuantity)
     if (deliveryRemaining > 0) {
-      saleableDeliveries.push({
-        deliveryId: delivery.id,
+      const groupKey = `${delivery.productId}::${variantMapKey}`
+      const group = saleableGroups.get(groupKey) ?? {
+        productId: delivery.productId,
         productName: delivery.product.name,
         colorLabel,
         colorHex: variantInfo?.colorHex ?? null,
-        remaining: deliveryRemaining,
-        unitPrice: delivery.unitPrice.toNumber(),
-      })
+        entries: [],
+      }
+      group.entries.push({ deliveryId: delivery.id, deliveryDate: delivery.deliveryDate, remaining: deliveryRemaining, unitPrice: delivery.unitPrice.toNumber() })
+      saleableGroups.set(groupKey, group)
     }
 
-    const product = byProduct.get(delivery.productId) ?? { productName: delivery.product.name, delivered: 0, sold: 0, variants: new Map() }
+    const product = byProduct.get(delivery.productId) ?? { productName: delivery.product.name, delivered: 0, sold: 0, returned: 0, variants: new Map() }
     product.delivered += delivery.quantityDelivered
-    const variantMapKey = variantKey ?? '__none__'
-    const variant = product.variants.get(variantMapKey) ?? { key: variantKey, delivered: 0, sold: 0 }
+    product.returned += delivery.returnedQuantity
+    const variant = product.variants.get(variantMapKey) ?? { key: variantKey, delivered: 0, sold: 0, returned: 0, deliveries: [] }
     variant.delivered += delivery.quantityDelivered
+    variant.returned += delivery.returnedQuantity
+    variant.deliveries.push({
+      deliveryId: delivery.id,
+      deliveryDate: delivery.deliveryDate,
+      delivered: delivery.quantityDelivered,
+      sold: deliverySold,
+      returnedQuantity: delivery.returnedQuantity,
+      remaining: deliveryRemaining,
+      saleReportsCount: delivery.saleReports.length,
+    })
 
-    history.push({ date: delivery.deliveryDate, type: 'entrega', productName: delivery.product.name, colorLabel, quantity: delivery.quantityDelivered })
+    history.push({ date: delivery.deliveryDate, type: 'entrega', productName: delivery.product.name, colorLabel, quantity: delivery.quantityDelivered, id: delivery.id })
 
     for (const report of delivery.saleReports) {
       product.sold += report.quantitySold
@@ -1002,7 +1069,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
       totalSold += report.quantitySold
       const reportUnitPrice = report.unitPrice?.toNumber() ?? delivery.unitPrice.toNumber()
       commissionOwed += report.quantitySold * reportUnitPrice * report.commissionPercent.toNumber()
-      history.push({ date: report.reportDate, type: 'venda', productName: delivery.product.name, colorLabel, quantity: report.quantitySold })
+      history.push({ date: report.reportDate, type: 'venda', productName: delivery.product.name, colorLabel, quantity: report.quantitySold, id: report.id })
     }
 
     product.variants.set(variantMapKey, variant)
@@ -1011,20 +1078,35 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
 
   history.sort((a, b) => b.date.getTime() - a.date.getTime())
 
-  const productsBreakdown: ConsignmentProductBreakdown[] = [...byProduct.entries()].map(([productId, { productName, delivered, sold, variants }]) => ({
+  const saleableDeliveries: ConsignmentSaleableDelivery[] = [...saleableGroups.entries()].map(([groupKey, group]) => {
+    const sortedEntries = [...group.entries].sort((a, b) => a.deliveryDate.getTime() - b.deliveryDate.getTime())
+    return {
+      groupKey,
+      productId: group.productId,
+      productName: group.productName,
+      colorLabel: group.colorLabel,
+      colorHex: group.colorHex,
+      remaining: sortedEntries.reduce((sum, e) => sum + e.remaining, 0),
+      unitPrice: sortedEntries[0].unitPrice,
+      deliveryIds: sortedEntries.map((e) => e.deliveryId),
+    }
+  })
+
+  const productsBreakdown: ConsignmentProductBreakdown[] = [...byProduct.entries()].map(([productId, { productName, delivered, sold, returned, variants }]) => ({
     productId,
     productName,
     delivered,
     sold,
-    remaining: Math.max(0, delivered - sold),
+    remaining: Math.max(0, delivered - sold - returned),
     variants: [...variants.values()].map((v) => ({
       key: v.key,
       label: v.key ? (variantInfoByProductAndKey.get(`${productId}::${v.key}`)?.label ?? v.key) : null,
       colorHex: v.key ? (variantInfoByProductAndKey.get(`${productId}::${v.key}`)?.colorHex ?? null) : null,
       delivered: v.delivered,
       sold: v.sold,
-      remaining: Math.max(0, v.delivered - v.sold),
+      remaining: Math.max(0, v.delivered - v.sold - v.returned),
       accessories: v.key ? (accessoriesByComboPair.get(`${productId}::${v.key}`) ?? []) : [],
+      deliveries: v.deliveries,
     })),
   }))
 
@@ -1051,7 +1133,7 @@ export async function getConsignmentStockSummary() {
   return deliveries
     .map((d) => {
       const unitPrice = d.unitPrice.toNumber()
-      const remaining = d.quantityDelivered - d.saleReports.reduce((s, r) => s + r.quantitySold, 0)
+      const remaining = d.quantityDelivered - d.saleReports.reduce((s, r) => s + r.quantitySold, 0) - d.returnedQuantity
       return {
         partnerName: d.partner.name,
         productName: d.product.name,
