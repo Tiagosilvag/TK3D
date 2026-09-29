@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createOrder, getOrderablePartOptions, getOrderDemandQueue } from '@/actions/orders'
+import { createOrder, getOrderablePartOptions, getOrderDemandQueue, resolveOrderItemColorLabel } from '@/actions/orders'
 import { createProductionRun } from '@/actions/productionRuns'
 import { confirmAssembly } from '@/actions/assembly'
 
@@ -276,6 +276,28 @@ describe('bug "sem opção de variação nova pra produto simples": variação p
     expect(row).toBeDefined()
     expect(row?.filamentIds).toEqual([azul.id])
     expect(row?.comboLabel).toContain('Azul')
+  })
+
+  // Bug "não mostra a cor da variação criada": /orders resolvia o rótulo
+  // de cada item batendo colorComboKey contra combo JÁ PRODUZIDO
+  // (getProductVariantStockOptions) -- uma cor pedida mas nunca impressa
+  // não aparecia lá, então a tela ficava sem cor mesmo com colorComboKey
+  // gravado certinho.
+  it('resolveOrderItemColorLabel resolve a cor pelo catálogo, mesmo nunca produzida (produto simples)', async () => {
+    const { product, azul } = await createSimpleProduct()
+    const resolved = await resolveOrderItemColorLabel(product.id, azul.id)
+    expect(resolved).not.toBeNull()
+    expect(resolved?.label).toContain('Azul')
+  })
+
+  it('resolveOrderItemColorLabel resolve combo composto (1+ peças) nunca produzido', async () => {
+    const { product, cabeca, corpo, azul } = await createCompositeProduct()
+    const { serializeColorChoices } = await import('@/lib/reports')
+    const comboKey = serializeColorChoices({ [cabeca.id]: azul.id, [corpo.id]: azul.id })
+    const resolved = await resolveOrderItemColorLabel(product.id, comboKey)
+    expect(resolved).not.toBeNull()
+    expect(resolved?.label).toContain('CABEÇA')
+    expect(resolved?.label).toContain('Azul')
   })
 })
 

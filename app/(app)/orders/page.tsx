@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { getProductVariantStockOptions } from '@/lib/reports'
+import { resolveOrderItemColorLabel } from '@/actions/orders'
 import { OrdersExplorer, type OrderRow } from './OrdersExplorer'
 
 export const dynamic = 'force-dynamic'
@@ -36,6 +37,26 @@ export default async function OrdersPage() {
     needsAssembly: p.needsAssembly,
     variants: p.variants.map((v) => ({ key: v.key, label: v.label, colorHex: v.colorHex, available: v.available })),
   }))
+
+  // Bug "não mostra a cor da variação criada": variantByKey só cobre combo
+  // JÁ PRODUZIDO (getProductVariantStockOptions) -- uma cor pedida via "+
+  // Montar variação personalizada" mas nunca impressa não está lá.
+  // Resolve pelo catálogo (resolveOrderItemColorLabel) só pros pares
+  // (productId, colorComboKey) que faltaram, uma vez por par distinto.
+  const missingPairs = new Map<string, { productId: string; colorComboKey: string }>()
+  for (const o of orders) {
+    for (const item of o.items) {
+      if (!item.colorComboKey) continue
+      const key = `${item.productId}::${item.colorComboKey}`
+      if (!variantByKey.has(key)) missingPairs.set(key, { productId: item.productId, colorComboKey: item.colorComboKey })
+    }
+  }
+  const fallbackEntries = await Promise.all(
+    [...missingPairs.entries()].map(async ([key, { productId, colorComboKey }]) => [key, await resolveOrderItemColorLabel(productId, colorComboKey)] as const),
+  )
+  for (const [key, resolved] of fallbackEntries) {
+    if (resolved) variantByKey.set(key, resolved)
+  }
 
   const rows: OrderRow[] = orders.map((o) => ({
     id: o.id,

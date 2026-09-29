@@ -62,7 +62,20 @@ export default async function ProductionPage({
     // Brinde não passa pelo fluxo de Produção -- excluído do seletor.
     prisma.product.findMany({ where: { active: true, isGift: false }, orderBy: { name: 'asc' } }),
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
-    prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { manufacturer: 'asc' } }),
+    // Bug "Registrar produção não pré-seleciona a cor do pedido": filtrar só
+    // filamento com estoque > 0 é certo pra escolher um filamento NOVO, mas
+    // o prefill vindo da fila de demanda (newRunFilamentId, cor que o
+    // pedido pediu) pode ser um filamento com 0g em estoque (a cor foi
+    // pedida mas ainda nem foi comprada) -- de fora dessa lista,
+    // FilamentSelect não acha a opção (mostra "Selecione" vazio) e o
+    // cálculo de custo não acha pricePerGram (mostra R$ 0,00), mesmo o
+    // valor certo já estando selecionado por baixo. Mesmo padrão de
+    // actions/products.ts#getEditableFilamentOptions (filamento esgotado
+    // do produto atual).
+    prisma.filament.findMany({
+      where: newRunFilamentId ? { OR: [{ currentStockGrams: { gt: 0 } }, { id: newRunFilamentId }] } : { currentStockGrams: { gt: 0 } },
+      orderBy: { manufacturer: 'asc' },
+    }),
     editId
       ? prisma.productionRun.findUnique({ where: { id: editId }, include: { product: true, printer: true, filament: true, productPart: true, filamentUsages: { include: { filament: true } } } })
       : null,

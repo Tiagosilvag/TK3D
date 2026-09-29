@@ -76,6 +76,43 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
   })
 }
 
+// Bug "não mostra a cor da variação criada": a tabela de Pedidos resolvia
+// o rótulo de cada item batendo colorComboKey contra
+// getProductVariantStockOptions (lib/reports.ts#getProductVariantBreakdown),
+// que só lista combo JÁ PRODUZIDO alguma vez -- uma cor pedida via "+
+// Montar variação personalizada" mas nunca impressa simplesmente não
+// aparece lá, então o item ficava sem cor na tela mesmo com
+// colorComboKey gravado certinho. Resolve pelo catálogo inteiro
+// (getOrderablePartOptions já mescla produzido + catálogo, mesma fonte
+// que o próprio seletor usa), cobrindo produto simples (peça sintética,
+// key=productId, colorComboKey = filamentId puro) e composto
+// (colorComboKey serializado, 1+ peças).
+export async function resolveOrderItemColorLabel(productId: string, colorComboKey: string): Promise<{ label: string; colorHex: string | null } | null> {
+  const options = await getOrderablePartOptions(productId)
+
+  if (options.length === 1 && options[0].partId === productId && !options[0].fixed) {
+    const opt = options[0].colorOptions.find((o) => o.key === colorComboKey)
+    return opt ? { label: opt.label, colorHex: opt.colorHex } : null
+  }
+
+  const choices = deserializeColorChoices(colorComboKey)
+  const labels: string[] = []
+  let firstHex: string | null = null
+  for (const option of options) {
+    const chosen = choices[option.partId]
+    if (chosen === undefined) continue
+    if (option.fixed) {
+      labels.push(`${option.partName}: ${option.fixedLabel}`)
+      continue
+    }
+    const opt = option.colorOptions.find((o) => o.key === chosen)
+    if (!opt) continue
+    labels.push(`${option.partName}: ${opt.label}`)
+    if (firstHex === null) firstHex = opt.colorHex
+  }
+  return labels.length > 0 ? { label: labels.join(' · '), colorHex: firstHex } : null
+}
+
 // Encomenda com variação personalizada: valida um colorChoicesJson
 // ({ partId: filamentId }, do CustomVariantPicker) contra as peças REAIS
 // do produto (nunca confia cegamente no client) antes de virar
