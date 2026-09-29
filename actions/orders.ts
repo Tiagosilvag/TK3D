@@ -51,14 +51,19 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
     const isFixedRecipe = part ? part.filamentComponents.length >= 2 : false
 
     if (isFixedRecipe) {
-      const label = part!.filamentComponents.map((c) => c.filament.colorName).join(' + ')
+      const label = part!.filamentComponents.map((c) => `${c.filament.colorName} (${c.filament.material})`).join(' + ')
       return { partId: partStatus.partId, partName: partStatus.name, fixed: true, fixedLabel: label, colorOptions: [] }
     }
 
+    // Bug "falta o material pra saber qual é a cor": colorName sozinho não
+    // é único no catálogo (Filament é @@unique([manufacturer, material,
+    // colorName]) -- mesma cor pode existir em mais de um material), então
+    // o catálogo inteiro (available: 0 incluso) precisa do material no
+    // label, senão duas opções ficam com o mesmo texto.
     const existing = new Map((partStatus.colorOptions ?? []).map((o) => [o.key, o]))
     const merged: AssemblyPartColorOption[] = filaments.map((f) => {
       const found = existing.get(f.id)
-      return found ?? { key: f.id, filamentIds: [f.id], label: f.colorName, available: 0, colorHex: f.colorHex }
+      return found ?? { key: f.id, filamentIds: [f.id], label: `${f.colorName} (${f.material})`, available: 0, colorHex: f.colorHex }
     })
     // Combo multi-filamento já produzido pra essa peça (não corresponde a
     // nenhum Filament.id sozinho) -- mantém como opção também, senão uma
@@ -411,13 +416,14 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
   // (resolveCustomColorComboKey só aceita escolha assim), então dá pra
   // resolver o rótulo direto no catálogo -- carregado uma vez só, sob
   // demanda (nenhuma linha com colorComboKey, nenhuma query).
-  let filamentById: Map<string, { colorName: string }> | null = null
+  let filamentById: Map<string, { colorName: string; material: string }> | null = null
   async function getFilamentLabel(filamentId: string): Promise<string | null> {
     if (!filamentById) {
-      const all = await prisma.filament.findMany({ select: { id: true, colorName: true } })
-      filamentById = new Map(all.map((f) => [f.id, { colorName: f.colorName }]))
+      const all = await prisma.filament.findMany({ select: { id: true, colorName: true, material: true } })
+      filamentById = new Map(all.map((f) => [f.id, { colorName: f.colorName, material: f.material }]))
     }
-    return filamentById.get(filamentId)?.colorName ?? null
+    const f = filamentById.get(filamentId)
+    return f ? `${f.colorName} (${f.material})` : null
   }
 
   for (const item of pending) {
@@ -444,8 +450,18 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
       componentUsagesCount: product._count.componentUsages,
     })
 
+    // Bug "não sincroniza com o pedido -- variação nova não informa a cor":
+    // este branch sempre mandava comboLabel/filamentIds null, ignorando
+    // item.colorComboKey -- sobrou de antes de produto simples poder ter
+    // cor pedida (nem <select> de variante conhecida nem "+ Montar
+    // variação personalizada" existiam ainda pra esse caso). Produto
+    // simples grava colorComboKey como o filamentId PURO (convenção de
+    // !needsAssembly, nunca serializado) -- resolve direto, igual ao
+    // comboInfoForPart faz pro caso needsAssembly=true logo abaixo.
     if (!needsAssembly) {
-      productionRows.push({ ...base, partId: null, partName: null, neededUnits: shortfall, comboLabel: null, filamentIds: null })
+      const filamentId = item.colorComboKey
+      const comboLabel = filamentId ? await getFilamentLabel(filamentId) : null
+      productionRows.push({ ...base, partId: null, partName: null, neededUnits: shortfall, comboLabel, filamentIds: filamentId ? [filamentId] : null })
       continue
     }
 

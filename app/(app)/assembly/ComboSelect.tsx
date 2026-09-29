@@ -62,6 +62,7 @@ export function ComboSelect({
 }) {
   const [open, setOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const [search, setSearch] = useState('')
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => setMounted(true), [])
@@ -76,6 +77,11 @@ export function ComboSelect({
   }, [open])
 
   const selected = options.find((o) => o.key === value) ?? null
+  // Melhoria "busca no seletor de cor": mesmo padrão de FilamentSelect.tsx
+  // -- lista pode ter o catálogo inteiro de filamento (Pedidos, cor ainda
+  // não produzida), filtro por texto ajuda a achar rápido.
+  const term = search.trim().toLowerCase()
+  const visibleOptions = term ? options.filter((o) => o.label.toLowerCase().includes(term)) : options
 
   // Uma única opção = nada pra escolher de verdade -- mostra a info
   // (cor/rótulo/disponível) como uma linha estática, sem abrir um
@@ -100,7 +106,7 @@ export function ComboSelect({
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => { setSearch(''); setOpen(true) }}
         className="flex w-full items-center gap-2 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-left text-sm transition-colors hover:border-violet-400 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-violet-500"
       >
         <Swatch colorHex={selected?.colorHex ?? null} />
@@ -122,8 +128,18 @@ export function ComboSelect({
                 <h3 className="font-display text-sm font-semibold">Escolher cor</h3>
                 <button type="button" onClick={() => setOpen(false)} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
               </div>
+              <input
+                autoFocus
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar cor..."
+                className="tk-input-full"
+              />
               <div className="max-h-72 space-y-1 overflow-y-auto">
-                {options.map((o) => {
+                {visibleOptions.length === 0 ? (
+                  <p className="px-2 py-4 text-center text-sm text-slate-400 dark:text-slate-500">Nenhuma cor encontrada.</p>
+                ) : visibleOptions.map((o) => {
                   const isZero = o.available <= 0
                   const blocked = isZero && !allowUnavailable
                   return (

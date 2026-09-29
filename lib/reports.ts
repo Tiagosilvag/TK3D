@@ -448,7 +448,7 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
     return runs
       .map((r) => {
         const f = filamentById.get(r.filamentId)
-        const label = f?.colorName ?? r.filamentId
+        const label = f ? `${f.colorName} (${f.material})` : r.filamentId
         return {
           key: r.filamentId,
           label,
@@ -513,8 +513,14 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
   const componentProductNameById = new Map(componentProducts.map((p) => [p.id, p.name]))
   const accessoryById = new Map(accessories.map((a) => [a.id, a]))
 
+  // Mesma convenção de actions/assembly.ts#filamentLabel -- colorName
+  // sozinho não é único no catálogo (mesma cor pode existir em mais de um
+  // material), material entra no label pra desambiguar.
   function filamentComboLabel(rawKey: string): string {
-    return rawKey.split(',').map((id) => filamentById.get(id)?.colorName ?? id).join(' + ')
+    return rawKey.split(',').map((id) => {
+      const f = filamentById.get(id)
+      return f ? `${f.colorName} (${f.material})` : id
+    }).join(' + ')
   }
 
   function filamentComboHexes(rawKey: string): string[] {

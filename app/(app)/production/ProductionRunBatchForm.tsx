@@ -425,7 +425,14 @@ export function ProductionRunBatchForm({
             date: today(),
             printerId: defaults.printerId ?? '',
             printTimeHoursPerUnit: defaults.printTimeHours ?? 0,
-            filaments: [{ filamentId: defaults.filamentId ?? '', weightGramsPerUnit: String(defaults.weightGrams ?? 0), gramsWasted: '0' }],
+            // Bug "não sincroniza com o pedido -- variação nova não informa
+            // a cor": prefill?.filamentId (vindo da fila de demanda,
+            // Pedidos) era ignorado aqui -- só o filamento PADRÃO cadastrado
+            // no produto (defaults.filamentId) era usado, mesmo quando a
+            // fila já sabia exatamente qual cor o pedido precisa. Mesma
+            // prioridade que o ramo isComposite acima já dá a
+            // prefill.filamentId.
+            filaments: [{ filamentId: prefill?.filamentId ?? defaults.filamentId ?? '', weightGramsPerUnit: String(defaults.weightGrams ?? 0), gramsWasted: '0' }],
             quantityPlanned: qty,
             quantitySuccess: qty,
             timeWastedHours: '0',

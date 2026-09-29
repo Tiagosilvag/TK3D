@@ -256,6 +256,27 @@ describe('bug "sem opção de variação nova pra produto simples": variação p
     expect(item.status).toBe('PRONTO_RESERVADO')
     expect(item.reservedQuantity).toBe(2)
   })
+
+  // Bug "não sincroniza com o pedido -- variação nova não informa a cor":
+  // getOrderDemandQueue tinha um atalho pra produto !needsAssembly que
+  // sempre devolvia comboLabel/filamentIds null, ignorando
+  // item.colorComboKey -- Produção nunca sabia qual cor pré-selecionar
+  // (nem pro botão "Registrar produção" nem pro texto da fila), mesmo o
+  // pedido tendo uma cor específica gravada.
+  it('getOrderDemandQueue devolve filamentIds/comboLabel da cor pedida, mesmo nunca produzida (produto simples)', async () => {
+    const { product, azul } = await createSimpleProduct()
+    const result = await createOrder(orderFdWithColors(product.id, { [product.id]: azul.id }, { quantity: '2' }))
+    expect(result.success).toBe(true)
+
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect(item.status).toBe('AGUARDANDO_PRODUCAO')
+
+    const queue = await getOrderDemandQueue()
+    const row = queue.productionRows.find((r) => r.orderItemId === item.id)
+    expect(row).toBeDefined()
+    expect(row?.filamentIds).toEqual([azul.id])
+    expect(row?.comboLabel).toContain('Azul')
+  })
 })
 
 describe('getOrderDemandQueue -- isolamento por cor entre pedidos do mesmo produto composto', () => {
