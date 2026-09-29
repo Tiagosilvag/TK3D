@@ -936,6 +936,16 @@ export async function deleteProductionRun(id: string): Promise<ActionResult> {
     return { success: false, error: e instanceof Error ? e.message : 'Erro ao excluir produção' }
   }
 
+  // Bug "está falando q ta reservado mas n foi produzido ainda": excluir uma
+  // run que já tinha feito reconcileOrderReservations reservar peça pra um
+  // pedido (createProductionRun/maybeReconcileAfterProduction acima) nunca
+  // reconciliava de volta -- o pedido ficava "Pronto — reservado" pra
+  // sempre, mesmo com o estoque físico já revertido pelas linhas acima.
+  // Mesmo par (productId, filamentId) que a criação usa -- se o produto
+  // precisa de montagem, maybeReconcileAfterProduction ignora filamentId e
+  // reconcilia todo combo pendente do produto (a run pode ser de uma peça).
+  await maybeReconcileAfterProduction(run.productId, run.filamentId)
+
   revalidatePath('/production')
   revalidatePath('/filaments')
   revalidatePath('/accessories')
@@ -944,6 +954,7 @@ export async function deleteProductionRun(id: string): Promise<ActionResult> {
   // "excluir/cancelar produção não atualiza Montagem/Estoque").
   revalidatePath('/assembly')
   revalidatePath('/stock')
+  revalidatePath('/orders')
   return { success: true, reversedFrom }
 }
 
@@ -1011,6 +1022,10 @@ export async function cancelProductionRun(id: string, reason: string): Promise<A
     return { success: false, error: e instanceof Error ? e.message : 'Erro ao cancelar produção' }
   }
 
+  // Ver comentário equivalente em deleteProductionRun acima (bug "está
+  // falando q ta reservado mas n foi produzido ainda").
+  await maybeReconcileAfterProduction(run.productId, run.filamentId)
+
   revalidatePath('/production')
   revalidatePath('/filaments')
   revalidatePath('/accessories')
@@ -1019,6 +1034,7 @@ export async function cancelProductionRun(id: string, reason: string): Promise<A
   // "excluir/cancelar produção não atualiza Montagem/Estoque").
   revalidatePath('/assembly')
   revalidatePath('/stock')
+  revalidatePath('/orders')
   return { success: true, reversedFrom }
 }
 
