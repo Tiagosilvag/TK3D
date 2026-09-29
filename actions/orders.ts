@@ -138,6 +138,33 @@ async function resolveCustomColorComboKey(productId: string, colorChoicesJson: s
     if (!option.fixed && !(option.partId in choices)) return { error: `Falta escolher a cor de ${option.partName}` }
   }
 
+  // Bug "sem opção de variação nova pra produto simples": "+ Montar
+  // variação personalizada" (CustomVariantPicker) passou a valer também
+  // pra produto que não precisa de montagem (só o <select> de cores JÁ
+  // produzidas existia antes) -- mas esse tipo de produto grava
+  // colorComboKey como o filamentId PURO em todo outro lugar
+  // (getProductVariantBreakdown/getRawVariantAvailable, ramo
+  // !needsAssembly -- mesma convenção de Sale/ConsignmentDelivery), nunca
+  // o formato serializado "partId:comboKey" (só existe pro ramo
+  // needsAssembly=true, onde a chave vem de ProductAssembly.colorChoices).
+  // Gravar serializado aqui pra um produto sem montagem repetiria o
+  // mesmo bug já corrigido (reserva nunca acha a variante, claimable
+  // sempre 0) -- detecta o caso (peça sintética única, key=productId,
+  // convenção de getAssemblyStatus) e devolve o filamentId puro.
+  const product = await prisma.product.findUniqueOrThrow({
+    where: { id: productId },
+    include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
+  })
+  const needsAssembly = productNeedsAssembly({
+    isComposite: product.isComposite,
+    accessoryUsagesCount: product._count.accessoryUsages,
+    supplyUsagesCount: product._count.supplyUsages,
+    componentUsagesCount: product._count.componentUsages,
+  })
+  if (!needsAssembly && options.length === 1 && options[0].partId === productId) {
+    return { colorComboKey: choices[productId] }
+  }
+
   return { colorComboKey: serializeColorChoices(choices) }
 }
 

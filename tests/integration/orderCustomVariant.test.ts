@@ -83,6 +83,21 @@ function orderFdWithColors(productId: string, colorChoices: Record<string, strin
   })
 }
 
+// Produto simples (sem ProductPart, sem insumo/acessório) -- "+ Montar
+// variação personalizada" também vale pra esse caso (bug "sem opção de
+// variação nova pra produto simples"), mas o colorComboKey resultante
+// precisa ser o filamentId PURO (convenção de produto sem montagem),
+// nunca o formato serializado partId:comboKey.
+async function createSimpleProduct() {
+  const printer = await prisma.printer.create({ data: { name: 'P2', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+  const vermelho = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Vermelho', colorHex: '#ff0000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+  const azul = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Azul', colorHex: '#0000ff', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+  const product = await prisma.product.create({
+    data: { name: 'Chaveiro Simples', category: 'Chaveiro', printerId: printer.id, filamentId: vermelho.id, weightGrams: 10, printTimeHours: 0.5, laborTimeHours: 0.1 },
+  })
+  return { printer, vermelho, azul, product }
+}
+
 describe('getOrderablePartOptions', () => {
   it('peça de cor variável lista o catálogo inteiro de filamento, com available certo pra cor já produzida', async () => {
     const { product, cabeca, printer, vermelho, azul } = await createCompositeProduct()
@@ -191,6 +206,49 @@ describe('createOrder com colorChoicesJson (encomenda personalizada)', () => {
     const { product, cabeca, azul } = await createCompositeProduct()
     const result = await createOrder(orderFdWithColors(product.id, { [cabeca.id]: azul.id }))
     expect(result.success).toBe(false)
+  })
+})
+
+describe('bug "sem opção de variação nova pra produto simples": variação personalizada também vale sem montagem', () => {
+  it('getOrderablePartOptions devolve 1 peça sintética (key=productId) com o catálogo inteiro de filamento', async () => {
+    const { product, vermelho, azul } = await createSimpleProduct()
+    const options = await getOrderablePartOptions(product.id)
+    expect(options).toHaveLength(1)
+    expect(options[0].partId).toBe(product.id)
+    expect(options[0].fixed).toBe(false)
+    expect(options[0].colorOptions.map((o) => o.key).sort()).toEqual([azul.id, vermelho.id].sort())
+  })
+
+  it('colorComboKey vira o filamentId PURO (nunca o formato serializado partId:comboKey)', async () => {
+    const { product, azul } = await createSimpleProduct()
+    const result = await createOrder(orderFdWithColors(product.id, { [product.id]: azul.id }))
+    expect(result.success).toBe(true)
+
+    const order = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
+    expect(order.colorComboKey).toBe(azul.id)
+  })
+
+  it('cor já produzida via variação personalizada reserva igual ao <select> normal (mesma convenção de chave)', async () => {
+    const { product, printer, azul } = await createSimpleProduct()
+    await createProductionRun(fd({
+      productId: product.id,
+      printerId: printer.id,
+      filamentId: azul.id,
+      date: '2026-09-01',
+      quantityPlanned: '2',
+      quantitySuccess: '2',
+      quantityFailed: '0',
+      gramsUsed: '10',
+      gramsWasted: '0',
+      timeWastedHours: '0',
+    }))
+
+    const result = await createOrder(orderFdWithColors(product.id, { [product.id]: azul.id }, { quantity: '2' }))
+    expect(result.success).toBe(true)
+
+    const order = await prisma.order.findFirstOrThrow({ where: { productId: product.id } })
+    expect(order.status).toBe('PRONTO_RESERVADO')
+    expect(order.reservedQuantity).toBe(2)
   })
 })
 

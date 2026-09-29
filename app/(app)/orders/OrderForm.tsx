@@ -132,18 +132,23 @@ export function OrderForm({ products }: { products: OrderProductOption[] }) {
                     ))}
                   </select>
                 )}
-                {selectedProduct!.needsAssembly && (
-                  <CustomVariantPicker
-                    key={productId}
-                    productId={productId}
-                    onConfirm={(choice) => { setCustomChoice(choice); setColorComboKey('') }}
-                    trigger={
-                      <button type="button" className="mt-1 text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
-                        + Montar variação personalizada
-                      </button>
-                    }
-                  />
-                )}
+                {/* Bug "sem opção de variação nova pra produto simples": antes só
+                    aparecia pra produto que precisa de montagem -- mas pedir
+                    uma cor ainda não produzida faz sentido pra QUALQUER
+                    produto com Cor/Variação obrigatória (requiresColorChoice
+                    já garante isso, nem precisa repetir a condição aqui).
+                    resolveCustomColorComboKey (actions/orders.ts) grava no
+                    formato certo pros dois casos. */}
+                <CustomVariantPicker
+                  key={productId}
+                  productId={productId}
+                  onConfirm={(choice) => { setCustomChoice(choice); setColorComboKey('') }}
+                  trigger={
+                    <button type="button" className="mt-1 text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                      + Montar variação personalizada
+                    </button>
+                  }
+                />
               </>
             )}
           </div>
