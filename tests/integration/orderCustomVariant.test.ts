@@ -238,7 +238,12 @@ describe('bug "sem opção de variação nova pra produto simples": variação p
     expect(keys).not.toContain(preto.id)
   })
 
-  it('filamento com 0g de estoque continua pedível se já foi produzido antes (peça física já existe)', async () => {
+  // Ajuste "SÓ filamento em estoque, produzido ou não": mesma regra vale
+  // pra combo JÁ produzido -- se o filamento cru esgotou DEPOIS, o combo
+  // some do seletor também (não dá pra produzir mais, só reforça o
+  // problema de antes -- vender a peça física já pronta é papel de
+  // Vendas/<select> de variante conhecida, não deste seletor de encomenda).
+  it('filamento com 0g de estoque some do seletor mesmo se já foi produzido antes', async () => {
     const { product, printer, vermelho } = await createSimpleProduct()
     await createProductionRun(fd({
       productId: product.id,
@@ -256,9 +261,8 @@ describe('bug "sem opção de variação nova pra produto simples": variação p
     await prisma.filament.update({ where: { id: vermelho.id }, data: { currentStockGrams: 0 } })
 
     const options = await getOrderablePartOptions(product.id)
-    const option = options[0].colorOptions.find((o) => o.key === vermelho.id)
-    expect(option).toBeDefined()
-    expect(option?.available).toBe(1)
+    const keys = options[0].colorOptions.map((o) => o.key)
+    expect(keys).not.toContain(vermelho.id)
   })
 
   it('colorComboKey vira o filamentId PURO (nunca o formato serializado partId:comboKey)', async () => {

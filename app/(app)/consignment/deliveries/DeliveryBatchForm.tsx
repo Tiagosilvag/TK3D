@@ -67,6 +67,7 @@ export function DeliveryBatchForm({
   const [notes, setNotes] = useState('')
   const [items, setItems] = useState<ItemDraft[]>([])
   const [selectedProduct, setSelectedProduct] = useState<ProductOption | null>(null)
+  const [productSearch, setProductSearch] = useState('')
   const [variantQuantities, setVariantQuantities] = useState<Record<string, string>>({})
   const [addUnitPrice, setAddUnitPrice] = useState('')
 
@@ -92,6 +93,7 @@ export function DeliveryBatchForm({
     setNotes('')
     setItems([])
     setSelectedProduct(null)
+    setProductSearch('')
     setVariantQuantities({})
     setAddUnitPrice('')
   }
@@ -183,18 +185,34 @@ export function DeliveryBatchForm({
             <button type="button" onClick={() => setView('form')} aria-label="Voltar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">←</button>
             <h3 className="font-display text-base font-semibold">Escolher produto</h3>
           </div>
+          <input
+            autoFocus
+            type="search"
+            value={productSearch}
+            onChange={(e) => setProductSearch(e.target.value)}
+            placeholder="Buscar produto..."
+            className="tk-input-full"
+          />
           <div className="max-h-80 space-y-1 overflow-y-auto">
-            {products.map((p) => (
-              <button
-                key={p.productId}
-                type="button"
-                onClick={() => openVariantPicker(p)}
-                className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5 text-left text-sm hover:border-violet-400 dark:border-slate-700 dark:hover:border-violet-500"
-              >
-                {p.productName}
-                <span aria-hidden className="text-slate-400">›</span>
-              </button>
-            ))}
+            {(() => {
+              const term = productSearch.trim().toLowerCase()
+              const visible = term ? products.filter((p) => p.productName.toLowerCase().includes(term)) : products
+              return visible.length === 0 ? (
+                <p className="px-2 py-4 text-center text-sm text-slate-400 dark:text-slate-500">Nenhum produto encontrado.</p>
+              ) : (
+                visible.map((p) => (
+                  <button
+                    key={p.productId}
+                    type="button"
+                    onClick={() => openVariantPicker(p)}
+                    className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5 text-left text-sm hover:border-violet-400 dark:border-slate-700 dark:hover:border-violet-500"
+                  >
+                    {p.productName}
+                    <span aria-hidden className="text-slate-400">›</span>
+                  </button>
+                ))
+              )
+            })()}
           </div>
         </div>
       )}
@@ -316,7 +334,7 @@ export function DeliveryBatchForm({
             )}
           </div>
 
-          <button type="button" onClick={() => setView('pickProduct')} className="rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60">
+          <button type="button" onClick={() => { setProductSearch(''); setView('pickProduct') }} className="rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60">
             + Adicionar produto
           </button>
 

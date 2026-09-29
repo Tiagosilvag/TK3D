@@ -38,16 +38,16 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
   const [status, parts, filaments] = await Promise.all([
     getAssemblyStatus(productId),
     prisma.productPart.findMany({ where: { productId }, include: { filamentComponents: { include: { filament: true } } } }),
-    // Bug "não fazia sentido pedir cor sem filamento em estoque": só
-    // filamento com currentStockGrams > 0 entra no catálogo de "cor nunca
-    // produzida" abaixo -- pedir uma cor que a loja não tem NENHUM grama
-    // pra imprimir sempre travava em "Registrar produção" (estoque
-    // insuficiente), um beco sem saída. Não afeta combo JÁ PRODUZIDO
-    // (existing.values() mais abaixo, fora deste filter) -- esses
-    // continuam pedíveis mesmo com o filamento cru esgotado depois, porque
-    // já existe peça física pronta daquela cor em algum lugar.
-    prisma.filament.findMany({ where: { currentStockGrams: { gt: 0 } }, orderBy: { colorName: 'asc' } }),
+    prisma.filament.findMany({ orderBy: { colorName: 'asc' } }),
   ])
+  // Bug "não fazia sentido pedir cor sem filamento em estoque": SÓ
+  // filamento com currentStockGrams > 0 pode ser pedido aqui -- cor nunca
+  // produzida (catálogo) OU já produzida antes, tanto faz -- se a loja não
+  // tem NENHUM grama daquele filamento agora, pedir travava sempre depois
+  // em "Registrar produção" (estoque insuficiente), beco sem saída (e não
+  // dá pra comprar peça física já pronta dessa cor por aqui -- isso é
+  // Vendas/<select> de variante conhecida, não este seletor de encomenda).
+  const stockById = new Map(filaments.map((f) => [f.id, f.currentStockGrams.toNumber()]))
 
   const partById = new Map(parts.map((p) => [p.id, p]))
 
@@ -73,15 +73,19 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
     // EXATO). Catálogo inteiro (available: 0 incluso) precisa da marca no
     // label.
     const existing = new Map((partStatus.colorOptions ?? []).map((o) => [o.key, o]))
-    const merged: AssemblyPartColorOption[] = filaments.map((f) => {
-      const found = existing.get(f.id)
-      return found ?? { key: f.id, filamentIds: [f.id], label: `${f.manufacturer} ${f.colorName} (${f.material})`, available: 0, colorHex: f.colorHex }
-    })
-    // Combo multi-filamento já produzido pra essa peça (não corresponde a
-    // nenhum Filament.id sozinho) -- mantém como opção também, senão uma
-    // cor já montada/produzida some do seletor.
+    const merged: AssemblyPartColorOption[] = filaments
+      .filter((f) => (stockById.get(f.id) ?? 0) > 0)
+      .map((f) => {
+        const found = existing.get(f.id)
+        return found ?? { key: f.id, filamentIds: [f.id], label: `${f.manufacturer} ${f.colorName} (${f.material})`, available: 0, colorHex: f.colorHex }
+      })
+    // Combo já produzido pra essa peça mas ainda não coberto acima (o
+    // filamento correspondente esgotou depois, ou é um combo multi-
+    // filamento) -- só entra se TODOS os componentes ainda têm estoque
+    // agora, mesmo motivo do filter acima.
     for (const o of existing.values()) {
-      if (!merged.some((m) => m.key === o.key)) merged.push(o)
+      if (merged.some((m) => m.key === o.key)) continue
+      if (o.filamentIds.every((id) => (stockById.get(id) ?? 0) > 0)) merged.push(o)
     }
 
     return { partId: partStatus.partId, partName: partStatus.name, fixed: false, fixedLabel: null, colorOptions: merged }
