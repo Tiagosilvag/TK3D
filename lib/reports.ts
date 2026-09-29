@@ -448,7 +448,9 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
     return runs
       .map((r) => {
         const f = filamentById.get(r.filamentId)
-        const label = f ? `${f.colorName} (${f.material})` : r.filamentId
+        // Bug "produção usou um Preto diferente do pedido": ver comentário
+        // em filamentComboLabel abaixo -- marca entra pro mesmo motivo.
+        const label = f ? `${f.manufacturer} ${f.colorName} (${f.material})` : r.filamentId
         return {
           key: r.filamentId,
           label,
@@ -513,13 +515,18 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
   const componentProductNameById = new Map(componentProducts.map((p) => [p.id, p.name]))
   const accessoryById = new Map(accessories.map((a) => [a.id, a]))
 
-  // Mesma convenção de actions/assembly.ts#filamentLabel -- colorName
-  // sozinho não é único no catálogo (mesma cor pode existir em mais de um
-  // material), material entra no label pra desambiguar.
+  // Bug "produção usou um Preto diferente do pedido": colorName+material
+  // sozinhos não são únicos no catálogo (Filament é
+  // @@unique([manufacturer, material, colorName]) -- dois fabricantes podem
+  // ter "Preto (PLA)" cadastrado) -- sem marca, quem registra o pedido e
+  // quem registra a produção podem escolher filamentos DIFERENTES achando
+  // que é o mesmo (mesmo texto na tela), e reconcileOrderReservations nunca
+  // casa os dois (exige o filamentId EXATO). Mesma convenção de
+  // actions/assembly.ts#filamentLabel.
   function filamentComboLabel(rawKey: string): string {
     return rawKey.split(',').map((id) => {
       const f = filamentById.get(id)
-      return f ? `${f.colorName} (${f.material})` : id
+      return f ? `${f.manufacturer} ${f.colorName} (${f.material})` : id
     }).join(' + ')
   }
 

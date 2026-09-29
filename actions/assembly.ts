@@ -10,19 +10,20 @@ import { reconcileOrderReservations } from '@/lib/orderReservations'
 
 type ActionResult = { success: boolean; error?: string }
 
-// Bug "cores todas juntas com marca/rolo, difícil de ler": a partir da
-// Montagem (e telas depois dela -- Meu Estoque, Vendas), marca/"Rolo #" só
-// fazem sentido nos processos ANTES desse ponto (cadastro de produto,
-// escolher o rolo físico ao registrar produção). Material (PLA/PETG/...)
-// continua aqui: colorName sozinho não é único no catálogo (Filament é
-// @@unique([manufacturer, material, colorName]) -- a mesma cor pode existir
-// em mais de um material), então "Rosa" sem material vira 2+ opções
-// idênticas na tela, indistinguíveis. Mesma convenção que
-// lib/reports.ts#filamentComboLabel já usa (getProductVariantBreakdown, que
-// alimenta Estoque/Vendas) -- alinha os dois em vez de cada um formatar
-// diferente.
-function filamentLabel(f: { colorName: string; material: string }): string {
-  return `${f.colorName} (${f.material})`
+// Bug "produção usou um Preto diferente do pedido": colorName+material
+// sozinhos não são únicos no catálogo -- "Rolo #" não faz sentido aqui
+// (peça física específica), mas MARCA faz: Filament é
+// @@unique([manufacturer, material, colorName]), então dois fabricantes
+// diferentes podem ter "Preto (PLA)" cadastrado -- sem marca no rótulo, a
+// pessoa que registra o pedido e a que registra a produção podem escolher
+// filamentos DIFERENTES achando que é o mesmo (mesmo texto na tela), e a
+// reserva nunca casa (reconcileOrderReservations exige o filamentId EXATO).
+// Mesma convenção que lib/reports.ts#filamentComboLabel já usa
+// (getProductVariantBreakdown, que alimenta Estoque/Vendas) e que o
+// seletor de Produção (app/(app)/production/page.tsx) já mostrava -- alinha
+// os três em vez de cada um formatar diferente.
+function filamentLabel(f: { manufacturer: string; colorName: string; material: string }): string {
+  return `${f.manufacturer} ${f.colorName} (${f.material})`
 }
 
 function accessoryLabel(a: { name: string; colorName: string }): string {

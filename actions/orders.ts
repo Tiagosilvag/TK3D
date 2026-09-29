@@ -51,19 +51,23 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
     const isFixedRecipe = part ? part.filamentComponents.length >= 2 : false
 
     if (isFixedRecipe) {
-      const label = part!.filamentComponents.map((c) => `${c.filament.colorName} (${c.filament.material})`).join(' + ')
+      const label = part!.filamentComponents.map((c) => `${c.filament.manufacturer} ${c.filament.colorName} (${c.filament.material})`).join(' + ')
       return { partId: partStatus.partId, partName: partStatus.name, fixed: true, fixedLabel: label, colorOptions: [] }
     }
 
-    // Bug "falta o material pra saber qual é a cor": colorName sozinho não
-    // é único no catálogo (Filament é @@unique([manufacturer, material,
-    // colorName]) -- mesma cor pode existir em mais de um material), então
-    // o catálogo inteiro (available: 0 incluso) precisa do material no
-    // label, senão duas opções ficam com o mesmo texto.
+    // Bug "produção usou um Preto diferente do pedido": colorName+material
+    // sozinhos não são únicos no catálogo (Filament é
+    // @@unique([manufacturer, material, colorName]) -- dois fabricantes
+    // podem ter "Preto (PLA)" cadastrado) -- sem marca, a pessoa que
+    // registra o pedido pode escolher um filamento e quem registra a
+    // produção escolher outro achando que é o mesmo (mesmo texto na tela),
+    // e reconcileOrderReservations nunca casa os dois (exige o filamentId
+    // EXATO). Catálogo inteiro (available: 0 incluso) precisa da marca no
+    // label.
     const existing = new Map((partStatus.colorOptions ?? []).map((o) => [o.key, o]))
     const merged: AssemblyPartColorOption[] = filaments.map((f) => {
       const found = existing.get(f.id)
-      return found ?? { key: f.id, filamentIds: [f.id], label: `${f.colorName} (${f.material})`, available: 0, colorHex: f.colorHex }
+      return found ?? { key: f.id, filamentIds: [f.id], label: `${f.manufacturer} ${f.colorName} (${f.material})`, available: 0, colorHex: f.colorHex }
     })
     // Combo multi-filamento já produzido pra essa peça (não corresponde a
     // nenhum Filament.id sozinho) -- mantém como opção também, senão uma
@@ -453,14 +457,16 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
   // (resolveCustomColorComboKey só aceita escolha assim), então dá pra
   // resolver o rótulo direto no catálogo -- carregado uma vez só, sob
   // demanda (nenhuma linha com colorComboKey, nenhuma query).
-  let filamentById: Map<string, { colorName: string; material: string }> | null = null
+  let filamentById: Map<string, { manufacturer: string; colorName: string; material: string }> | null = null
   async function getFilamentLabel(filamentId: string): Promise<string | null> {
     if (!filamentById) {
-      const all = await prisma.filament.findMany({ select: { id: true, colorName: true, material: true } })
-      filamentById = new Map(all.map((f) => [f.id, { colorName: f.colorName, material: f.material }]))
+      const all = await prisma.filament.findMany({ select: { id: true, manufacturer: true, colorName: true, material: true } })
+      filamentById = new Map(all.map((f) => [f.id, { manufacturer: f.manufacturer, colorName: f.colorName, material: f.material }]))
     }
     const f = filamentById.get(filamentId)
-    return f ? `${f.colorName} (${f.material})` : null
+    // Bug "produção usou um Preto diferente do pedido": ver comentário em
+    // getOrderablePartOptions acima -- marca entra pro mesmo motivo.
+    return f ? `${f.manufacturer} ${f.colorName} (${f.material})` : null
   }
 
   for (const item of pending) {
