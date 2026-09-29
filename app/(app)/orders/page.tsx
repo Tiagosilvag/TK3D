@@ -81,6 +81,7 @@ export default async function OrdersPage() {
         id: item.id,
         productName: item.product.name,
         colorLabel: variant?.label ?? null,
+        colorComboKey: item.colorComboKey,
         colorHex: variant?.colorHex ?? null,
         quantity: item.quantity,
         reservedQuantity: item.reservedQuantity,

@@ -19,6 +19,7 @@ export interface OrderItemRow {
   id: string
   productName: string
   colorLabel: string | null
+  colorComboKey: string | null
   colorHex: string | null
   quantity: number
   reservedQuantity: number
@@ -264,7 +265,10 @@ export function OrdersExplorer({ rows, products }: { rows: OrderRow[]; products:
                   <div key={item.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-slate-100">
+                        <div
+                          title={`itemId=${item.id} colorComboKey=${item.colorComboKey ?? ''}`}
+                          className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-slate-100"
+                        >
                           {item.colorHex && <span style={{ background: item.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
                           {item.productName}{item.colorLabel && <span className="font-normal text-slate-500 dark:text-slate-400"> — {item.colorLabel}</span>}
                         </div>
