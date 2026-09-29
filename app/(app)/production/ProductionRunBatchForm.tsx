@@ -11,6 +11,7 @@ import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
 import { FilamentSelect } from '@/components/FilamentSelect'
+import { ProductSelect } from '@/components/ProductSelect'
 import type { WasteReason } from '@prisma/client'
 
 const WASTE_REASON_OPTIONS = Object.keys(WASTE_REASON_LABELS) as WasteReason[]
@@ -744,12 +745,7 @@ export function ProductionRunBatchForm({
             <div className="tk-panel p-3">
               <label className="text-sm">
                 Produto
-                <select value={productId} onChange={(e) => void handleProductChange(e.target.value)} className="tk-input-full" required>
-                  <option value="" disabled>Selecione</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
+                <ProductSelect options={products} value={productId} onChange={(id) => void handleProductChange(id)} className="tk-input-full" />
               </label>
             </div>
 
@@ -1050,12 +1046,7 @@ export function ProductionRunBatchForm({
                 <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">Escolha o produto — se ele for composto por várias peças, você decide quais entram nesta impressão.</p>
                 <label className="text-xs">
                   Produto
-                  <select value={addProductId} onChange={(e) => void handleAddProductChange(e.target.value)} className="tk-input-full">
-                    <option value="" disabled>Selecione</option>
-                    {products.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
+                  <ProductSelect options={products} value={addProductId} onChange={(id) => void handleAddProductChange(id)} className="tk-input-full" />
                 </label>
                 {addProductParts && addProductParts.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-2">

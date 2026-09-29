@@ -13,6 +13,7 @@ import {
   addProductComponentUsage,
   removeProductComponentUsage,
 } from '@/actions/products'
+import { ProductSelect } from '@/components/ProductSelect'
 import type { SupplyUnit } from '@prisma/client'
 
 // Melhoria "Produto-como-componente": 'PRODUCT' é outro Product usado como
@@ -217,12 +218,7 @@ export function ComponentsSection({
           </label>
           <label className="text-xs">
             Item
-            <select value={itemId} onChange={(e) => handleItemChange(e.target.value)} className="tk-input-full mt-1">
-              <option value="" disabled>Selecione</option>
-              {itemOptions.map((o) => (
-                <option key={o.id} value={o.id}>{o.label}</option>
-              ))}
-            </select>
+            <ProductSelect options={itemOptions.map((o) => ({ id: o.id, name: o.label }))} value={itemId} onChange={handleItemChange} className="tk-input-full mt-1" />
           </label>
           <label className="text-xs">
             Quantidade

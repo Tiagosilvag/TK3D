@@ -1030,6 +1030,14 @@ export async function cancelProductionRun(id: string, reason: string): Promise<A
 // conta aqui -- é literalmente "Disponível para montagem" já existente na
 // tela de Montagem, só exibida também nesta visão.
 
+export interface ProductionByProductColor {
+  filamentId: string
+  label: string
+  colorHex: string | null
+  produced: number
+  runsCount: number
+}
+
 export interface ProductionByProductPart {
   // null = produto simples sem nenhuma ProductPart (a peça é o próprio
   // produto) -- mesma convenção de ProductionRun.productPartId.
@@ -1037,6 +1045,13 @@ export interface ProductionByProductPart {
   partName: string
   produced: number
   runsCount: number
+  // Bug "não dá pra saber qual foi a cor da produção feita": quebra por
+  // filamento (campo escalar ProductionRun.filamentId -- pra peça
+  // multi-filamento é só o 1º componente, mesma convenção de sempre, mas
+  // essa visão é informativa, não precisa do combo inteiro). Marca entra
+  // no label pelo mesmo motivo de actions/assembly.ts#filamentLabel:
+  // colorName+material sozinhos não são únicos no catálogo.
+  colorBreakdown: ProductionByProductColor[]
 }
 
 export interface ProductionByProductRow {
@@ -1049,15 +1064,22 @@ export interface ProductionByProductRow {
   completeSets: number
 }
 
-export async function getProductionByProduct(): Promise<ProductionByProductRow[]> {
+// Bug "filtro de produto não funciona na visão Por produto": productId era
+// sempre ignorado aqui -- só a visão "Lista" (runsWhere, page.tsx) lia o
+// filtro selecionado. Opcional (undefined = todos os produtos, comportamento
+// de sempre).
+export async function getProductionByProduct(productId?: string): Promise<ProductionByProductRow[]> {
   // Brinde nunca passa pelo fluxo de Produção -- excluído deste relatório.
-  const products = await prisma.product.findMany({ where: { active: true, isGift: false }, orderBy: { name: 'asc' } })
+  const products = await prisma.product.findMany({
+    where: { active: true, isGift: false, ...(productId ? { id: productId } : {}) },
+    orderBy: { name: 'asc' },
+  })
 
   const rows: ProductionByProductRow[] = []
   for (const product of products) {
     const runs = await prisma.productionRun.findMany({
       where: { productId: product.id, status: { not: 'CANCELADA' } },
-      include: { productPart: true },
+      include: { productPart: true, filament: true },
     })
     if (runs.length === 0) continue
 
@@ -1069,9 +1091,24 @@ export async function getProductionByProduct(): Promise<ProductionByProductRow[]
         partName: run.productPart?.name ?? product.name,
         produced: 0,
         runsCount: 0,
+        colorBreakdown: [] as ProductionByProductColor[],
       }
       existing.produced += run.quantitySuccess
       existing.runsCount += 1
+
+      const color = existing.colorBreakdown.find((c) => c.filamentId === run.filamentId)
+      if (color) {
+        color.produced += run.quantitySuccess
+        color.runsCount += 1
+      } else {
+        existing.colorBreakdown.push({
+          filamentId: run.filamentId,
+          label: `${run.filament.manufacturer} ${run.filament.colorName} (${run.filament.material})`,
+          colorHex: run.filament.colorHex,
+          produced: run.quantitySuccess,
+          runsCount: 1,
+        })
+      }
       partsMap.set(key, existing)
     }
 

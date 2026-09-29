@@ -217,6 +217,7 @@ export function ProductionRunsExplorer({
                   <thead>
                     <tr className="text-left text-slate-500 dark:text-slate-400">
                       <th className="py-1 font-medium">Peça</th>
+                      <th className="py-1 font-medium">Cor</th>
                       <th className="py-1 text-center font-medium">Produzido (sucesso)</th>
                       <th className="py-1 text-center font-medium">Produções</th>
                     </tr>
@@ -225,6 +226,25 @@ export function ProductionRunsExplorer({
                     {row.parts.map((part) => (
                       <tr key={part.partId ?? '__simple__'}>
                         <td className="py-1">{part.partName}</td>
+                        <td className="py-1">
+                          {/* Bug "não dá pra saber qual foi a cor da produção
+                              feita": quebra por filamento (marca inclusa --
+                              colorName+material sozinhos não são únicos no
+                              catálogo, ver actions/assembly.ts#filamentLabel). */}
+                          <div className="flex flex-col gap-0.5">
+                            {part.colorBreakdown.map((c) => (
+                              <span key={c.filamentId} className="flex items-center gap-1.5">
+                                {c.colorHex ? (
+                                  <span style={{ background: c.colorHex }} className="inline-block h-2 w-2 shrink-0 rounded-full" />
+                                ) : (
+                                  <span className="inline-block h-2 w-2 shrink-0 rounded-full border border-slate-300 dark:border-slate-600" />
+                                )}
+                                <span className="text-slate-600 dark:text-slate-300">{c.label}</span>
+                                <span className="text-slate-400 dark:text-slate-500">({c.produced})</span>
+                              </span>
+                            ))}
+                          </div>
+                        </td>
                         <td className="py-1 text-center tabular-nums">{part.produced}</td>
                         <td className="py-1 text-center tabular-nums">{part.runsCount}</td>
                       </tr>

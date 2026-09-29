@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { createListingDraft } from '@/actions/listings'
 import { getMarketplacePlatformBadge, LISTING_TYPE_LABELS } from '@/lib/format'
 import { SubmitButton } from '@/components/SubmitButton'
+import { ProductSelect } from '@/components/ProductSelect'
 import type { ListingType } from '@prisma/client'
 
 const LISTING_TYPE_OPTIONS = Object.keys(LISTING_TYPE_LABELS) as ListingType[]
@@ -62,10 +63,7 @@ export function NewListingDialog({
           {!presetProductId && (
             <label className="text-sm">
               Produto *
-              <select value={productId} onChange={(e) => setProductId(e.target.value)} required className="tk-input-full">
-                <option value="" disabled>Selecione</option>
-                {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              <ProductSelect options={products} value={productId} onChange={setProductId} className="tk-input-full" />
             </label>
           )}
           <label className="text-sm">

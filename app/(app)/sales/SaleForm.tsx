@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { createSaleBatch, updateSale } from '@/actions/sales'
 import { getPlatformSalePrice, resolveSaleFreight } from '@/actions/marketplacePlatforms'
 import { SubmitButton } from '@/components/SubmitButton'
+import { ProductSelect } from '@/components/ProductSelect'
 import { formatCurrency } from '@/lib/format'
 import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { resolveTieredPlatformFee, type PlatformFeeTier } from '@/lib/costing'
@@ -510,12 +511,13 @@ export function SaleForm({
         </label>
         <label className="text-sm">
           Produto {editingSale && '*'}
-          <select name="productId" value={productId} onChange={(e) => handleProductChange(e.target.value)} className="tk-input-full" required={Boolean(editingSale)}>
-            <option value="" disabled>Selecione</option>
-            {products.map((p) => (
-              <option key={p.productId} value={p.productId}>{p.productName}</option>
-            ))}
-          </select>
+          <ProductSelect
+            name="productId"
+            options={products.map((p) => ({ id: p.productId, name: p.productName }))}
+            value={productId}
+            onChange={handleProductChange}
+            className="tk-input-full"
+          />
         </label>
         {!showBatchTable && requiresColorChoice && (
           <label className="text-sm">

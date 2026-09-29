@@ -22,6 +22,7 @@ import {
 import { getProductionByProduct as getPlateProductionByProduct } from '@/actions/productionRuns'
 import { calculateStockReferenceQuantity, calculateStockPercentRemaining, getStockStatusWithThresholds } from '@/lib/costing'
 import { formatCurrency, getProductionStatusBadge, WASTE_REASON_LABELS } from '@/lib/format'
+import { ProductSelect } from '@/components/ProductSelect'
 import type { ProductionStatus, WasteReason } from '@prisma/client'
 
 // This page aggregates data mutated by actions on several other routes
@@ -392,12 +393,7 @@ export default async function DashboardPage({
           </label>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Produto
-            <select name="productId" defaultValue={activeProductId ?? ''} className="tk-input-full mt-1">
-              <option value="">Todos</option>
-              {filterProducts.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
+            <ProductSelect name="productId" options={filterProducts} defaultValue={activeProductId ?? ''} emptyLabel="Todos" className="tk-input-full mt-1" />
           </label>
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Impressora

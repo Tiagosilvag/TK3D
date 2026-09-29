@@ -9,6 +9,7 @@ import type { ProductionCostSnapshot } from '@/lib/costing'
 import { calculatePrinterDepreciationCostPerHour } from '@/lib/costing'
 import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
 import { resolveDateRange } from '@/lib/dateRange'
+import { ProductSelect } from '@/components/ProductSelect'
 import type { ProductionStatus } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -80,10 +81,14 @@ export default async function ProductionPage({
       ? prisma.productionRun.findUnique({ where: { id: editId }, include: { product: true, printer: true, filament: true, productPart: true, filamentUsages: { include: { filament: true } } } })
       : null,
     // Melhoria "Produção" (reformulação Plate) §5: visões "Por produto" e
-    // "Plates" -- independentes do filtro de período/produto/impressora
-    // acima (são visões agregadas de TODO o histórico, não uma lista
-    // paginada), mesmo padrão de getAssemblyOverview em Meu Estoque.
-    getProductionByProduct(),
+    // "Plates" -- independentes do filtro de período/impressora acima (são
+    // visões agregadas de TODO o histórico, não uma lista paginada), mesmo
+    // padrão de getAssemblyOverview em Meu Estoque. Bug "filtro de produto
+    // não funciona na visão Por produto": productId É repassado (diferente
+    // de período/impressora, filtrar por produto faz sentido pra essa
+    // visão -- ver ela também sem escolher produto nenhum não ajuda a achar
+    // o que se procura numa lista longa).
+    getProductionByProduct(productId),
     getPlates(),
     getOrderDemandQueue(),
   ])
@@ -252,12 +257,7 @@ export default async function ProductionPage({
       <form method="get" action="/production" className="mt-4 flex flex-wrap items-end gap-3 tk-panel p-3">
         <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
           Produto
-          <select name="productId" defaultValue={productId ?? ''} className="tk-input-full mt-1">
-            <option value="">Todos</option>
-            {products.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+          <ProductSelect name="productId" options={products} defaultValue={productId ?? ''} emptyLabel="Todos" className="tk-input-full mt-1" />
         </label>
         <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
           Impressora
