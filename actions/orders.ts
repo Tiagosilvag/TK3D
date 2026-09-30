@@ -460,6 +460,11 @@ export interface OrderDemandRow {
   colorComboKey: string | null
   comboLabel: string | null
   filamentIds: string[] | null
+  // Diagnóstico temporário (bug "produção registrada mas pedido continua
+  // pendente"): disponível bruto que availableForPart calculou pra ESTA
+  // peça no momento em que a linha foi criada -- só em productionRows,
+  // null em assemblyRows (não passa por essa checagem por peça).
+  debugPoolAvailable: number | null
 }
 
 export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDemandRow[]; assemblyRows: OrderDemandRow[] }> {
@@ -537,7 +542,7 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
     if (!needsAssembly) {
       const filamentId = item.colorComboKey
       const comboLabel = filamentId ? await getFilamentLabel(filamentId) : null
-      productionRows.push({ ...base, partId: null, partName: null, neededUnits: shortfall, comboLabel, filamentIds: filamentId ? [filamentId] : null })
+      productionRows.push({ ...base, partId: null, partName: null, neededUnits: shortfall, comboLabel, filamentIds: filamentId ? [filamentId] : null, debugPoolAvailable: null })
       continue
     }
 
@@ -628,7 +633,7 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
     assemblableUnits = Math.max(0, assemblableUnits)
 
     if (assemblableUnits > 0) {
-      assemblyRows.push({ ...base, partId: null, partName: null, neededUnits: assemblableUnits, comboLabel: null, filamentIds: null })
+      assemblyRows.push({ ...base, partId: null, partName: null, neededUnits: assemblableUnits, comboLabel: null, filamentIds: null, debugPoolAvailable: null })
       for (const part of parts) {
         consumeFromPart(part.partId, assemblableUnits * part.quantityPerUnit)
       }
@@ -642,7 +647,7 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
         const stillMissing = Math.max(0, neededForPart - poolAvail)
         consumeFromPart(part.partId, Math.min(poolAvail, neededForPart))
         if (stillMissing > 0) {
-          productionRows.push({ ...base, partId: part.partId, partName: part.name, neededUnits: stillMissing, ...(await comboInfoForPart(part.partId)) })
+          productionRows.push({ ...base, partId: part.partId, partName: part.name, neededUnits: stillMissing, ...(await comboInfoForPart(part.partId)), debugPoolAvailable: poolAvail })
         }
       }
     }
