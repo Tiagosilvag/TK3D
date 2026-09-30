@@ -565,7 +565,20 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
 
     function availableForPart(partId: string): number {
       const combos = comboPools.get(partId)
-      if (choices && combos) return combos.get(choices[partId] ?? '') ?? 0
+      // Bug "produção registrada mas pedido continua pendente pra sempre":
+      // item com colorComboKey só tem entrada pras peças de COR VARIÁVEL
+      // que o cliente escolheu -- uma peça de receita fixa (ou uma peça sem
+      // cor pra esse item) nunca aparece em `choices` (ver
+      // resolveCustomColorComboKey). `choices[partId] ?? ''` tratava essa
+      // ausência como "peça pediu o combo de chave vazia" -- que nunca
+      // existe em `combos` -- e zerava disponível pra sempre, mesmo com
+      // produção real disponível (confirmado: Montagem mostrava disponível
+      // correto pra mesma peça). Só usa o combo específico quando o item
+      // REALMENTE escolheu uma cor pra esta peça -- senão cai no pool
+      // agregado, igual `comboInfoForPart` já fazia (retornando null em vez
+      // de inventar um combo).
+      const chosenKey = choices?.[partId]
+      if (chosenKey !== undefined && combos) return combos.get(chosenKey) ?? 0
       return pool.get(partId) ?? 0
     }
 
@@ -573,9 +586,14 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
       pool.set(partId, (pool.get(partId) ?? 0) - units)
       const combos = comboPools.get(partId)
       if (!combos) return
-      if (choices) {
-        const key = choices[partId]
-        if (key !== undefined) combos.set(key, (combos.get(key) ?? 0) - units)
+      // Mesmo ajuste de availableForPart acima: só drena um combo
+      // específico quando o item REALMENTE escolheu cor pra esta peça --
+      // senão drena proporcionalmente por todos os combos (igual ao item
+      // sem cor nenhuma), pra não deixar saldo de combo desatualizado pra
+      // um próximo item da fila que escolha uma cor específica desta peça.
+      const chosenKey = choices?.[partId]
+      if (chosenKey !== undefined) {
+        combos.set(chosenKey, (combos.get(chosenKey) ?? 0) - units)
         return
       }
       let remaining = units

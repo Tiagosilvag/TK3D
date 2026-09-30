@@ -430,3 +430,76 @@ describe('confirmAssembly reconcilia pedido genérico (sem cor específica)', ()
     expect(queue.assemblyRows.some((r) => r.orderItemId === genericItem.id)).toBe(false)
   })
 })
+
+// Bug "produção registrada mas pedido continua pendente pra sempre": uma
+// peça de RECEITA FIXA (2+ filamentos, nunca escolhida pelo cliente --
+// resolveCustomColorComboKey a exclui de `choices` de propósito, ver
+// comentário lá) nunca tem entrada própria em colorComboKey quando o
+// pedido escolhe cor só de OUTRA peça do mesmo produto. availableForPart
+// (getOrderDemandQueue) tratava "sem escolha pra esta peça" como "escolheu
+// o combo de chave vazia" (`choices[partId] ?? ''`), que nunca existe em
+// comboPools -- disponível ficava 0 pra sempre pra essa peça, mesmo com
+// produção real cobrindo o necessário (Montagem/getAssemblyStatus já
+// contava certo -- só a fila de Produção ficava presa mostrando "falta
+// produzir" uma peça já produzida o suficiente).
+describe('getOrderDemandQueue -- peça de receita fixa não fica presa quando o pedido só escolhe cor de OUTRA peça', () => {
+  it('peça fixa produzida some da fila mesmo com colorComboKey só da peça de cor variável', async () => {
+    const printer = await prisma.printer.create({ data: { name: 'P4', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+    const vermelho = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Vermelho', colorHex: '#ff0000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+    const verde = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Verde', colorHex: '#00ff00', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+    const azul = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Azul', colorHex: '#0000ff', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+
+    const product = await prisma.product.create({
+      data: { name: 'MINI PATO', category: 'Decoração', isComposite: true, printerId: printer.id, filamentId: vermelho.id, weightGrams: 0, printTimeHours: 0, laborTimeHours: 0 },
+    })
+    const cabeca = await prisma.productPart.create({
+      data: { productId: product.id, name: 'CABEÇA', printerId: printer.id, printTimeHours: 1, quantityPerUnit: 1, filamentComponents: { create: [{ filamentId: vermelho.id, weightGrams: 10 }] } },
+    })
+    // CORPO tem receita FIXA (2 filamentos sempre juntos) -- o cliente
+    // nunca escolhe a cor dela num pedido.
+    const corpo = await prisma.productPart.create({
+      data: {
+        productId: product.id,
+        name: 'CORPO',
+        printerId: printer.id,
+        printTimeHours: 1,
+        quantityPerUnit: 1,
+        filamentComponents: { create: [{ filamentId: vermelho.id, weightGrams: 10 }, { filamentId: verde.id, weightGrams: 5 }] },
+      },
+    })
+
+    // Pedido escolhe cor só de CABEÇA (única peça de cor variável) -- CORPO
+    // fica de fora de `choices` de propósito (receita fixa).
+    const orderResult = await createOrder(orderFdWithColors(product.id, { [cabeca.id]: azul.id }, { quantity: '2' }))
+    expect(orderResult.success).toBe(true)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+
+    // Produz as 2 CABEÇA em azul e as 2 CORPO (receita fixa) -- o suficiente
+    // pra montar as 2 unidades pedidas.
+    await producePart(product.id, cabeca.id, printer.id, azul.id, 2)
+    const corpoResult = await createProductionRun(fd({
+      productId: product.id,
+      productPartId: corpo.id,
+      printerId: printer.id,
+      filamentId: vermelho.id,
+      date: '2026-09-01',
+      quantityPlanned: '2',
+      quantitySuccess: '2',
+      quantityFailed: '0',
+      gramsUsed: '10',
+      gramsWasted: '0',
+      timeWastedHours: '0',
+      filamentUsagesJson: JSON.stringify([
+        { filamentId: vermelho.id, gramsUsed: 20, gramsWasted: 0 },
+        { filamentId: verde.id, gramsUsed: 10, gramsWasted: 0 },
+      ]),
+    }))
+    expect(corpoResult.success).toBe(true)
+
+    // Ambas as peças produzidas o suficiente -- a fila de Produção não deve
+    // pedir nada pra este item (nem CABEÇA, nem CORPO).
+    const queue = await getOrderDemandQueue()
+    const rowsForItem = queue.productionRows.filter((r) => r.orderItemId === item.id)
+    expect(rowsForItem).toEqual([])
+  })
+})
