@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { ThemeToggle } from '@/components/ThemeToggle'
 import { Logo } from '@/components/Logo'
 import { LogoWatermark } from '@/components/LogoWatermark'
 import {
@@ -271,14 +270,12 @@ export function AppLayoutClient({
         </nav>
 
         {/* Melhoria "Menu lateral" §6: rodapé fixo separado da navegação --
-            tema (ícone + rótulo do modo atual + switch) e conta (avatar +
-            Sair) agrupados. Sem nome/avatar de usuário de verdade: login
-            hoje é senha única compartilhada, sem tabela de usuário (ver
-            CLAUDE.md) -- "Administrador" é um rótulo genérico de conta, não
-            um nome inventado, e fica pronto pra virar o nome real assim que
-            existir multiusuário. */}
+            conta (avatar + Sair). Sem nome/avatar de usuário de verdade:
+            login hoje é senha única compartilhada, sem tabela de usuário
+            (ver CLAUDE.md) -- "Administrador" é um rótulo genérico de
+            conta, não um nome inventado, e fica pronto pra virar o nome
+            real assim que existir multiusuário. */}
         <div className="space-y-1 border-t border-slate-200 p-2 dark:border-slate-800">
-          <ThemeToggle />
           <div className="flex items-center gap-2 rounded-lg px-1 py-1">
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
               <NavUserIcon className="h-4 w-4" />
