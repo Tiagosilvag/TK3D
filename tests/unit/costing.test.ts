@@ -25,6 +25,7 @@ import {
   calculateGiftProductCost,
   resolveListingFee,
   calculateListingProfit,
+  calculateListingPriceForDesiredProfit,
   type ProductionCostSnapshotInput,
   type ProductCostBreakdown,
   type ProductionCostSnapshot,
@@ -1305,6 +1306,75 @@ describe('calculateListingProfit', () => {
   it('pode dar negativo (anúncio no prejuízo)', () => {
     const profit = calculateListingProfit({ price: 10, productionCost: 8.42, feeAmount: 5, freightCost: 4, giftCost: 0 })
     expect(profit).toBeLessThan(0)
+  })
+})
+
+// Melhoria "Anúncios: calculadora de preço pelo lucro desejado" -- inverso
+// de calculateListingProfit. Exemplo validado no pedido: Mini Jesus 7cm no
+// Mercado Livre, preço R$ 31,63, custo R$ 8,22, taxa 16,5% flat (sem taxa
+// fixa/frete/brinde) -- lucro real R$ 18,19, bate com o que a tela já
+// mostra hoje.
+describe('calculateListingPriceForDesiredProfit', () => {
+  it('reproduz o exemplo do pedido (Mini Jesus 7cm, taxa flat 16,5%)', () => {
+    const price = calculateListingPriceForDesiredProfit({
+      desiredProfit: 18.19,
+      productionCost: 8.22,
+      freightCost: 0,
+      giftCost: 0,
+      tiers: null,
+      flatFeePercent: 0.165,
+      flatFeeFixed: 0,
+    })
+    expect(price).toBeCloseTo(31.63, 1)
+    // Ida e volta: o preço calculado, jogado de volta em calculateListingProfit
+    // com a mesma taxa, devolve o lucro pedido.
+    const { feeAmount } = resolveListingFee(price, null, 0.165, 0)
+    const profit = calculateListingProfit({ price, productionCost: 8.22, feeAmount, freightCost: 0, giftCost: 0 })
+    expect(profit).toBeCloseTo(18.19, 1)
+  })
+
+  it('inclui taxa fixa, frete e brinde na base antes de dividir pela taxa%', () => {
+    const price = calculateListingPriceForDesiredProfit({
+      desiredProfit: 20,
+      productionCost: 10,
+      freightCost: 4,
+      giftCost: 1,
+      tiers: null,
+      flatFeePercent: 0.20,
+      flatFeeFixed: 4,
+    })
+    // price = (20 + 10 + 4 + 1 + 4) / (1 - 0.20) = 39 / 0.80 = 48.75
+    expect(price).toBeCloseTo(48.75, 2)
+  })
+
+  it('com faixas (Shopee): converge iterando a faixa certa pro preço final', () => {
+    const price = calculateListingPriceForDesiredProfit({
+      desiredProfit: 50,
+      productionCost: 20,
+      freightCost: 0,
+      giftCost: 0,
+      tiers: shopeeTiers,
+      flatFeePercent: 0.20,
+      flatFeeFixed: 4,
+    })
+    // Ida e volta: resolver a taxa de verdade pro preço calculado e recalcular
+    // o lucro tem que bater com o pedido, faixa qualquer que seja.
+    const { feeAmount } = resolveListingFee(price, shopeeTiers, 0.20, 4)
+    const profit = calculateListingProfit({ price, productionCost: 20, feeAmount, freightCost: 0, giftCost: 0 })
+    expect(profit).toBeCloseTo(50, 1)
+  })
+
+  it('nunca devolve preço negativo mesmo com lucro desejado 0 e custo 0', () => {
+    const price = calculateListingPriceForDesiredProfit({
+      desiredProfit: 0,
+      productionCost: 0,
+      freightCost: 0,
+      giftCost: 0,
+      tiers: null,
+      flatFeePercent: 0.20,
+      flatFeeFixed: 0,
+    })
+    expect(price).toBeGreaterThanOrEqual(0)
   })
 })
 

@@ -403,6 +403,47 @@ export function calculateListingProfit(input: {
   return input.price - input.productionCost - input.feeAmount - input.freightCost - input.giftCost
 }
 
+// Melhoria "Anúncios: calculadora de preço pelo lucro desejado" -- inverso
+// de calculateListingProfit: dado quanto o vendedor quer RECEBER por
+// unidade, qual preço de anúncio entrega esse lucro. Mesmo raciocínio
+// algébrico de calculatePlatformPrice (lucro = preço − custo − (preço×taxa%
+// + taxa_fixo) − frete − brinde ⟹ preço = (custo + taxa_fixo + frete +
+// brinde + lucro) / (1 − taxa%)), só que aqui os termos vêm todos de um
+// ANÚNCIO JÁ REAL (não de suggestedPrice teórico) -- por isso não reaproveita
+// calculatePlatformPrice, que soma imposto (não relevante aqui) e não
+// aceita frete/brinde. Faixa de preço (Shopee) reusa o mesmo truque de ponto
+// fixo de calculateTieredPlatformPrice, porque a faixa certa depende do
+// preço que ainda não existe -- poucas faixas (<10), converge em 1-2
+// voltas.
+export function calculateListingPriceForDesiredProfit(input: {
+  desiredProfit: number
+  productionCost: number
+  freightCost: number
+  giftCost: number
+  tiers: PlatformFeeTier[] | null
+  flatFeePercent: number
+  flatFeeFixed: number
+}): number {
+  const base = input.desiredProfit + input.productionCost + input.freightCost + input.giftCost
+  function priceForFee(feePercent: number, feeFixed: number): number {
+    return (base + feeFixed) / (1 - feePercent)
+  }
+  if (input.tiers && input.tiers.length > 0) {
+    let price = priceForFee(input.tiers[0].feePercent, input.tiers[0].feeFixed)
+    for (let i = 0; i < 5; i++) {
+      const fee = resolveTieredPlatformFee(input.tiers, price)
+      const nextPrice = priceForFee(fee.feePercent, fee.feeFixed)
+      if (Math.abs(nextPrice - price) < 0.005) {
+        price = nextPrice
+        break
+      }
+      price = nextPrice
+    }
+    return Math.max(0, price)
+  }
+  return Math.max(0, priceForFee(input.flatFeePercent, input.flatFeeFixed))
+}
+
 export function combineProductCost(terms: ProductCostTerms, flags: ProductCostFlags, settings: Settings): ProductCostBreakdown {
   const subtotal =
     terms.filamentCost * on(flags.includeFilamentCost) +

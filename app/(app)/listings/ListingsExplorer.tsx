@@ -28,6 +28,10 @@ export function ListingsExplorer({ data }: { data: ListingsPageData }) {
   const [platformFilter, setPlatformFilter] = useState<PlatformFilter>('TODAS')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('TODOS')
   const [search, setSearch] = useState('')
+  // Melhoria "Anúncios: linha compacta + expandir pra editar": accordion --
+  // só 1 painel de edição aberto por vez, estado vive aqui (não em cada
+  // ListingRow) exatamente por isso.
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const visibleListings = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -101,19 +105,22 @@ export function ListingsExplorer({ data }: { data: ListingsPageData }) {
               <tr className="tk-table-head-row">
                 <th className="py-2">Produto</th>
                 <th>Plataforma</th>
-                <th>Tipo</th>
                 <th>Status</th>
-                <th>Custo produção</th>
-                <th>Preço no anúncio</th>
-                <th>Taxa aplicada</th>
-                <th>Brinde / Frete</th>
+                <th>Preço</th>
                 <th>Lucro</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {visibleListings.map((row) => (
-                <ListingRow key={row.id} row={row} canHaveType={row.platformKind === 'MERCADO_LIVRE'} />
+                <ListingRow
+                  key={row.id}
+                  row={row}
+                  canHaveType={row.platformKind === 'MERCADO_LIVRE'}
+                  platform={data.platforms.find((p) => p.id === row.platformId)!}
+                  isExpanded={expandedId === row.id}
+                  onToggleExpand={() => setExpandedId((prev) => (prev === row.id ? null : row.id))}
+                />
               ))}
             </tbody>
           </table>

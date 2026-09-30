@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client'
 import type { ListingStatus, ListingFreightType, ListingType, ListingFormat, MarketplacePlatformKind } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { listingSchema, listingKitItemSchema } from '@/lib/validation/listing'
-import { resolveListingFee, resolvePlatformPrice, calculateListingProfit, resolveListingTiers, type PlatformPriceBreakdown, type ProductCostBreakdown } from '@/lib/costing'
+import { resolveListingFee, resolvePlatformPrice, calculateListingProfit, resolveListingTiers, type PlatformPriceBreakdown, type ProductCostBreakdown, type PlatformFeeTier } from '@/lib/costing'
 import { getProductVariantBreakdown } from '@/lib/reports'
 import { productNeedsAssembly } from '@/lib/products'
 import { getPlatformSalePrice } from './marketplacePlatforms'
@@ -258,7 +258,20 @@ export type ListingsPageData = {
   // Melhoria "Anúncios: Kit": productionCost junto pra montagem calcular o
   // total do kit ao vivo no cliente, sem round-trip por item alterado.
   allProducts: { id: string; name: string; productionCost: number }[]
-  platforms: { id: string; kind: MarketplacePlatformKind }[]
+  // Melhoria "Anúncios: calculadora de preço pelo lucro desejado": taxa%/
+  // fixa/faixas de cada plataforma, pra recalcular taxa/lucro ao vivo no
+  // cliente conforme o vendedor ajusta preço/lucro desejado no painel de
+  // edição, sem round-trip por tecla -- calculateListingPriceForDesiredProfit/
+  // resolveListingFee (lib/costing.ts) são funções puras, seguras de
+  // importar direto num Client Component.
+  platforms: {
+    id: string
+    kind: MarketplacePlatformKind
+    feePercent: number
+    feeFixed: number
+    feeTiers: PlatformFeeTier[] | null
+    feeTiersPremium: PlatformFeeTier[] | null
+  }[]
   metrics: {
     activeCount: number
     productsWithoutListingCount: number
@@ -394,7 +407,14 @@ export async function getListingsPageData(): Promise<ListingsPageData> {
     listings: listingRows,
     productsWithoutListing,
     allProducts: allProducts.map((p) => ({ id: p.id, name: p.name, productionCost: breakdownByProduct.get(p.id)?.finalCost ?? 0 })),
-    platforms: platforms.map((p) => ({ id: p.id, kind: p.platform })),
+    platforms: platforms.map((p) => ({
+      id: p.id,
+      kind: p.platform,
+      feePercent: p.feePercent.toNumber(),
+      feeFixed: p.feeFixed.toNumber(),
+      feeTiers: (p.feeTiers as PlatformFeeTier[] | null) ?? null,
+      feeTiersPremium: (p.feeTiersPremium as PlatformFeeTier[] | null) ?? null,
+    })),
     metrics: {
       activeCount,
       productsWithoutListingCount: productsWithoutListing.length,
