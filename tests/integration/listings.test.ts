@@ -1,13 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient, Prisma } from '@prisma/client'
-import { createListingDraft, updateListing, deleteListing, getListingsPageData } from '@/actions/listings'
+import { createListingDraft, updateListing, deleteListing, getListingsPageData, getListingProductVariantOptions } from '@/actions/listings'
 import { updateMarketplacePlatformFees, getPlatformSalePrice, resolveSalePlatformFee, resolveSaleFreight } from '@/actions/marketplacePlatforms'
+import { createProductionRun } from '@/actions/productionRuns'
 import type { PlatformFeeTier } from '@/lib/costing'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
 async function cleanup() {
+  await prisma.listingKitItem.deleteMany()
   await prisma.listing.deleteMany()
+  await prisma.productionRun.deleteMany()
   await prisma.product.deleteMany()
   await prisma.printer.deleteMany()
   await prisma.filament.deleteMany()
@@ -56,7 +59,7 @@ describe('actions/listings', () => {
     const product = await createProduct()
     const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'SHOPEE' } })
 
-    const result = await createListingDraft(product.id, platform.id)
+    const result = await createListingDraft({ productId: product.id, platformId: platform.id })
     expect(result.success).toBe(true)
 
     const listing = await prisma.listing.findFirstOrThrow({ where: { productId: product.id, platformId: platform.id } })
@@ -69,9 +72,9 @@ describe('actions/listings', () => {
   it('createListingDraft recusa um 2º anúncio pro mesmo produto+plataforma (unique constraint)', async () => {
     const product = await createProduct()
     const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'SHOPEE' } })
-    await createListingDraft(product.id, platform.id)
+    await createListingDraft({ productId: product.id, platformId: platform.id })
 
-    const result = await createListingDraft(product.id, platform.id)
+    const result = await createListingDraft({ productId: product.id, platformId: platform.id })
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/já tem um anúncio/)
   })
@@ -80,13 +83,13 @@ describe('actions/listings', () => {
     const product = await createProduct()
     const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'MERCADO_LIVRE' } })
 
-    const classico = await createListingDraft(product.id, platform.id, 'CLASSICO')
+    const classico = await createListingDraft({ productId: product.id, platformId: platform.id, listingType: 'CLASSICO' })
     expect(classico.success).toBe(true)
 
-    const premium = await createListingDraft(product.id, platform.id, 'PREMIUM')
+    const premium = await createListingDraft({ productId: product.id, platformId: platform.id, listingType: 'PREMIUM' })
     expect(premium.success).toBe(true)
 
-    const dupClassico = await createListingDraft(product.id, platform.id, 'CLASSICO')
+    const dupClassico = await createListingDraft({ productId: product.id, platformId: platform.id, listingType: 'CLASSICO' })
     expect(dupClassico.success).toBe(false)
     expect(dupClassico.error).toMatch(/já tem um anúncio Clássico/)
 
@@ -98,8 +101,8 @@ describe('actions/listings', () => {
   it('updateListing recusa trocar o Tipo pra um que já existe no mesmo produto+plataforma', async () => {
     const product = await createProduct()
     const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'MERCADO_LIVRE' } })
-    await createListingDraft(product.id, platform.id, 'CLASSICO')
-    await createListingDraft(product.id, platform.id, 'PREMIUM')
+    await createListingDraft({ productId: product.id, platformId: platform.id, listingType: 'CLASSICO' })
+    await createListingDraft({ productId: product.id, platformId: platform.id, listingType: 'PREMIUM' })
     const classico = await prisma.listing.findFirstOrThrow({ where: { productId: product.id, platformId: platform.id, listingType: 'CLASSICO' } })
 
     const result = await updateListing(classico.id, fd({
@@ -120,7 +123,7 @@ describe('actions/listings', () => {
   it('updateListing atualiza preço/status/frete/brinde', async () => {
     const product = await createProduct()
     const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'SHOPEE' } })
-    await createListingDraft(product.id, platform.id)
+    await createListingDraft({ productId: product.id, platformId: platform.id })
     const listing = await prisma.listing.findFirstOrThrow({ where: { productId: product.id, platformId: platform.id } })
 
     const result = await updateListing(listing.id, fd({
@@ -147,7 +150,7 @@ describe('actions/listings', () => {
   it('deleteListing remove o anúncio (o produto volta a aparecer em "sem anúncio")', async () => {
     const product = await createProduct()
     const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'SHOPEE' } })
-    await createListingDraft(product.id, platform.id)
+    await createListingDraft({ productId: product.id, platformId: platform.id })
     const listing = await prisma.listing.findFirstOrThrow({ where: { productId: product.id, platformId: platform.id } })
 
     await deleteListing(listing.id)
@@ -159,7 +162,7 @@ describe('actions/listings', () => {
     await updateMarketplacePlatformFees('SHOPEE', fd({ feePercent: '0.20', feeFixed: '4', avgFreight: '15', feeTiersJson: JSON.stringify(shopeeTiers) }))
     const product = await createProduct()
     const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'SHOPEE' } })
-    await createListingDraft(product.id, platform.id)
+    await createListingDraft({ productId: product.id, platformId: platform.id })
     const listing = await prisma.listing.findFirstOrThrow({ where: { productId: product.id, platformId: platform.id } })
     await updateListing(listing.id, fd({ productId: product.id, platformId: platform.id, status: 'ONLINE', price: '50', freightType: 'GRATIS_SUBSIDIADO', freightCost: '4' }))
 
@@ -183,7 +186,7 @@ describe('actions/listings', () => {
     }))
     const product = await createProduct('Boneco ML')
     const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'MERCADO_LIVRE' } })
-    await createListingDraft(product.id, platform.id, 'PREMIUM')
+    await createListingDraft({ productId: product.id, platformId: platform.id, listingType: 'PREMIUM' })
     const listing = await prisma.listing.findFirstOrThrow({ where: { productId: product.id, platformId: platform.id } })
     expect(listing.listingType).toBe('PREMIUM')
 
@@ -196,7 +199,7 @@ describe('actions/listings', () => {
     await updateMarketplacePlatformFees('SHOPEE', fd({ feePercent: '0.20', feeFixed: '4', avgFreight: '15', feeTiersJson: JSON.stringify(shopeeTiers) }))
     const product = await createProduct()
     const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'SHOPEE' } })
-    await createListingDraft(product.id, platform.id)
+    await createListingDraft({ productId: product.id, platformId: platform.id })
     const listing = await prisma.listing.findFirstOrThrow({ where: { productId: product.id, platformId: platform.id } })
     await updateListing(listing.id, fd({ productId: product.id, platformId: platform.id, status: 'ONLINE', price: '999', freightType: 'GRATIS_SUBSIDIADO', freightCost: '4' }))
 
@@ -210,7 +213,7 @@ describe('actions/listings', () => {
     await updateMarketplacePlatformFees('SHOPEE', fd({ feePercent: '0.20', feeFixed: '4', avgFreight: '15', feeTiersJson: JSON.stringify(shopeeTiers) }))
     const product = await createProduct()
     const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'SHOPEE' } })
-    await createListingDraft(product.id, platform.id)
+    await createListingDraft({ productId: product.id, platformId: platform.id })
     const listing = await prisma.listing.findFirstOrThrow({ where: { productId: product.id, platformId: platform.id } })
     await updateListing(listing.id, fd({ productId: product.id, platformId: platform.id, status: 'ONLINE', price: '999', freightType: 'GRATIS_SUBSIDIADO', freightCost: '6.5' }))
 
@@ -239,7 +242,7 @@ describe('actions/listings', () => {
     }))
     const product = await createProduct('Boneco ML 2')
     const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'MERCADO_LIVRE' } })
-    await createListingDraft(product.id, platform.id, 'PREMIUM')
+    await createListingDraft({ productId: product.id, platformId: platform.id, listingType: 'PREMIUM' })
 
     const fee = await resolveSalePlatformFee('MERCADO_LIVRE', 100, product.id)
     expect(fee?.feePercent).toBeCloseTo(0.17)
@@ -247,5 +250,124 @@ describe('actions/listings', () => {
     // Sem productId (comportamento de sempre): cai em Clássico/feeTiers.
     const feeWithoutProduct = await resolveSalePlatformFee('MERCADO_LIVRE', 100)
     expect(feeWithoutProduct?.feePercent).toBeCloseTo(0.12)
+  })
+})
+
+// Melhoria "Anúncios: Unidade/Variação/Kit"
+describe('actions/listings -- formato Kit', () => {
+  it('createListingDraft KIT soma o custo de produção dos itens (quantidade × custo unitário)', async () => {
+    const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'SHOPEE' } })
+    const productA = await createProduct('Produto A')
+    const productB = await createProduct('Produto B')
+
+    const result = await createListingDraft({
+      format: 'KIT',
+      platformId: platform.id,
+      kitName: 'Kit Namorados',
+      kitItems: [{ productId: productA.id, quantity: 2 }, { productId: productB.id, quantity: 1 }],
+    })
+    expect(result.success).toBe(true)
+
+    const data = await getListingsPageData()
+    const row = data.listings.find((r) => r.format === 'KIT')!
+    expect(row.productId).toBeNull()
+    expect(row.productName).toBe('Kit Namorados')
+    expect(row.kitItems).toHaveLength(2)
+    const expectedCost = 2 * row.kitItems.find((i) => i.productId === productA.id)!.unitCost + row.kitItems.find((i) => i.productId === productB.id)!.unitCost
+    expect(row.productionCost).toBeCloseTo(expectedCost)
+  })
+
+  it('createListingDraft KIT recusa o mesmo produto duas vezes no mesmo kit', async () => {
+    const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'SHOPEE' } })
+    const productA = await createProduct('Produto A')
+
+    const result = await createListingDraft({
+      format: 'KIT',
+      platformId: platform.id,
+      kitName: 'Kit Duplicado',
+      kitItems: [{ productId: productA.id, quantity: 1 }, { productId: productA.id, quantity: 2 }],
+    })
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/duas vezes/)
+  })
+
+  it('createListingDraft KIT recusa item inativo', async () => {
+    const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'SHOPEE' } })
+    const productA = await createProduct('Produto Inativo')
+    await prisma.product.update({ where: { id: productA.id }, data: { active: false } })
+
+    const result = await createListingDraft({
+      format: 'KIT',
+      platformId: platform.id,
+      kitName: 'Kit com inativo',
+      kitItems: [{ productId: productA.id, quantity: 1 }],
+    })
+    expect(result.success).toBe(false)
+  })
+})
+
+describe('actions/listings -- formato Variação', () => {
+  it('getListingProductVariantOptions lista os combos já produzidos do produto', async () => {
+    const product = await createProduct('Chaveiro Colorido')
+    await createProductionRun(fd({
+      productId: product.id,
+      printerId: product.printerId,
+      filamentId: product.filamentId!,
+      date: '2026-09-01',
+      quantityPlanned: '5',
+      quantitySuccess: '5',
+      quantityFailed: '0',
+      gramsUsed: '10',
+      gramsWasted: '0',
+      timeWastedHours: '0',
+    }))
+
+    const options = await getListingProductVariantOptions(product.id)
+    expect(options).toHaveLength(1)
+    expect(options[0].key).toBe(product.filamentId)
+  })
+
+  it('createListingDraft VARIACAO grava as chaves marcadas e a tela resolve label/colorHex', async () => {
+    const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'SHOPEE' } })
+    const product = await createProduct('Chaveiro Colorido 2')
+    await createProductionRun(fd({
+      productId: product.id,
+      printerId: product.printerId,
+      filamentId: product.filamentId!,
+      date: '2026-09-01',
+      quantityPlanned: '5',
+      quantitySuccess: '5',
+      quantityFailed: '0',
+      gramsUsed: '10',
+      gramsWasted: '0',
+      timeWastedHours: '0',
+    }))
+
+    const result = await createListingDraft({
+      format: 'VARIACAO',
+      productId: product.id,
+      platformId: platform.id,
+      includedVariantKeys: [product.filamentId!],
+    })
+    expect(result.success).toBe(true)
+
+    const data = await getListingsPageData()
+    const row = data.listings.find((r) => r.format === 'VARIACAO')!
+    expect(row.includedVariants).toHaveLength(1)
+    expect(row.includedVariants[0].key).toBe(product.filamentId)
+    expect(row.includedVariants[0].colorHex).toBe('#000000')
+  })
+
+  it('createListingDraft VARIACAO recusa combo que o produto nunca produziu', async () => {
+    const platform = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: 'SHOPEE' } })
+    const product = await createProduct('Chaveiro Sem Cor')
+
+    const result = await createListingDraft({
+      format: 'VARIACAO',
+      productId: product.id,
+      platformId: platform.id,
+      includedVariantKeys: ['cor-inexistente'],
+    })
+    expect(result.success).toBe(false)
   })
 })

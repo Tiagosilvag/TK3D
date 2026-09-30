@@ -423,7 +423,13 @@ model Product {
   usedAsComponentIn     ProductComponentUsage[] @relation("ComponentUsageComponent")
   // Anúncios: onde este produto está realmente publicado (preço real,
   // frete, brinde, lucro) -- ver comentário completo em Listing abaixo.
+  // Só populado pra anúncio formato Unidade/Variação (Kit não referencia
+  // productId direto, ver Listing.productId).
   listings              Listing[]
+  // Melhoria "Anúncios: Kit": onde este produto entra como item de um
+  // anúncio-kit de OUTRO conjunto (ex.: Chaveiro X dentro do anúncio "Kit
+  // Namorados") -- ver comentário completo em ListingKitItem abaixo.
+  listingKitItems       ListingKitItem[]
 }
 
 // Composição de um Brinde (Product.isGift=true): peça/material de custo
@@ -881,6 +887,23 @@ enum ListingType {
   PREMIUM
 }
 
+// Melhoria "Anúncios: Unidade/Variação/Kit": um anúncio real do
+// marketplace nem sempre é 1 produto solto --
+// - UNIDADE (padrão/comportamento de sempre): productId aponta pra 1
+//   produto, sem variantes nem itens.
+// - VARIACAO: mesma ficha de variação nativa do Mercado Livre/Shopee --
+//   ainda é productId (1 produto só), mas `includedVariantKeys` lista
+//   QUAIS combos de cor desse produto entram nesse anúncio específico
+//   (nem toda variante cadastrada precisa estar em todo anúncio).
+// - KIT: vários PRODUTOS DIFERENTES vendidos juntos (nome livre, sem
+//   productId próprio) -- os itens ficam em ListingKitItem (abaixo),
+//   custo de produção do anúncio é a soma dos itens.
+enum ListingFormat {
+  UNIDADE
+  VARIACAO
+  KIT
+}
+
 // Anúncios: vínculo Produto × Plataforma com o preço REAL publicado (que o
 // vendedor decide e frequentemente difere do `suggestedPrice`/
 // `marketplacePrice` teóricos de Product), frete que o vendedor banca
@@ -893,8 +916,13 @@ enum ListingType {
 // prefill de preço, ver actions/marketplacePlatforms.ts#getPlatformSalePrice).
 model Listing {
   id          String              @id @default(cuid())
-  productId   String
-  product     Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  format      ListingFormat       @default(UNIDADE)
+  // Nulo só pra formato KIT (o anúncio representa vários produtos, não 1
+  // -- ver kitItems abaixo). UNIDADE/VARIACAO sempre populam, validado em
+  // actions/listings.ts (não dá pra expressar "obrigatório conforme outro
+  // campo" só com o schema do Prisma).
+  productId   String?
+  product     Product?            @relation(fields: [productId], references: [id], onDelete: Cascade)
   platformId  String
   platform    MarketplacePlatform @relation(fields: [platformId], references: [id], onDelete: Restrict)
   listingType ListingType?
@@ -908,6 +936,20 @@ model Listing {
   // brinde com ficha técnica própria), são conceitos separados.
   giftCost    Decimal             @default(0) @db.Decimal(10, 2)
   listingUrl  String?
+  // Só formato VARIACAO: lista de `colorComboKey` (mesma chave que
+  // Sale/OrderItem/ConsignmentDelivery.colorComboKey usam, formato
+  // documentado em lib/reports.ts#getProductVariantBreakdown) das
+  // variantes do productId acima incluídas NESTE anúncio -- nem toda
+  // variante cadastrada do produto precisa estar em todo anúncio dele.
+  // Null pra UNIDADE/KIT.
+  includedVariantKeys Json?
+  // Só formato KIT -- nome livre do conjunto (ex.: "Kit Namorados"), já
+  // que não existe 1 Product que nomeie o anúncio inteiro. Null pra
+  // UNIDADE/VARIACAO.
+  kitName     String?
+  // Só formato KIT -- ver ListingKitItem abaixo. Vazio (nunca populado)
+  // pra UNIDADE/VARIACAO.
+  kitItems    ListingKitItem[]
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
 
@@ -926,7 +968,27 @@ model Listing {
   //   - (productId, platformId, listingType) WHERE "listingType" IS NOT
   //     NULL -- cobre Mercado Livre -- no máximo 1 Clássico E 1 Premium
   //     por produto, nunca dois do mesmo tipo.
+  // Nenhuma das duas nunca bate pra formato KIT (productId sempre NULL
+  // nesse caso, e NULL nunca conflita com outro NULL numa unique -- kit
+  // não tem limite de quantidade por plataforma).
   // Ver prisma/migrations/20260924161500_listing_multi_type_per_platform.
+}
+
+// Melhoria "Anúncios: Kit": um item (produto + quantidade) de um anúncio
+// formato KIT -- mesmo precedente de ProductComponentUsage (produto
+// usado como "ingrediente" de outro conceito, aqui um anúncio em vez de
+// outro produto). onDelete Restrict no productId: não dá pra excluir um
+// produto que ainda está dentro de um kit publicado, precisa remover do
+// kit primeiro (mesma lógica de proteção que componentUsages já tem).
+model ListingKitItem {
+  id        String  @id @default(cuid())
+  listingId String
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity  Int     @default(1)
+
+  @@unique([listingId, productId])
 }
 
 model Sale {

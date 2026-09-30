@@ -32,7 +32,10 @@ export function ListingRow({ row, canHaveType }: { row: ListingRowData; canHaveT
   function save(overrides: Partial<{ status: ListingStatus; listingType: ListingType | ''; price: string; freightType: ListingFreightType; freightCost: string; hasGift: boolean; giftCost: string }> = {}) {
     const values = { status, listingType, price, freightType, freightCost, hasGift, giftCost, ...overrides }
     const fd = new FormData()
-    fd.set('productId', row.productId)
+    // Format KIT não tem productId (ver Listing.productId, schema.prisma) --
+    // updateListing não usa esse campo no update em si (edição inline nunca
+    // muda formato/produto/itens), então omitir aqui é seguro.
+    if (row.productId) fd.set('productId', row.productId)
     fd.set('platformId', row.platformId)
     if (values.listingType) fd.set('listingType', values.listingType)
     fd.set('status', values.status)
@@ -68,8 +71,31 @@ export function ListingRow({ row, canHaveType }: { row: ListingRowData; canHaveT
   return (
     <tr className={`tk-row align-top ${isPending ? 'opacity-60' : ''}`}>
       <td className="py-2">
-        <div className="font-medium text-slate-800 dark:text-slate-200">{row.productName}</div>
-        <div className="text-xs text-slate-400 dark:text-slate-500">{row.productCategory}</div>
+        <div className="flex items-center gap-1.5">
+          {row.format === 'KIT' && (
+            <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">Kit</span>
+          )}
+          {row.format === 'VARIACAO' && (
+            <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">Variação</span>
+          )}
+          <span className="font-medium text-slate-800 dark:text-slate-200">{row.productName}</span>
+        </div>
+        {row.format === 'KIT' ? (
+          <div className="text-xs text-slate-400 dark:text-slate-500">
+            {row.kitItems.map((i) => `${i.quantity}x ${i.productName}`).join(' + ')}
+          </div>
+        ) : row.format === 'VARIACAO' && row.includedVariants.length > 0 ? (
+          <div className="mt-0.5 flex flex-wrap gap-1">
+            {row.includedVariants.map((v) => (
+              <span key={v.key} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                {v.colorHex && <span style={{ background: v.colorHex }} className="inline-block h-1.5 w-1.5 shrink-0 rounded-full" />}
+                {v.label}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <div className="text-xs text-slate-400 dark:text-slate-500">{row.productCategory}</div>
+        )}
       </td>
       <td><StatusBadge badge={getMarketplacePlatformBadge(row.platformKind)} /></td>
       <td>
@@ -90,7 +116,12 @@ export function ListingRow({ row, canHaveType }: { row: ListingRowData; canHaveT
           {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{LISTING_STATUS_LABELS[s]}</option>)}
         </select>
       </td>
-      <td className="text-slate-500 dark:text-slate-400">{formatCurrency(row.productionCost)}</td>
+      <td className="text-slate-500 dark:text-slate-400">
+        {formatCurrency(row.productionCost)}
+        {row.format === 'KIT' && (
+          <span title="Soma automática dos itens do kit" className="ml-1 text-xs text-slate-400 dark:text-slate-500">Σ</span>
+        )}
+      </td>
       <td>
         <div className="flex items-center gap-1">
           <span className="text-xs text-slate-400">R$</span>
