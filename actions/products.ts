@@ -759,11 +759,13 @@ async function wouldCreateComponentCycle(parentProductId: string, componentProdu
 
 // Melhoria "Produto-como-componente": mirrors addProductAccessoryUsage/
 // removeProductAccessoryUsage acima, mas o "item" é outro Product (ex.:
-// Mosquetão dentro de Chaveiro Café) -- só produto composto tem
-// componente (mesma regra implícita de ProductPart), só produto ATIVO e
-// NÃO COMPOSTO pode ser componente (evita custo/ciclo recursivo de
-// "composto dentro de composto" nesta rodada -- dá pra remover essa
-// restrição depois), e o vínculo nunca pode fechar um ciclo.
+// Mosquetão dentro de Chaveiro Café) -- QUALQUER produto pode ter
+// componente, composto ou simples (productNeedsAssembly já trata
+// componentUsagesCount > 0 exatamente igual a insumo/acessório, lib/
+// products.ts), só produto ATIVO e NÃO COMPOSTO pode SER componente
+// (evita custo/ciclo recursivo de "composto dentro de composto" nesta
+// rodada -- dá pra remover essa restrição depois), e o vínculo nunca pode
+// fechar um ciclo.
 const componentUsageSchema = z.object({
   productId: z.string().min(1),
   componentProductId: z.string().min(1),
@@ -784,9 +786,6 @@ export async function addProductComponentUsage(formData: FormData): Promise<Acti
     prisma.product.findUnique({ where: { id: componentProductId } }),
   ])
   if (!parent || !component) return { success: false, error: 'Produto não encontrado.' }
-  if (!parent.isComposite) {
-    return { success: false, error: 'Só um produto composto pode ter componentes.' }
-  }
   if (!component.active) {
     return { success: false, error: 'Este produto está inativo -- reative-o antes de usá-lo como componente.' }
   }

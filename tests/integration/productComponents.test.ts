@@ -217,14 +217,23 @@ describe('Produto-como-componente: bloqueios e validações', () => {
     expect(result.success).toBe(false)
   })
 
-  it('rejeita produto pai não-composto tentando ter componente', async () => {
+  // Bug "N ESTÁ MAIS APARECENDO OS PRODUTOS": produto pai simples (não
+  // composto, mas que precisa de montagem por causa de insumo/acessório --
+  // ou, como aqui, só por ganhar este próprio componente-produto) tem que
+  // poder usar outro produto como componente igual um composto --
+  // productNeedsAssembly (lib/products.ts) já trata componentUsagesCount
+  // > 0 exatamente como insumo/acessório, independente de isComposite.
+  it('produto pai NÃO-composto também pode ter componente-produto', async () => {
     const { printer, azul, mosquetao } = await createMosquetao()
     const simpleParent = await prisma.product.create({
       data: { name: 'Produto simples', category: 'Chaveiro', printerId: printer.id, filamentId: azul.id, weightGrams: 5, printTimeHours: 0.1, laborTimeHours: 0 },
     })
 
     const result = await addProductComponentUsage(fd({ productId: simpleParent.id, componentProductId: mosquetao.id, quantity: '1' }))
-    expect(result.success).toBe(false)
+    expect(result.success).toBe(true)
+
+    const usage = await prisma.productComponentUsage.findFirstOrThrow({ where: { productId: simpleParent.id } })
+    expect(usage.componentProductId).toBe(mosquetao.id)
   })
 
   it('removeProductComponentUsage remove o vínculo e o componente some da ficha técnica', async () => {

@@ -330,7 +330,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               accessories={accessories.map((a) => ({ id: a.id, name: a.name, colorName: a.colorName }))}
               supplies={supplies.map((s) => ({ id: s.id, name: s.name, unit: s.unit, defaultUsage: s.defaultUsage?.toNumber() ?? null }))}
               packagingItems={packagingItems.map((p) => ({ id: p.id, name: p.name }))}
-              products={product.isComposite ? productOptions : []}
+              products={productOptions}
             />
           )}
 
