@@ -31,10 +31,7 @@ export function DemandQueuePanel({ rows }: { rows: OrderDemandRow[] }) {
           return (
             <div key={i} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
               <div className="min-w-0">
-                <p
-                  title={`orderItemId=${row.orderItemId} partId=${row.partId ?? ''} colorComboKey=${row.colorComboKey ?? ''} reserved=${row.reservedQuantity}/${row.quantity} debugPoolAvailable=${row.debugPoolAvailable ?? ''}`}
-                  className="truncate text-sm font-medium text-slate-900 dark:text-slate-100"
-                >
+                <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
                   {row.productName}{row.partName && <span className="text-slate-500 dark:text-slate-400"> — Peça: {row.partName}</span>}
                   {row.comboLabel && <span className="text-violet-600 dark:text-violet-400"> — {row.comboLabel}</span>}
                 </p>

@@ -144,6 +144,16 @@ export async function reconcileOrderReservations(
   // pedido genérico (getRawProductAvailable) em vez de tentar achar uma
   // variante "" que nunca existe (getRawVariantAvailable, sempre 0).
   const colorComboKey = colorComboKeyInput || null
+  // Bug "pedido nunca reconcilia mesmo com estoque pronto e recalcular
+  // manual": item CRIADO ANTES do fix acima pode ter colorComboKey = ""
+  // gravado de verdade no banco (nunca reescrito -- fato histórico), não
+  // NULL. A normalização acima só afeta o valor em memória usado daqui pra
+  // baixo -- `colorComboKey: null` no where vira `IS NULL` no SQL, que
+  // NUNCA bate com uma linha onde a coluna é literalmente "" -- esse item
+  // ficava invisível pra reconcileOrderReservations pra sempre (nem
+  // automática nem "Recalcular pedidos" nunca o alcançavam, mesmo com
+  // disponível > 0). OR cobre as duas formas de "sem cor" sem precisar
+  // reescrever o dado histórico.
   const [product, items] = await Promise.all([
     prisma.product.findUniqueOrThrow({
       where: { id: productId },
@@ -155,7 +165,11 @@ export async function reconcileOrderReservations(
     // A prioridade por prazo continua vindo de deliveryDate, que agora mora
     // no cabeçalho (Order) -- ordena pelo relacionamento.
     prisma.orderItem.findMany({
-      where: { productId, colorComboKey, status: { notIn: TERMINAL_STATUSES } },
+      where: {
+        productId,
+        ...(colorComboKey === null ? { OR: [{ colorComboKey: null }, { colorComboKey: '' }] } : { colorComboKey }),
+        status: { notIn: TERMINAL_STATUSES },
+      },
       include: { order: { select: { deliveryDate: true, orderNumber: true } } },
       orderBy: [{ order: { deliveryDate: 'asc' } }, { createdAt: 'asc' }],
     }),

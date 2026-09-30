@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 import { createOrder, cancelOrder, deleteOrder } from '@/actions/orders'
 import { createProductionRun } from '@/actions/productionRuns'
+import { reconcileAllPendingOrders } from '@/lib/orderReservations'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -113,6 +114,47 @@ describe('reconcileOrderReservations (via createOrder)', () => {
 
     const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
     expect(item.colorComboKey).toBeNull()
+    expect(item.status).toBe('PRONTO_RESERVADO')
+    expect(item.reservedQuantity).toBe(3)
+  })
+
+  // Bug "produção/montagem registrada mas pedido continua pendente pra
+  // sempre, nem 'Recalcular pedidos' resolve": o teste acima só cobre
+  // colorComboKey="" chegando via createOrder, que já normaliza pra null
+  // ANTES de gravar (fix "corrigido na origem" citado no comentário de
+  // orderReservations.ts) -- nunca reproduz uma linha GRAVADA como "" de
+  // verdade no banco, sobrevivente de ANTES desse fix existir (fato
+  // histórico, nunca reescrito). reconcileOrderReservations normalizava só
+  // o valor em memória e buscava `colorComboKey: null` (SQL "IS NULL"), que
+  // nunca bate com uma coluna que é literalmente "" -- esse item ficava
+  // invisível pra reconciliação PRA SEMPRE, nem "Recalcular pedidos"
+  // (reconcileAllPendingOrders, que só itera os pares (productId,
+  // colorComboKey) já existentes e re-chama a mesma função) alcançava.
+  it('bug "recalcular pedidos nunca resolve item legado com colorComboKey=\'\' gravado direto no banco"', async () => {
+    const { product, printer, filament } = await createSupportRecords()
+
+    // Bypassa createOrder de propósito -- grava "" direto via Prisma, como
+    // uma linha realmente legada, pra não passar pela normalização que
+    // createOrder já aplica hoje.
+    const order = await prisma.order.create({
+      data: {
+        channel: 'DIRETA',
+        orderDate: new Date('2026-09-01'),
+        deliveryDate: new Date('2026-09-20'),
+        items: { create: [{ productId: product.id, colorComboKey: '', quantity: 3, unitPrice: 30 }] },
+      },
+    })
+    const itemBefore = await prisma.orderItem.findFirstOrThrow({ where: { orderId: order.id } })
+    expect(itemBefore.colorComboKey).toBe('')
+    expect(itemBefore.status).toBe('AGUARDANDO_PRODUCAO')
+
+    await produce(product.id, printer.id, filament.id, '3')
+
+    // "Recalcular pedidos" (botão manual em Produção) deve alcançar esse
+    // item mesmo com "" gravado, não só colorComboKey null.
+    await reconcileAllPendingOrders()
+
+    const item = await prisma.orderItem.findUniqueOrThrow({ where: { id: itemBefore.id } })
     expect(item.status).toBe('PRONTO_RESERVADO')
     expect(item.reservedQuantity).toBe(3)
   })
