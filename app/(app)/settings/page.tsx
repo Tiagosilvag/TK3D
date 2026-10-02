@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { SettingsForm } from './SettingsForm'
 import type { PlatformFeeTier } from '@/lib/costing'
@@ -20,6 +21,25 @@ export default async function SettingsPage() {
       <p className="mb-4 -mt-2 text-xs text-slate-400 dark:text-slate-500">
         Gestão de tipos de acessório agora fica dentro do próprio cadastro, em Acessórios &rarr; Novo acessório &rarr; Tipo &rarr; Gerenciar tipos.
       </p>
+
+      {/* Mercado Livre: tela própria em /settings/integrations (precisa de
+          URL fixa pra receber o redirect OAuth, ver
+          app/api/integrations/mercado-livre/callback/route.ts) -- não dá
+          pra embutir inline em SettingsForm como accessory-types/
+          marketplace-platforms fizeram. */}
+      <div className="tk-panel mb-4 p-4">
+        <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Integrações</p>
+        <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+          Conectar contas de marketplace pra sincronizar anúncios e pedidos automaticamente.
+        </p>
+        <Link
+          href="/settings/integrations"
+          className="mt-2 inline-block text-sm font-medium text-violet-600 underline-offset-2 hover:underline dark:text-violet-400"
+        >
+          Integrações (Mercado Livre) &rarr;
+        </Link>
+      </div>
+
       <SettingsForm
         settings={{
           energyCostPerKwh: settings.energyCostPerKwh.toNumber(),
