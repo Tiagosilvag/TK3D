@@ -19,6 +19,10 @@ describe('notifications', () => {
     await createNotification({ type: 'NOVO_PEDIDO_MARKETPLACE', title: 'B', resourceType: 'MarketplaceOrderInbox', resourceId: 'inbox-2' })
     await resolveNotificationsForResource('MarketplaceOrderInbox', 'inbox-1')
     expect(await getUnresolvedCount()).toBe(1)
+    // Verify the remaining unresolved notification is the correct one (inbox-2, not inbox-1)
+    const unresolved = await prisma.notification.findMany({ where: { resolvedAt: null } })
+    expect(unresolved).toHaveLength(1)
+    expect(unresolved[0].resourceId).toBe('inbox-2')
   })
 
   it('markNotificationsSeen marca vistas e getUnseenNotifications para de devolvê-las', async () => {
