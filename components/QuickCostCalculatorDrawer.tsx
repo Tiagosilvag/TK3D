@@ -6,6 +6,7 @@ import { formatCurrency } from '@/lib/format'
 import { calculateQuickEstimate } from '@/lib/quickCalc'
 import { getQuickCalculatorData, createProductFromQuickCalc, type QuickCalculatorData } from '@/actions/quickCalculator'
 import { NavCalculatorIcon } from '@/components/NavIcons'
+import { HoursInput } from '@/components/HoursInput'
 
 const WEIGHT_PRESETS_GRAMS = [5, 10, 20, 50, 100]
 const TIME_PRESETS_MIN = [15, 30, 60, 120, 240]
@@ -245,7 +246,11 @@ export function QuickCostCalculatorButton() {
                           <button key={m} type="button" onClick={() => setPrintTimeHours(m / 60)} className={chipClass(Math.round(printTimeHours * 60) === m)}>{formatDuration(m / 60)}</button>
                         ))}
                       </div>
-                      <Stepper value={printTimeHours} onChange={setPrintTimeHours} step={15 / 60} min={15 / 60} format={formatDuration} />
+                      {/* HH:MM digitável -- os chips acima só cobrem durações
+                          redondas, qualquer tempo exato (ex.: 37min, 1h23)
+                          precisa de digitação livre, mesmo campo HH:MM usado
+                          no resto do app (ProductForm/ProductPartRow). */}
+                      <HoursInput value={printTimeHours} onChange={setPrintTimeHours} className="tk-input w-20 text-center" />
                     </div>
                     <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
                       Custo impressora (média {data.printers.length} cadastrada{data.printers.length === 1 ? '' : 's'}): {formatCurrency(breakdown.printerCost)}
@@ -288,7 +293,7 @@ export function QuickCostCalculatorButton() {
                           <button key={m} type="button" onClick={() => setLaborTimeHours(m / 60)} className={chipClass(Math.round(laborTimeHours * 60) === m)}>{m}min</button>
                         ))}
                       </div>
-                      <Stepper value={laborTimeHours} onChange={setLaborTimeHours} step={5 / 60} min={0} format={formatDuration} />
+                      <HoursInput value={laborTimeHours} onChange={setLaborTimeHours} className="tk-input w-20 text-center" />
                     </div>
                     <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Custo mão de obra: {formatCurrency(breakdown.laborCost)}</p>
                   </div>
