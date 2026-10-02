@@ -12,18 +12,31 @@ function extractOrderId(resource: string): string | null {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  let payload: MLWebhookPayload
+  let payload: unknown
   try {
     payload = await request.json()
-  } catch {
+  } catch (err) {
+    console.debug('[mercadoLivre] webhook com JSON inválido', { err })
     return NextResponse.json({ ok: true }, { status: 200 })
   }
 
-  if (payload.topic !== 'orders_v2') {
+  // Validar estrutura do payload: deve ser object, não null, com topic e resource strings
+  if (
+    typeof payload !== 'object' ||
+    payload === null ||
+    typeof (payload as Record<string, unknown>).topic !== 'string' ||
+    typeof (payload as Record<string, unknown>).resource !== 'string'
+  ) {
     return NextResponse.json({ ok: true }, { status: 200 })
   }
 
-  const orderId = extractOrderId(payload.resource ?? '')
+  const typedPayload = payload as MLWebhookPayload
+
+  if (typedPayload.topic !== 'orders_v2') {
+    return NextResponse.json({ ok: true }, { status: 200 })
+  }
+
+  const orderId = extractOrderId(typedPayload.resource)
   if (!orderId) {
     return NextResponse.json({ ok: true }, { status: 200 })
   }
@@ -31,7 +44,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     await processOrderNotification(orderId)
   } catch (err) {
-    console.error('[mercadoLivre] falha ao processar webhook de pedido:', err)
+    console.error('[mercadoLivre] falha ao processar webhook de pedido', {
+      orderId,
+      topic: typedPayload.topic,
+      resource: typedPayload.resource,
+      err,
+    })
   }
 
   return NextResponse.json({ ok: true }, { status: 200 })

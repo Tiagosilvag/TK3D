@@ -37,7 +37,8 @@ describe('webhook do Mercado Livre', () => {
 
     const response = await POST(makeRequest({ topic: 'orders_v2', resource: '/orders/777' }) as never)
     expect(response.status).toBe(200)
-    expect(await prisma.marketplaceOrderInbox.count()).toBe(1)
+    const inbox = await prisma.marketplaceOrderInbox.findFirst()
+    expect(inbox?.externalOrderId).toBe('777')
   })
 
   it('devolve 200 mesmo se processOrderNotification falhar (nunca derruba, ML reenviaria em loop com erro)', async () => {
@@ -46,10 +47,28 @@ describe('webhook do Mercado Livre', () => {
     expect(response.status).toBe(200)
   })
 
-  it('devolve 200 com corpo malformado', async () => {
+  it('devolve 200 com corpo malformado (JSON inválido)', async () => {
     const response = await POST(
       new Request('https://tk3d.coffetech.com.br/api/webhooks/mercado-livre', { method: 'POST', body: 'não é json' }) as never
     )
     expect(response.status).toBe(200)
+  })
+
+  it('devolve 200 com corpo null (JSON válido mas payload inválido)', async () => {
+    const response = await POST(makeRequest(null) as never)
+    expect(response.status).toBe(200)
+    expect(await prisma.marketplaceOrderInbox.count()).toBe(0)
+  })
+
+  it('devolve 200 quando resource não é string (JSON válido mas tipo inválido)', async () => {
+    const response = await POST(makeRequest({ topic: 'orders_v2', resource: 123 }) as never)
+    expect(response.status).toBe(200)
+    expect(await prisma.marketplaceOrderInbox.count()).toBe(0)
+  })
+
+  it('devolve 200 quando topic não é string (JSON válido mas tipo inválido)', async () => {
+    const response = await POST(makeRequest({ topic: ['orders_v2'], resource: '/orders/555' }) as never)
+    expect(response.status).toBe(200)
+    expect(await prisma.marketplaceOrderInbox.count()).toBe(0)
   })
 })
