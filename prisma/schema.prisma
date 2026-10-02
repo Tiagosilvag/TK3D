@@ -991,6 +991,63 @@ model ListingKitItem {
   @@unique([listingId, productId])
 }
 
+enum MarketplaceConnectionStatus {
+  CONECTADA
+  DESCONECTADA
+}
+
+model MarketplaceConnection {
+  id             String                      @id @default(cuid())
+  platform       MarketplacePlatformKind     @unique
+  sellerId       String
+  accessToken    String
+  refreshToken   String
+  tokenExpiresAt DateTime
+  status         MarketplaceConnectionStatus @default(CONECTADA)
+  connectedAt    DateTime                    @default(now())
+  lastError      String?
+  updatedAt      DateTime                    @updatedAt
+}
+
+enum MarketplaceOrderInboxStatus {
+  PENDENTE
+  CONFIRMADO
+  IGNORADO
+}
+
+model MarketplaceOrderInbox {
+  id               String                      @id @default(cuid())
+  platform         MarketplacePlatformKind
+  externalOrderId  String
+  buyerName        String?
+  totalAmount      Decimal                     @db.Decimal(10, 2)
+  items            Json
+  status           MarketplaceOrderInboxStatus @default(PENDENTE)
+  confirmedOrderId String?                     @unique
+  confirmedOrder   Order?                      @relation(fields: [confirmedOrderId], references: [id])
+  receivedAt       DateTime                    @default(now())
+  updatedAt        DateTime                    @updatedAt
+
+  @@unique([platform, externalOrderId])
+}
+
+enum NotificationType {
+  NOVO_PEDIDO_MARKETPLACE
+}
+
+model Notification {
+  id           String           @id @default(cuid())
+  type         NotificationType
+  title        String
+  body         String?
+  link         String?
+  resourceType String?
+  resourceId   String?
+  seenAt       DateTime?
+  resolvedAt   DateTime?
+  createdAt    DateTime         @default(now())
+}
+
 model Sale {
   id              String      @id @default(cuid())
   channel         SaleChannel
@@ -1153,6 +1210,7 @@ model Order {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   items           OrderItem[]
+  inboxEntries    MarketplaceOrderInbox[]
 }
 
 // 1 produto+cor+quantidade+preço pedido, com seu próprio ciclo de vida
