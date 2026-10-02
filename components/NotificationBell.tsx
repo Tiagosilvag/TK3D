@@ -16,11 +16,15 @@ interface UnseenNotification {
 // AppLayoutClient.tsx são duas regiões de nav distintas por breakpoint, e
 // um elemento fixed sidesteps essa diferença (ver brief da Task 9). Bolinha
 // vermelha (`.tk-notification-dot`) só aparece com unresolvedCount > 0.
-// Modal "Novidades" abre uma vez quando existe notificação não vista
-// (useState inicializado só na primeira renderização) e marca como vista
-// ao fechar -- nunca reabre sozinha pra essa mesma leva (getUnseenNotifications
-// só retorna o que ainda não foi marcado, e o layout só reconstrói `unseen`
-// a cada navegação/revalidate).
+// Modal "Novidades" abre quando existe notificação não vista e marca como
+// vista ao fechar -- nunca reabre sozinha pra essa MESMA leva
+// (getUnseenNotifications só retorna o que ainda não foi marcado). O
+// `useState` só inicializa na montagem, então pra reabrir quando uma
+// Notification GENUINAMENTE NOVA chega depois (pedido importante, já que
+// layout.tsx é compartilhado e o App Router nunca remonta sozinho entre
+// navegações), app/(app)/layout.tsx passa `key={unseenIds.join(',')}` --
+// o conjunto de ids não vistos mudando força o remount que reinicializa
+// este useState. Ver comentário em layout.tsx.
 export function NotificationBell({ unresolvedCount, unseen }: { unresolvedCount: number; unseen: UnseenNotification[] }) {
   const [modalOpen, setModalOpen] = useState(unseen.length > 0)
 
