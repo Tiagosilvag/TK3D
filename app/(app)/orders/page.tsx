@@ -2,11 +2,13 @@ import { prisma } from '@/lib/prisma'
 import { getProductVariantStockOptions } from '@/lib/reports'
 import { resolveOrderItemColorLabel } from '@/actions/orders'
 import { OrdersExplorer, type OrderRow } from './OrdersExplorer'
+import { MarketplaceInboxSection } from './MarketplaceInboxSection'
+import type { MarketplaceOrderInboxItem } from '@/lib/mercadoLivre/orders'
 
 export const dynamic = 'force-dynamic'
 
 export default async function OrdersPage() {
-  const [orders, variantProducts, filaments] = await Promise.all([
+  const [orders, variantProducts, filaments, pendingInbox] = await Promise.all([
     prisma.order.findMany({
       orderBy: { deliveryDate: 'asc' },
       include: {
@@ -27,6 +29,9 @@ export default async function OrdersPage() {
     // filamento precisa ter estoque > 0 agora, produzida antes ou não (ver
     // filtro de `products` abaixo).
     prisma.filament.findMany({ select: { id: true, currentStockGrams: true } }),
+    // Caixa de entrada de pedidos Mercado Livre (Task 10): linhas criadas
+    // pelo webhook/poller (Tasks 7-9) esperando confirmação humana.
+    prisma.marketplaceOrderInbox.findMany({ where: { status: 'PENDENTE' }, orderBy: { receivedAt: 'asc' } }),
   ])
   const filamentStockById = new Map(filaments.map((f) => [f.id, f.currentStockGrams.toNumber()]))
 
@@ -97,9 +102,18 @@ export default async function OrdersPage() {
     }),
   }))
 
+  const pendingOrders = pendingInbox.map((inbox) => ({
+    id: inbox.id,
+    externalOrderId: inbox.externalOrderId,
+    buyerName: inbox.buyerName,
+    totalAmount: inbox.totalAmount.toNumber(),
+    items: inbox.items as unknown as MarketplaceOrderInboxItem[],
+  }))
+
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Pedidos</h1>
+      <MarketplaceInboxSection pendingOrders={pendingOrders} products={products} />
       <OrdersExplorer rows={rows} products={products} />
     </div>
   )
