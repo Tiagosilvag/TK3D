@@ -5,6 +5,7 @@ import { getValidAccessToken, saveConnection } from '@/lib/mercadoLivre/connecti
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
 beforeEach(async () => {
+  process.env.BAMBU_CREDENTIAL_KEY = 'a'.repeat(64)
   await prisma.marketplaceConnection.deleteMany()
 })
 afterEach(() => {
