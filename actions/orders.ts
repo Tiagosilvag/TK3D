@@ -11,6 +11,7 @@ import { productNeedsAssembly } from '@/lib/products'
 import { getAssemblyStatus, type AssemblyPartColorOption } from '@/actions/assembly'
 import { serializeColorChoices, deserializeColorChoices } from '@/lib/reports'
 import { reconcileOrderReservations, reconcileAllPendingOrders, type OrderReallocationEvent } from '@/lib/orderReservations'
+import { areAllItemsTerminal, resolveNotificationsForResource } from '@/lib/notifications'
 import { revalidatePath } from 'next/cache'
 import { Prisma } from '@prisma/client'
 import type { OrderChannel, OrderStatus, SaleChannel } from '@prisma/client'
@@ -287,6 +288,24 @@ const ORDER_CHANNEL_PLATFORM_LABEL: Record<OrderChannel, string> = {
 
 const updateStatusSchema = z.object({ status: orderStatusEnum })
 
+// Sino de notificações (Task 9): quando um OrderItem chega num status
+// terminal (ENTREGUE ou CANCELADO), checa se TODOS os itens do mesmo
+// pedido já são terminais -- se sim, resolve a notificação genérica
+// vinculada ao MarketplaceOrderInbox que originou este pedido (se algum;
+// pedido criado manualmente, sem origem de marketplace, nunca tem
+// inbox e não faz nada aqui). Extraído num helper porque
+// updateOrderItemStatus tem DOIS caminhos de retorno que atualizam
+// OrderItem.status (o early-return de status != ENTREGUE/com saleId, e o
+// caminho que cria a Sale) -- os dois precisam rodar esta checagem, sem
+// duplicar a lógica.
+async function resolveMarketplaceNotificationIfTerminal(orderId: string, status: OrderStatus): Promise<void> {
+  if (status !== 'ENTREGUE' && status !== 'CANCELADO') return
+  const siblingItems = await prisma.orderItem.findMany({ where: { orderId }, select: { status: true } })
+  if (!areAllItemsTerminal(siblingItems.map((s) => s.status))) return
+  const inbox = await prisma.marketplaceOrderInbox.findUnique({ where: { confirmedOrderId: orderId } })
+  if (inbox) await resolveNotificationsForResource('MarketplaceOrderInbox', inbox.id)
+}
+
 // Muda o status de um ITEM do pedido (não o pedido inteiro -- cada item
 // tem seu próprio ciclo de vida desde "Pedidos com múltiplos itens"); ao
 // chegar em ENTREGUE pela primeira vez (nunca se já tiver saleId --
@@ -305,6 +324,7 @@ export async function updateOrderItemStatus(id: string, formData: FormData): Pro
 
   if (parsed.data.status !== 'ENTREGUE' || item.saleId) {
     await prisma.orderItem.update({ where: { id }, data: { status: parsed.data.status } })
+    await resolveMarketplaceNotificationIfTerminal(item.orderId, parsed.data.status)
     revalidatePath('/orders')
     return { success: true }
   }
@@ -349,6 +369,7 @@ export async function updateOrderItemStatus(id: string, formData: FormData): Pro
   // que este item só chega aqui com reservedQuantity == quantity, mas
   // roda mesmo assim por segurança/consistência).
   await reconcileOrderReservations(item.productId, item.colorComboKey)
+  await resolveMarketplaceNotificationIfTerminal(item.orderId, 'ENTREGUE')
 
   revalidatePath('/orders')
   revalidatePath('/sales')
