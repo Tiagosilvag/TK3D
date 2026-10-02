@@ -1,6 +1,8 @@
 import { buildAuthorizationUrl } from '@/lib/mercadoLivre/auth'
-import { getConnectionStatus } from '@/lib/mercadoLivre/connection'
+import { getConnectionStatus, getValidAccessToken } from '@/lib/mercadoLivre/connection'
+import { fetchActiveListings, type MLListingSummary } from '@/lib/mercadoLivre/listings'
 import { disconnectMercadoLivre } from '@/actions/mercadoLivreAuth'
+import { formatCurrency } from '@/lib/format'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,6 +23,17 @@ export default async function IntegrationsPage({
 }) {
   const { conectado, erro } = await searchParams
   const connection = await getConnectionStatus()
+
+  let listings: MLListingSummary[] | null = null
+  let listingsError = false
+  if (connection?.status === 'CONECTADA') {
+    try {
+      const token = await getValidAccessToken()
+      listings = await fetchActiveListings(token, connection.sellerId)
+    } catch {
+      listingsError = true
+    }
+  }
 
   return (
     <div className="tk-page">
@@ -61,6 +74,42 @@ export default async function IntegrationsPage({
           </div>
         )}
       </section>
+
+      {connection?.status === 'CONECTADA' && (
+        <section className="tk-panel mt-6 p-4">
+          <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Anúncios ativos no Mercado Livre</h2>
+          {listingsError ? (
+            <p className="mt-4 text-sm text-red-600 dark:text-red-400">Não foi possível carregar os anúncios agora.</p>
+          ) : listings && listings.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">Nenhum anúncio ativo encontrado.</p>
+          ) : listings ? (
+            <table className="mt-3 w-full text-sm">
+              <thead>
+                <tr className="tk-table-head-row">
+                  <th className="py-2">Título</th>
+                  <th>Preço</th>
+                  <th>Estoque anunciado</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {listings.map((listing) => (
+                  <tr key={listing.id} className="tk-row">
+                    <td className="py-2">{listing.title}</td>
+                    <td>{formatCurrency(listing.price)}</td>
+                    <td>{listing.availableQuantity}</td>
+                    <td>
+                      <a href={listing.permalink} target="_blank" rel="noopener noreferrer" className="tk-link-success">
+                        Ver anúncio
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : null}
+        </section>
+      )}
     </div>
   )
 }
