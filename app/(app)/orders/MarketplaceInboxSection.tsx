@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { ComboSelect } from '../assembly/ComboSelect'
 import { confirmInboxOrder, ignoreInboxOrder } from '@/actions/mercadoLivreOrders'
 import type { OrderProductOption } from './OrderForm'
@@ -48,6 +49,7 @@ export function MarketplaceInboxSection({ pendingOrders, products }: { pendingOr
 }
 
 function InboxOrderRow({ order, products }: { order: InboxOrder; products: OrderProductOption[] }) {
+  const router = useRouter()
   const [mappings, setMappings] = useState<Record<string, { productId: string; colorComboKey: string | null }>>({})
 
   function setProduct(externalItemId: string, productId: string) {
@@ -72,11 +74,16 @@ function InboxOrderRow({ order, products }: { order: InboxOrder; products: Order
       return
     }
     const result = await confirmInboxOrder(order.id, ordered)
-    if (!result.success) alert(result.error)
+    if (!result.success) {
+      alert(result.error)
+      return
+    }
+    router.refresh()
   }
 
   async function handleIgnore() {
     await ignoreInboxOrder(order.id)
+    router.refresh()
   }
 
   return (
