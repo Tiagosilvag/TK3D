@@ -27,6 +27,7 @@ import {
   NavUserIcon,
   NavLogoutIcon,
 } from '@/components/NavIcons'
+import { QuickCostCalculatorButton } from '@/components/QuickCostCalculatorDrawer'
 
 type IconComponent = (props: { className?: string }) => React.ReactElement
 
@@ -261,6 +262,13 @@ export function AppLayoutClient({
               <ProtagonistLink key={link.href} {...link} active={isActive(pathname, link.href)} />
             ))}
           </div>
+
+          {/* Melhoria "Calculadora rápida de custo de produto": acesso global,
+              de qualquer tela -- vive na barra lateral (presente em toda
+              página autenticada), não dentro de nenhum módulo específico,
+              acima da divisória dos Protagonists pra ficar sempre visível
+              sem precisar abrir nenhuma seção colapsável. */}
+          <QuickCostCalculatorButton />
 
           <div className="my-3 border-t border-slate-200 dark:border-slate-800" />
 

@@ -193,6 +193,27 @@ export function NavSettingsIcon({ className }: { className?: string }) {
   )
 }
 
+// Melhoria "Calculadora rápida de custo de produto": ícone de calculadora
+// (corpo + tela + grade de botões) pro botão global na barra lateral, mesmo
+// estilo stroke/viewBox 20x20 do resto deste arquivo.
+export function NavCalculatorIcon({ className }: { className?: string }) {
+  return (
+    <svg {...common} className={className} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="2.5" width="12" height="15" rx="1.4" />
+      <line x1="6.5" y1="5.5" x2="13.5" y2="5.5" />
+      <circle cx="6.8" cy="9.2" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="9.2" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="13.2" cy="9.2" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="6.8" cy="12.2" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="12.2" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="13.2" cy="12.2" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="6.8" cy="15.2" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="15.2" r="0.9" fill="currentColor" stroke="none" />
+      <circle cx="13.2" cy="15.2" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
 export function NavUserIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" className={className} aria-hidden>
