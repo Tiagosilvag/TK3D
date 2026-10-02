@@ -70,6 +70,22 @@ export async function exchangeCodeForTokens(code: string): Promise<MLTokenRespon
   return parseTokenResponse(raw)
 }
 
+// Finding 3a (revisão final da integração Mercado Livre): getValidAccessToken
+// (lib/mercadoLivre/connection.ts) precisa distinguir um refresh token
+// REALMENTE revogado/expirado (ML responde 400/401 -- invalid_grant/
+// invalid_token) de uma falha transitória (5xx, 429, erro de rede) -- só o
+// primeiro caso deve forçar DESCONECTADA. Carrega o status HTTP (quando
+// existe) no próprio erro lançado, pra quem chama decidir sem precisar
+// reconstruir a lógica de "o response não tava ok".
+export class MLRefreshError extends Error {
+  status: number | null
+  constructor(message: string, status: number | null) {
+    super(message)
+    this.name = 'MLRefreshError'
+    this.status = status
+  }
+}
+
 export async function refreshAccessToken(refreshToken: string): Promise<MLTokenResponse> {
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
@@ -82,7 +98,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<MLTokenR
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body: body.toString(),
   })
-  if (!response.ok) throw new Error('Falha ao renovar token do Mercado Livre')
+  if (!response.ok) throw new MLRefreshError('Falha ao renovar token do Mercado Livre', response.status)
   const raw = (await response.json()) as RawTokenResponse
   return parseTokenResponse(raw)
 }

@@ -391,6 +391,14 @@ export async function cancelOrder(id: string): Promise<ActionResult> {
     return { success: false, error: 'Nenhum item pendente pra cancelar (já entregue ou cancelado).' }
   }
   await prisma.orderItem.updateMany({ where: { id: { in: targets.map((t) => t.id) } }, data: { status: 'CANCELADO' } })
+  // Finding 2 (revisão final da integração Mercado Livre): cancela via
+  // updateMany direto (não passa por updateOrderItemStatus), então nunca
+  // chamava resolveMarketplaceNotificationIfTerminal -- a notificação do
+  // sino ficava presa mesmo com o pedido inteiro cancelado. Todo item alvo
+  // de UMA chamada de cancelOrder pertence ao MESMO `order` (buscado por id
+  // acima), então 1 chamada basta -- `targets.length > 0` já está
+  // garantido pelo early-return logo acima.
+  await resolveMarketplaceNotificationIfTerminal(order.id, 'CANCELADO')
 
   const distinctPairs = new Map<string, { productId: string; colorComboKey: string | null }>()
   for (const t of targets) distinctPairs.set(`${t.productId}::${t.colorComboKey ?? ''}`, t)
@@ -427,6 +435,19 @@ export async function deleteOrder(id: string): Promise<ActionResult> {
   const pairs = new Map<string, { productId: string; colorComboKey: string | null }>()
   for (const i of order.items) pairs.set(`${i.productId}::${i.colorComboKey ?? ''}`, i)
 
+  // Finding 2 (revisão final da integração Mercado Livre): apagar o Order
+  // faz ON DELETE SET NULL em MarketplaceOrderInbox.confirmedOrderId
+  // (prisma/schema.prisma) -- depois disso a linha do inbox fica
+  // impossível de achar por confirmedOrderId pra sempre, e a notificação
+  // vinculada a ela nunca mais resolveria. Busca a linha ANTES do delete
+  // (senão a FK já zerou o vínculo e a busca não acharia nada), mas só
+  // resolve a notificação DEPOIS que o delete realmente tiver sucesso --
+  // se o delete falhar (RESTRICT de OrderReallocation, abaixo) o pedido
+  // continua existindo e a notificação não deve ser mexida. O pedido está
+  // sendo destruído de vez, então não tem sentido checar terminalidade de
+  // item nenhum aqui (nada sobra pra acompanhar).
+  const linkedInbox = await prisma.marketplaceOrderInbox.findUnique({ where: { confirmedOrderId: id } })
+
   try {
     await prisma.order.delete({ where: { id } })
   } catch (err) {
@@ -435,6 +456,8 @@ export async function deleteOrder(id: string): Promise<ActionResult> {
     }
     throw err
   }
+
+  if (linkedInbox) await resolveNotificationsForResource('MarketplaceOrderInbox', linkedInbox.id)
 
   for (const { productId, colorComboKey } of pairs.values()) {
     await reconcileOrderReservations(productId, colorComboKey)

@@ -6,6 +6,11 @@ import { saveConnection } from '@/lib/mercadoLivre/connection'
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
 beforeEach(async () => {
+  // Finding 6 (revisão final): mesmo defeito de setup que o fix do Task 3
+  // já corrigiu em mercadoLivreConnection.test.ts -- saveConnection cifra
+  // os tokens (lib/crypto.ts) e precisa de BAMBU_CREDENTIAL_KEY no
+  // ambiente; sem isso, este teste falharia contra um banco real.
+  process.env.BAMBU_CREDENTIAL_KEY = 'a'.repeat(64)
   await prisma.notification.deleteMany()
   await prisma.marketplaceOrderInbox.deleteMany()
   await prisma.marketplaceConnection.deleteMany()

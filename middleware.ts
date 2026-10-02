@@ -14,9 +14,23 @@ function isPublicAsset(pathname: string): boolean {
   return pathname.startsWith('/brand/') || pathname === '/icon.png'
 }
 
+// Finding 1 (revisão final da integração Mercado Livre): webhooks de
+// marketplace (POST do ML em /api/webhooks/mercado-livre, e qualquer
+// outro que venha a existir em /api/webhooks/*) chegam sem o cookie
+// `session` -- são requisições servidor-a-servidor, nunca um navegador
+// autenticado. Sem esta isenção, toda entrega virava um 307 pro /login
+// e o route handler NUNCA rodava: o webhook ficava inalcançável em
+// produção (ML reenviaria e poderia até desativar o tópico), sobrando só
+// o poller de 5 minutos pra notar pedidos novos. Prefixo (não o path
+// literal do ML) pra cobrir automaticamente um futuro webhook de outra
+// plataforma (ex.: Shopee) sem precisar editar o middleware de novo.
+function isWebhookPath(pathname: string): boolean {
+  return pathname.startsWith('/api/webhooks/')
+}
+
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
-  if (pathname.startsWith('/login') || pathname.startsWith('/api/login') || pathname.startsWith('/_next') || isPublicAsset(pathname)) {
+  if (pathname.startsWith('/login') || pathname.startsWith('/api/login') || pathname.startsWith('/_next') || isPublicAsset(pathname) || isWebhookPath(pathname)) {
     return NextResponse.next()
   }
   const token = req.cookies.get('session')?.value ?? ''

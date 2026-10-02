@@ -24,6 +24,23 @@ export default async function IntegrationsPage({
   const { conectado, erro } = await searchParams
   const connection = await getConnectionStatus()
 
+  // Finding 7 (revisão final da integração Mercado Livre): buildAuthorizationUrl
+  // lança se MERCADOLIVRE_CLIENT_ID/REDIRECT_URI não estiverem configuradas
+  // -- um estado real logo depois do deploy (§2 do spec trata criar o App
+  // ML / setar as vars como um passo "fazer depois"). Chamar isso direto no
+  // render derrubava a página de Configurações inteira antes do usuário
+  // sequer ver a tela. Calcula a URL (ou o motivo de não dar) uma vez só,
+  // usada só quando for realmente preciso mostrar o botão "Conectar".
+  let authorizationUrl: string | null = null
+  let authorizationUrlError: string | null = null
+  if (!connection || connection.status === 'DESCONECTADA') {
+    try {
+      authorizationUrl = buildAuthorizationUrl()
+    } catch {
+      authorizationUrlError = 'Configure as variáveis de ambiente MERCADOLIVRE_CLIENT_ID/CLIENT_SECRET/REDIRECT_URI antes de conectar.'
+    }
+  }
+
   let listings: MLListingSummary[] | null = null
   let listingsError = false
   if (connection?.status === 'CONECTADA') {
@@ -51,9 +68,13 @@ export default async function IntegrationsPage({
                 Conexão perdida{connection.lastError ? `: ${connection.lastError}` : ''}. Reconecte abaixo.
               </p>
             )}
-            <a href={buildAuthorizationUrl()} className="tk-btn-primary">
-              Conectar Mercado Livre
-            </a>
+            {authorizationUrlError ? (
+              <p className="text-sm text-red-600 dark:text-red-400">{authorizationUrlError}</p>
+            ) : (
+              <a href={authorizationUrl!} className="tk-btn-primary">
+                Conectar Mercado Livre
+              </a>
+            )}
           </div>
         ) : (
           <div className="mt-4 text-sm text-slate-700 dark:text-slate-300">
