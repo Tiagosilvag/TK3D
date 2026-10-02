@@ -42,4 +42,6 @@ export async function register() {
   await startAnycubicListener().catch((err) => {
     console.error('[anycubic] falha ao iniciar o listener MQTT:', err)
   })
+  const { startMercadoLivreReconciliationPoller } = await import('@/lib/mercadoLivre/reconciliationPoller')
+  startMercadoLivreReconciliationPoller()
 }
