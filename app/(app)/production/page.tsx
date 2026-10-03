@@ -323,7 +323,7 @@ export default async function ProductionPage({
         newRunPartId={newRunPartId}
         newRunQty={newRunQty ? parseInt(newRunQty, 10) || undefined : undefined}
         newRunFilamentId={newRunFilamentId}
-        products={products.map((p) => ({ id: p.id, name: p.name }))}
+        products={products.map((p) => ({ id: p.id, name: p.name, category: p.category }))}
         printers={printers.map((p) => {
           const purchasePrice = p.purchasePrice.toNumber()
           const depreciationHours = p.depreciationHours.toNumber()

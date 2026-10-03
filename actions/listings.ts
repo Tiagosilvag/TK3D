@@ -257,7 +257,7 @@ export type ListingsPageData = {
   // plataforma) mesmo já tendo um em Shopee, por exemplo.
   // Melhoria "Anúncios: Kit": productionCost junto pra montagem calcular o
   // total do kit ao vivo no cliente, sem round-trip por item alterado.
-  allProducts: { id: string; name: string; productionCost: number }[]
+  allProducts: { id: string; name: string; category: string; productionCost: number }[]
   // Melhoria "Anúncios: calculadora de preço pelo lucro desejado": taxa%/
   // fixa/faixas de cada plataforma, pra recalcular taxa/lucro ao vivo no
   // cliente conforme o vendedor ajusta preço/lucro desejado no painel de
@@ -294,7 +294,7 @@ export async function getListingsPageData(): Promise<ListingsPageData> {
       orderBy: { createdAt: 'desc' },
     }),
     prisma.product.findMany({ where: { ...SELLABLE_PRODUCT_WHERE, listings: { none: {} } }, orderBy: { name: 'asc' } }),
-    prisma.product.findMany({ where: SELLABLE_PRODUCT_WHERE, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    prisma.product.findMany({ where: SELLABLE_PRODUCT_WHERE, orderBy: { name: 'asc' }, select: { id: true, name: true, category: true } }),
   ])
 
   // Custo de produção é caro de recalcular (soma peças/insumos/acessórios) --
@@ -406,7 +406,7 @@ export async function getListingsPageData(): Promise<ListingsPageData> {
   return {
     listings: listingRows,
     productsWithoutListing,
-    allProducts: allProducts.map((p) => ({ id: p.id, name: p.name, productionCost: breakdownByProduct.get(p.id)?.finalCost ?? 0 })),
+    allProducts: allProducts.map((p) => ({ id: p.id, name: p.name, category: p.category, productionCost: breakdownByProduct.get(p.id)?.finalCost ?? 0 })),
     platforms: platforms.map((p) => ({
       id: p.id,
       kind: p.platform,

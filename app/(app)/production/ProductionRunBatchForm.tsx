@@ -16,7 +16,7 @@ import type { WasteReason } from '@prisma/client'
 
 const WASTE_REASON_OPTIONS = Object.keys(WASTE_REASON_LABELS) as WasteReason[]
 
-type Option = { id: string; name: string }
+type Option = { id: string; name: string; category?: string }
 // Melhoria "Registrar produção" (rateio ao vivo): impressora carrega seu
 // custo/hora (depreciação + manutenção + energia) já calculado no server --
 // usado só pro campo informativo e pela prévia de rateio da Plate, nunca

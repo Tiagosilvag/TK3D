@@ -11,7 +11,7 @@ import { deleteProductionRun, getPlateDetail, type ProductionByProductRow, type 
 import { ProductionRunBatchForm } from './ProductionRunBatchForm'
 import type { ProductionStatus } from '@prisma/client'
 
-type Option = { id: string; name: string }
+type Option = { id: string; name: string; category?: string }
 // Melhoria "Registrar produção" (rateio ao vivo): impressora carrega seu
 // custo/hora (depreciação + manutenção + energia) já calculado no server
 // (mesma fórmula de products/[id]/page.tsx#printerOptions), pra

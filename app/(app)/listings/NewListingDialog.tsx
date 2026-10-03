@@ -41,7 +41,7 @@ export function NewListingDialog({
   presetProductId,
   trigger,
 }: {
-  products: { id: string; name: string; productionCost: number }[]
+  products: { id: string; name: string; category: string; productionCost: number }[]
   platforms: { id: string; kind: 'SHOPEE' | 'MERCADO_LIVRE' }[]
   presetProductId?: string
   trigger: React.ReactNode

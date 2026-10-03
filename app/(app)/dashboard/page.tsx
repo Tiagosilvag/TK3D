@@ -145,7 +145,7 @@ export default async function DashboardPage({
     getFailuresByWasteReason(productionFilters),
     getPrinterUsage(productionFilters),
     // Brinde nunca tem produção -- excluído do filtro.
-    prisma.product.findMany({ where: { isGift: false }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    prisma.product.findMany({ where: { isGift: false }, orderBy: { name: 'asc' }, select: { id: true, name: true, category: true } }),
     prisma.printer.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     prisma.supply.findMany({ include: { purchases: { orderBy: { purchaseDate: 'desc' } } }, orderBy: { name: 'asc' } }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),

@@ -5,6 +5,11 @@ import { createPortal } from 'react-dom'
 export interface ProductSelectOption {
   id: string
   name: string
+  // Bug "não dá pra saber qual produto é" (nomes duplicados, ex.: duas
+  // peças "ESTRELA" de categorias diferentes): opcional -- call sites sem
+  // a categoria à mão continuam funcionando igual, só não ganham o rótulo
+  // extra. Mostrado como sufixo discreto, nunca no lugar do nome.
+  category?: string
 }
 
 // Melhoria "busca no seletor de produto": mesmo padrão de
@@ -95,7 +100,10 @@ export function ProductSelect({
         disabled={disabled}
         className={`flex items-center justify-between gap-2 text-left ${disabled ? 'opacity-60' : ''} ${className}`}
       >
-        <span className={`truncate ${selected ? '' : 'text-slate-400 dark:text-slate-500'}`}>{selected ? selected.name : placeholder}</span>
+        <span className={`truncate ${selected ? '' : 'text-slate-400 dark:text-slate-500'}`}>
+          {selected ? selected.name : placeholder}
+          {selected?.category && <span className="text-slate-400 dark:text-slate-500"> · {selected.category}</span>}
+        </span>
         <span className="shrink-0 text-slate-400">▾</span>
       </button>
       {name && <input type="hidden" name={name} value={currentValue} />}
@@ -128,7 +136,8 @@ export function ProductSelect({
                       onClick={() => pick(o.id)}
                       className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 ${o.id === currentValue ? 'bg-violet-50 dark:bg-violet-500/10' : ''}`}
                     >
-                      <span className="truncate">{o.name}</span>
+                      <span className="min-w-0 flex-1 truncate">{o.name}</span>
+                      {o.category && <span className="shrink-0 text-xs text-slate-400 dark:text-slate-500">{o.category}</span>}
                     </button>
                   ))
                 )}
