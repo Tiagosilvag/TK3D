@@ -799,39 +799,26 @@ const resourceUsageSchema = z.object({
 // mas totalmente editável pra aquela leva (adicionar linha nova, trocar,
 // remover) -- não altera a ficha técnica cadastrada, só o que é consumido
 // nesta montagem específica.
-export async function confirmAssembly(formData: FormData): Promise<ActionResult> {
-  const raw = Object.fromEntries(formData)
-  const parsed = confirmAssemblySchema.safeParse({ ...raw, notes: raw.notes || null })
-  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
-  const { productId, quantity, notes } = parsed.data
+export interface PerformAssemblyInput {
+  productId: string
+  quantity: number
+  notes: string | null
+  colorChoices: Record<string, string>
+  accessoryUsages: { id: string; quantityPerUnit: number }[]
+  supplyUsages: { id: string; quantityPerUnit: number }[]
+}
 
-  function parseJsonArray(value: FormDataEntryValue | undefined): unknown[] {
-    if (!value) return []
-    try {
-      const result = JSON.parse(String(value))
-      return Array.isArray(result) ? result : []
-    } catch {
-      return []
-    }
-  }
-
-  const submittedColorChoices: Record<string, string> = raw.colorChoicesJson
-    ? (() => {
-        try {
-          return JSON.parse(String(raw.colorChoicesJson))
-        } catch {
-          return {}
-        }
-      })()
-    : {}
-  const submittedAccessoryUsages = parseJsonArray(raw.accessoryUsagesJson)
-    .map((u) => resourceUsageSchema.safeParse(u))
-    .filter((r): r is { success: true; data: z.infer<typeof resourceUsageSchema> } => r.success)
-    .map((r) => r.data)
-  const submittedSupplyUsages = parseJsonArray(raw.supplyUsagesJson)
-    .map((u) => resourceUsageSchema.safeParse(u))
-    .filter((r): r is { success: true; data: z.infer<typeof resourceUsageSchema> } => r.success)
-    .map((r) => r.data)
+// Melhoria "Peça multi-filamento sem montagem": núcleo de confirmAssembly
+// extraído pra aceitar input já tipado (em vez de FormData) -- reusado por
+// confirmAssembly (parse de formulário normal, pessoa confirma na tela) E
+// por actions/productionRuns.ts#maybeAutoAssembleAfterProduction (montagem
+// automática e silenciosa pra produto composto de 1 peça só, sem insumo/
+// acessório/componente -- ver lib/products.ts#productAutoAssembles). Corpo
+// idêntico ao que já existia em confirmAssembly, só trocando
+// `submittedColorChoices`/`submittedAccessoryUsages`/`submittedSupplyUsages`/
+// `quantity`/`notes` pelos campos de `input`.
+async function performAssembly(input: PerformAssemblyInput): Promise<ActionResult> {
+  const { productId, quantity, notes, colorChoices: submittedColorChoices, accessoryUsages: submittedAccessoryUsages, supplyUsages: submittedSupplyUsages } = input
 
   const status = await getAssemblyStatus(productId)
 
@@ -1013,6 +1000,66 @@ export async function confirmAssembly(formData: FormData): Promise<ActionResult>
   revalidatePath('/supplies')
   revalidatePath('/orders')
   return { success: true }
+}
+
+export async function confirmAssembly(formData: FormData): Promise<ActionResult> {
+  const raw = Object.fromEntries(formData)
+  const parsed = confirmAssemblySchema.safeParse({ ...raw, notes: raw.notes || null })
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  const { productId, quantity, notes } = parsed.data
+
+  function parseJsonArray(value: FormDataEntryValue | undefined): unknown[] {
+    if (!value) return []
+    try {
+      const result = JSON.parse(String(value))
+      return Array.isArray(result) ? result : []
+    } catch {
+      return []
+    }
+  }
+
+  const colorChoices: Record<string, string> = raw.colorChoicesJson
+    ? (() => {
+        try {
+          return JSON.parse(String(raw.colorChoicesJson))
+        } catch {
+          return {}
+        }
+      })()
+    : {}
+  const accessoryUsages = parseJsonArray(raw.accessoryUsagesJson)
+    .map((u) => resourceUsageSchema.safeParse(u))
+    .filter((r): r is { success: true; data: z.infer<typeof resourceUsageSchema> } => r.success)
+    .map((r) => r.data)
+  const supplyUsages = parseJsonArray(raw.supplyUsagesJson)
+    .map((u) => resourceUsageSchema.safeParse(u))
+    .filter((r): r is { success: true; data: z.infer<typeof resourceUsageSchema> } => r.success)
+    .map((r) => r.data)
+
+  return performAssembly({ productId, quantity, notes: notes ?? null, colorChoices, accessoryUsages, supplyUsages })
+}
+
+// Melhoria "Peça multi-filamento sem montagem": chamada por
+// actions/productionRuns.ts logo depois de uma produção de peça ser
+// gravada -- quando o produto dono dessa peça se qualifica como
+// auto-montável (lib/products.ts#productAutoAssembles: composto, 1 peça
+// só, proporção 1:1, sem insumo/acessório/componente), confirma a
+// montagem na hora, sem exigir o clique manual em /assembly, com
+// quantity = o que acabou de sair bem-sucedido desta produção e
+// colorChoices = o combo de filamento REALMENTE usado nesta run (mesma
+// convenção de comboKey de getAssemblyStatus: ids ordenados, unidos por
+// vírgula). Produto que não se qualifica (2+ peças, ou com insumo/
+// acessório/componente) nunca entra aqui -- continua exigindo a
+// confirmação manual normal em /assembly.
+export async function autoAssembleProductionRun(input: { productId: string; productPartId: string; quantity: number; colorComboKey: string }): Promise<ActionResult> {
+  return performAssembly({
+    productId: input.productId,
+    quantity: input.quantity,
+    notes: null,
+    colorChoices: { [input.productPartId]: input.colorComboKey },
+    accessoryUsages: [],
+    supplyUsages: [],
+  })
 }
 
 // Melhoria "Editar variação": pedido do usuário -- gravou a cor errada

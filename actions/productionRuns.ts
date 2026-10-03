@@ -18,8 +18,8 @@ import {
 } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
 import { Prisma, type ProductionStatus, type SupplyUnit } from '@prisma/client'
-import { productNeedsAssembly } from '@/lib/products'
-import { getAssemblyStatus, reverseExcessAssemblyForRun } from '@/actions/assembly'
+import { productNeedsAssembly, productAutoAssembles } from '@/lib/products'
+import { getAssemblyStatus, reverseExcessAssemblyForRun, autoAssembleProductionRun } from '@/actions/assembly'
 import { reconcileOrderReservations } from '@/lib/orderReservations'
 
 // `reversedFrom` (só cancelProductionRun/deleteProductionRun preenchem):
@@ -73,6 +73,42 @@ async function maybeReconcileAfterProduction(productId: string, filamentId: stri
   for (const { colorComboKey } of pendingCombos) {
     await reconcileOrderReservations(productId, colorComboKey)
   }
+}
+
+// Melhoria "Peça multi-filamento sem montagem": chamado logo depois que uma
+// ProductionRun de PEÇA (productPartId não-nulo) é gravada -- se o produto
+// dono dela se qualifica como auto-montável (lib/products.ts#
+// productAutoAssembles: composto, 1 peça só, proporção 1:1, sem insumo/
+// acessório/componente), confirma a montagem na hora
+// (actions/assembly.ts#autoAssembleProductionRun) com a MESMA quantidade e
+// cor que acabou de sair da impressora, sem esperar clique manual em
+// /assembly. Produção com quantitySuccess=0 (tudo falhou) não tem o que
+// montar -- sai cedo. Produto que não se qualifica nunca chama
+// autoAssembleProductionRun, se comporta exatamente como antes.
+async function maybeAutoAssembleAfterProduction(item: {
+  productId: string
+  productPartId: string | null
+  quantitySuccess: number
+  filamentId: string
+  filamentUsages: { filamentId: string }[]
+}): Promise<void> {
+  if (!item.productPartId || item.quantitySuccess <= 0) return
+  const product = await prisma.product.findUnique({
+    where: { id: item.productId },
+    include: { parts: { select: { quantityPerUnit: true } }, _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
+  })
+  if (!product) return
+  const autoAssembles = productAutoAssembles({
+    isComposite: product.isComposite,
+    accessoryUsagesCount: product._count.accessoryUsages,
+    supplyUsagesCount: product._count.supplyUsages,
+    componentUsagesCount: product._count.componentUsages,
+    parts: product.parts,
+  })
+  if (!autoAssembles) return
+  const filamentIds = item.filamentUsages.length > 0 ? item.filamentUsages.map((u) => u.filamentId) : [item.filamentId]
+  const colorComboKey = [...new Set(filamentIds)].sort().join(',')
+  await autoAssembleProductionRun({ productId: item.productId, productPartId: item.productPartId, quantity: item.quantitySuccess, colorComboKey })
 }
 
 // Ajuste "peça multi-filamento": quando a peça produzida tem >1 componente
@@ -423,6 +459,13 @@ export async function createProductionRun(formData: FormData): Promise<ActionRes
 
   await prisma.$transaction(result.ops)
   await maybeReconcileAfterProduction(data.productId, data.filamentId)
+  await maybeAutoAssembleAfterProduction({
+    productId: data.productId,
+    productPartId: data.productPartId ?? null,
+    quantitySuccess: data.quantitySuccess,
+    filamentId: data.filamentId,
+    filamentUsages: filamentUsages ?? [],
+  })
 
   revalidatePath('/production')
   revalidatePath('/filaments')
@@ -474,6 +517,7 @@ export async function createProductionRunBatch(formData: FormData): Promise<Acti
   // usado no lote, não só os de item sem productPartId -- uma peça de
   // produto composto também precisa disparar a reconciliação.
   const usedFilamentIds = new Set<string>()
+  const autoAssembleCandidates: { productId: string; productPartId: string | null; quantitySuccess: number; filamentId: string; filamentUsages: { filamentId: string }[] }[] = []
 
   for (const item of parsed.data.items) {
     // "Falhas (auto)" (spec §3): nunca confiado do cliente -- sempre
@@ -517,11 +561,21 @@ export async function createProductionRunBatch(formData: FormData): Promise<Acti
     if (!result.success) return result
     allOps.push(...result.ops)
     usedFilamentIds.add(first.filamentId)
+    autoAssembleCandidates.push({
+      productId: parsed.data.productId,
+      productPartId: item.productPartId ?? null,
+      quantitySuccess: item.quantitySuccess,
+      filamentId: first.filamentId,
+      filamentUsages: filamentUsages ?? [],
+    })
   }
 
   await prisma.$transaction(allOps)
   for (const filamentId of usedFilamentIds) {
     await maybeReconcileAfterProduction(parsed.data.productId, filamentId)
+  }
+  for (const candidate of autoAssembleCandidates) {
+    await maybeAutoAssembleAfterProduction(candidate)
   }
 
   revalidatePath('/production')
@@ -650,6 +704,16 @@ export async function createPlate(formData: FormData): Promise<ActionResult> {
   for (const pair of usedPairs) {
     const [prodId, filId] = pair.split('::')
     await maybeReconcileAfterProduction(prodId, filId)
+  }
+  for (const item of parsed.data.items) {
+    const [first, ...restFilaments] = item.filaments
+    await maybeAutoAssembleAfterProduction({
+      productId: item.productId,
+      productPartId: item.productPartId ?? null,
+      quantitySuccess: item.quantitySuccess,
+      filamentId: first.filamentId,
+      filamentUsages: restFilaments.length > 0 ? item.filaments.map((f) => ({ filamentId: f.filamentId })) : [],
+    })
   }
 
   revalidatePath('/production')
