@@ -91,7 +91,7 @@ export function ComboSelect({
     return (
       <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800/60">
         <Swatch colorHex={only?.colorHex ?? null} />
-        <span className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-300">{only?.label ?? 'Sem produção registrada'}</span>
+        <span title={only?.label} className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-300">{only?.label ?? 'Sem produção registrada'}</span>
         {only && (
           <span className={`shrink-0 text-xs font-semibold ${only.available > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
             {only.available} disp.
@@ -110,7 +110,7 @@ export function ComboSelect({
         className="flex w-full items-center gap-2 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-left text-sm transition-colors hover:border-violet-400 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-violet-500"
       >
         <Swatch colorHex={selected?.colorHex ?? null} />
-        <span className="min-w-0 flex-1 truncate">{selected?.label ?? 'Selecione a cor'}</span>
+        <span title={selected?.label} className="min-w-0 flex-1 truncate">{selected?.label ?? 'Selecione a cor'}</span>
         <span className={`shrink-0 text-xs font-semibold ${selected && selected.available > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
           {selected?.available ?? 0} disp.
         </span>
@@ -121,7 +121,7 @@ export function ComboSelect({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={() => setOpen(false)}>
           <div
             onClick={(e) => e.stopPropagation()}
-            className="max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+            className="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
           >
             <div className="grid grid-cols-1 gap-2 p-3">
               <div className="flex items-center justify-between px-1">
@@ -155,8 +155,16 @@ export function ComboSelect({
                       } ${blocked ? 'cursor-not-allowed opacity-40' : ''}`}
                     >
                       <Swatch colorHex={o.colorHex} className="h-4 w-4" />
-                      <span className="min-w-0 flex-1 truncate">{o.label}</span>
-                      <span className={`shrink-0 text-xs font-medium ${isZero ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                      {/* Bug "não dá pra ver o tipo do filamento": `truncate`
+                          cortava o rótulo inteiro numa linha só, escondendo
+                          o material entre parênteses no final (ex.:
+                          "MASTERPRINT ROSA CLARO (PETG)" virava "...(...").
+                          Pedido do usuário: resolver alargando o painel
+                          (max-w-md -> max-w-xl) em vez de quebrar o rótulo
+                          em várias linhas -- `truncate` continua como rede
+                          de segurança só pra um rótulo absurdamente longo. */}
+                      <span title={o.label} className="min-w-0 flex-1 truncate">{o.label}</span>
+                      <span className={`shrink-0 whitespace-nowrap text-xs font-medium ${isZero ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                         {isZero ? 'sem estoque' : `${o.available} disp.`}
                       </span>
                     </button>
