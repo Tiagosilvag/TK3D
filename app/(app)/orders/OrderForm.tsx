@@ -78,6 +78,19 @@ export function OrderForm({
   const [addCustomChoice, setAddCustomChoice] = useState<CustomVariantChoice | null>(null)
   const [addQuantity, setAddQuantity] = useState('1')
   const [addUnitPrice, setAddUnitPrice] = useState('')
+  // Bug "não dá pra editar um item já adicionado": clicar no lápis de uma
+  // linha de `items` preenche editingItemId + os campos acima com os
+  // valores dela e abre o MESMO painel "pickVariant" de adicionar --
+  // confirmAddItem substitui a linha existente em vez de criar outra
+  // quando editingItemId está setado.
+  const [editingItemId, setEditingItemId] = useState<string | null>(null)
+  // Pedido "adicionar várias cores do mesmo produto, mais rápido":
+  // "+ Adicionar outra cor" empilha a cor/quantidade atual aqui e limpa só
+  // a cor+quantidade (mantém o valor unitário, geralmente igual pras
+  // várias cores) pra escolher a próxima -- confirmAddItem no fim soma
+  // isso tudo + a última cor preenchida de uma vez só. Só faz sentido no
+  // fluxo de ADICIONAR (nunca usado durante edição de 1 item existente).
+  const [pendingLines, setPendingLines] = useState<ItemDraft[]>([])
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -96,10 +109,14 @@ export function OrderForm({
     setNotes('')
     setItems([])
     setProductSearch('')
+    setEditingItemId(null)
+    setPendingLines([])
   }
 
   function openVariantPicker(product: OrderProductOption) {
     setSelectedProduct(product)
+    setEditingItemId(null)
+    setPendingLines([])
     setAddColorComboKey('')
     setAddCustomChoice(null)
     setAddQuantity('1')
@@ -107,41 +124,88 @@ export function OrderForm({
     setView('pickVariant')
   }
 
+  // Abre o mesmo painel de adicionar item, pré-preenchido com os valores
+  // da linha clicada -- trocar de produto ali dentro (via "←" até
+  // "Escolher produto") também funciona, editingItemId continua setado.
+  function openEditItem(item: ItemDraft) {
+    const product = products.find((p) => p.productId === item.productId)
+    if (!product) return
+    setSelectedProduct(product)
+    setEditingItemId(item.id)
+    setPendingLines([])
+    setAddColorComboKey(item.colorChoices ? '' : (item.colorComboKey ?? ''))
+    setAddCustomChoice(item.colorChoices ? { label: item.colorLabel ?? '', choices: item.colorChoices } : null)
+    setAddQuantity(String(item.quantity))
+    setAddUnitPrice(String(item.unitPrice))
+    setView('pickVariant')
+  }
+
   const requiresColorChoice = Boolean(selectedProduct && (selectedProduct.variants.length > 0 || selectedProduct.needsAssembly))
 
-  function confirmAddItem() {
-    if (!selectedProduct) return
+  function genItemId(): string {
+    return `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  // Valida e monta UMA linha a partir dos campos atuais (cor/quantidade/
+  // valor) -- usado tanto por "+ Adicionar outra cor" (empilha e segue
+  // escolhendo) quanto pelo botão final (fecha com a última cor + tudo
+  // empilhado). `alert` só dispara aqui, nunca duas vezes pro mesmo clique.
+  function buildCurrentLine(): ItemDraft | null {
+    if (!selectedProduct) return null
     if (requiresColorChoice && !addColorComboKey && !addCustomChoice) {
       alert('Selecione a cor/variação pedida')
-      return
+      return null
     }
     const qty = parseInt(addQuantity, 10)
     const price = parseFloat(addUnitPrice)
     if (!Number.isFinite(qty) || qty <= 0) {
       alert('Informe uma quantidade válida')
-      return
+      return null
     }
     if (!Number.isFinite(price) || price <= 0) {
       alert('Informe um valor unitário válido')
-      return
+      return null
     }
     const variant = addColorComboKey ? selectedProduct.variants.find((v) => v.key === addColorComboKey) : undefined
+    return {
+      id: editingItemId ?? genItemId(),
+      productId: selectedProduct.productId,
+      productName: selectedProduct.productName,
+      colorComboKey: addCustomChoice ? null : (addColorComboKey || null),
+      colorChoices: addCustomChoice ? addCustomChoice.choices : null,
+      colorLabel: addCustomChoice ? addCustomChoice.label : (variant?.label ?? null),
+      colorHex: variant?.colorHex ?? null,
+      quantity: qty,
+      unitPrice: price,
+    }
+  }
 
-    setItems((prev) => [
-      ...prev,
-      {
-        id: `item-${Date.now()}-${prev.length}`,
-        productId: selectedProduct.productId,
-        productName: selectedProduct.productName,
-        colorComboKey: addCustomChoice ? null : (addColorComboKey || null),
-        colorChoices: addCustomChoice ? addCustomChoice.choices : null,
-        colorLabel: addCustomChoice ? addCustomChoice.label : (variant?.label ?? null),
-        colorHex: variant?.colorHex ?? null,
-        quantity: qty,
-        unitPrice: price,
-      },
-    ])
+  function queueAnotherColor() {
+    const line = buildCurrentLine()
+    if (!line) return
+    setPendingLines((prev) => [...prev, line])
+    setAddColorComboKey('')
+    setAddCustomChoice(null)
+    setAddQuantity('1')
+    // addUnitPrice fica como está de propósito -- normalmente é o mesmo
+    // valor pras várias cores do mesmo produto, menos digitação.
+  }
+
+  function removePendingLine(id: string) {
+    setPendingLines((prev) => prev.filter((l) => l.id !== id))
+  }
+
+  function confirmAddItem() {
+    const line = buildCurrentLine()
+    if (!line) return
+    if (editingItemId) {
+      setItems((prev) => prev.map((i) => (i.id === editingItemId ? line : i)))
+    } else {
+      setItems((prev) => [...prev, ...pendingLines, line])
+    }
     setSelectedProduct(null)
+    setEditingItemId(null)
+    setPendingLines([])
     setView('form')
   }
 
@@ -180,9 +244,20 @@ export function OrderForm({
       alert(result.error)
       return
     }
-    resetForm()
-    setReallocations(result.reallocations && result.reallocations.length > 0 ? result.reallocations : null)
     router.refresh()
+    // Bug "modal não fecha nem avisa que foi criado": sem realocação pra
+    // mostrar, fecha a modal igual todo outro cadastro do app (mesmo
+    // padrão de ProductsExplorer.tsx etc.) -- o pedido já aparece na lista
+    // por trás (router.refresh() acima), essa é a confirmação. Com
+    // realocação, mantém aberta (reseta os campos pra um pedido novo) só
+    // pra garantir que o aviso âmbar seja visto antes de sumir.
+    const reallocs = result.reallocations && result.reallocations.length > 0 ? result.reallocations : null
+    if (reallocs) {
+      resetForm()
+      setReallocations(reallocs)
+    } else {
+      dialogRef.current?.close()
+    }
   }
 
   return (
@@ -233,8 +308,26 @@ export function OrderForm({
         <div className="grid grid-cols-1 gap-3 p-5">
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => setView('pickProduct')} aria-label="Voltar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">←</button>
-            <h3 className="font-display text-base font-semibold">{selectedProduct.productName}</h3>
+            <h3 className="font-display text-base font-semibold">{editingItemId ? `Editar item — ${selectedProduct.productName}` : selectedProduct.productName}</h3>
           </div>
+
+          {/* Pedido "adicionar várias cores do mesmo produto, mais rápido":
+              cada clique em "+ Adicionar outra cor" empilha aqui -- essa
+              lista só existe durante o fluxo de ADICIONAR (nunca ao editar
+              1 item já existente). */}
+          {pendingLines.length > 0 && (
+            <div className="space-y-1.5">
+              {pendingLines.map((line) => (
+                <div key={line.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-sm dark:bg-slate-800/60">
+                  <span className="flex min-w-0 items-center gap-2">
+                    {line.colorHex && <span style={{ background: line.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                    <span className="min-w-0 truncate">{line.colorLabel ?? 'Sem cor'} <span className="text-slate-500 dark:text-slate-400">x{line.quantity}</span></span>
+                  </span>
+                  <button type="button" onClick={() => removePendingLine(line.id)} aria-label="Remover cor" className="shrink-0 text-slate-400 hover:text-red-600 dark:hover:text-red-400">🗑</button>
+                </div>
+              ))}
+            </div>
+          )}
 
           {requiresColorChoice && (
             <div className="text-sm">
@@ -291,9 +384,16 @@ export function OrderForm({
             </label>
           </div>
 
-          <button type="button" onClick={confirmAddItem} className="tk-btn-primary">
-            Adicionar item
-          </button>
+          <div className="flex flex-col gap-2">
+            {!editingItemId && requiresColorChoice && (
+              <button type="button" onClick={queueAnotherColor} className="rounded-lg border border-dashed border-slate-300 py-1.5 text-xs font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60">
+                + Adicionar outra cor deste produto
+              </button>
+            )}
+            <button type="button" onClick={confirmAddItem} className="tk-btn-primary">
+              {editingItemId ? 'Salvar alterações' : pendingLines.length > 0 ? `Adicionar ${pendingLines.length + 1} itens ao pedido` : 'Adicionar item'}
+            </button>
+          </div>
         </div>
       )}
 
@@ -362,12 +462,15 @@ export function OrderForm({
               <div className="mt-1.5 space-y-1.5">
                 {items.map((item) => (
                   <div key={item.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
-                    <span className="flex items-center gap-2 text-sm">
+                    <button type="button" onClick={() => openEditItem(item)} className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm hover:underline">
                       {item.colorHex && <span style={{ background: item.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                      {item.productName}{item.colorLabel && <span className="text-slate-500 dark:text-slate-400"> - {item.colorLabel}</span>} <span className="text-slate-500 dark:text-slate-400">x{item.quantity}</span>
-                    </span>
-                    <div className="flex items-center gap-2">
+                      <span className="min-w-0 truncate">
+                        {item.productName}{item.colorLabel && <span className="text-slate-500 dark:text-slate-400"> - {item.colorLabel}</span>} <span className="text-slate-500 dark:text-slate-400">x{item.quantity}</span>
+                      </span>
+                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
                       <span className="text-sm text-slate-500 dark:text-slate-400">{formatCurrency(item.quantity * item.unitPrice)}</span>
+                      <button type="button" onClick={() => openEditItem(item)} aria-label="Editar item" title="Editar" className="text-slate-400 hover:text-violet-600 dark:hover:text-violet-400">✎</button>
                       <button type="button" onClick={() => removeItem(item.id)} aria-label="Remover item" className="text-slate-400 hover:text-red-600 dark:hover:text-red-400">🗑</button>
                     </div>
                   </div>

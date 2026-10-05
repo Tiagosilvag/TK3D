@@ -165,6 +165,34 @@ export function AppLayoutClient({
   // botão hambúrguer da barra superior -- antes o <aside> fixo de 15rem
   // ocupava quase a tela toda de um celular e deixava o conteúdo espremido.
   const [menuOpen, setMenuOpen] = useState(false)
+  // Pedido "opção de ocultar o menu lateral": só no desktop (md+, onde o
+  // menu é fixo e toma espaço permanente da tela) -- no mobile a gaveta
+  // off-canvas acima já resolve isso sozinha, `collapsed` nunca entra em
+  // jogo lá (classes aplicadas só com prefixo `md:`). Preferência lembrada
+  // por navegador (localStorage) -- conveniência por aparelho, nunca
+  // sincronizada entre sessões/dispositivos, então sempre dentro de
+  // try/catch (navegação privada pode bloquear).
+  const [collapsed, setCollapsed] = useState(false)
+
+  useEffect(() => {
+    try {
+      setCollapsed(localStorage.getItem('tk3d-sidebar-collapsed') === 'true')
+    } catch {
+      // localStorage indisponível -- menu fica expandido, comportamento padrão.
+    }
+  }, [])
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('tk3d-sidebar-collapsed', String(next))
+      } catch {
+        // ignora -- só não lembra na próxima visita.
+      }
+      return next
+    })
+  }
 
   useEffect(() => setMenuOpen(false), [pathname])
 
@@ -219,6 +247,23 @@ export function AppLayoutClient({
 
       {menuOpen && <div className="fixed inset-0 z-30 bg-slate-950/50 md:hidden" onClick={() => setMenuOpen(false)} aria-hidden />}
 
+      {/* Botão flutuante pra reabrir o menu -- só existe fora do <aside>
+          porque, oculto, ele fica com width/opacity zerados e
+          pointer-events-none (nada dentro dele é clicável). */}
+      {collapsed && (
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          aria-label="Mostrar menu"
+          title="Mostrar menu"
+          className="fixed left-2 top-3 z-30 hidden h-9 w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-500 shadow-sm transition-colors hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 md:flex"
+        >
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
+            <path d="M7.5 4l6 6-6 6" />
+          </svg>
+        </button>
+      )}
+
       {/* Degradê vertical roxo->azul no tema claro -- ecoa as cores reais
           da logo (que fica bem no topo, ver <Logo /> abaixo), não mais um
           tom sólido só. Tema escuro sem gradiente (fica bg-slate-900
@@ -235,9 +280,9 @@ export function AppLayoutClient({
         onClick={(e) => {
           if ((e.target as HTMLElement).closest('a')) setMenuOpen(false)
         }}
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] flex-col transition-[transform,visibility] duration-200 ease-out md:static md:z-auto md:w-60 md:max-w-none md:shrink-0 md:translate-x-0 md:transition-none ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[85vw] flex-col overflow-hidden transition-[transform,visibility] duration-200 ease-out md:static md:z-auto md:max-w-none md:shrink-0 md:translate-x-0 md:transition-[width,opacity,border-color] ${
           menuOpen ? 'translate-x-0' : 'max-md:invisible max-md:-translate-x-full'
-        } border-r border-slate-300 bg-gradient-to-b from-violet-100 via-violet-50 to-blue-50 shadow-[2px_0_10px_-2px_rgba(15,23,42,0.10)] dark:border-slate-800 dark:bg-none dark:bg-slate-900 dark:shadow-none`}>
+        } ${collapsed ? 'md:w-0 md:border-r-0 md:opacity-0 md:pointer-events-none' : 'md:w-60 md:opacity-100'} border-r border-slate-300 bg-gradient-to-b from-violet-100 via-violet-50 to-blue-50 shadow-[2px_0_10px_-2px_rgba(15,23,42,0.10)] dark:border-slate-800 dark:bg-none dark:bg-slate-900 dark:shadow-none`}>
         <div className="flex items-start justify-between border-b border-slate-200 px-4 py-5 dark:border-slate-800">
           <div>
             <Logo />
@@ -251,6 +296,20 @@ export function AppLayoutClient({
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-5 w-5" aria-hidden>
               <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+          {/* Pedido "opção de ocultar o menu lateral": só desktop -- no
+              mobile o botão acima (fechar a gaveta) já cobre o mesmo
+              papel. Estado lembrado por navegador, ver toggleCollapsed. */}
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            aria-label="Ocultar menu"
+            title="Ocultar menu"
+            className="-mr-2 -mt-2 hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 md:flex"
+          >
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
+              <path d="M12.5 4l-6 6 6 6" />
             </svg>
           </button>
         </div>
