@@ -199,16 +199,65 @@ async function resolveCustomColorComboKey(productId: string, colorChoicesJson: s
   return { colorComboKey: serializeColorChoices(choices) }
 }
 
+type ResolvedOrderItem = { productId: string; colorComboKey: string | null; quantity: number; unitPrice: number }
+
+// Lido por createOrder E addOrderItems (extraído quando "adicionar item a
+// um pedido já existente" precisou do MESMO parse/validação de itemsJson
+// que createOrder já fazia pro cabeçalho) -- cada item pode trazer seu
+// próprio `colorChoicesJson` (do CustomVariantPicker), resolvido pra
+// colorComboKey individualmente contra as peças reais do produto.
+async function resolveOrderItemsJson(itemsJsonRaw: FormDataEntryValue | undefined): Promise<{ items: ResolvedOrderItem[] } | { error: string }> {
+  let rawItems: unknown = []
+  try {
+    rawItems = JSON.parse(String(itemsJsonRaw ?? '[]'))
+  } catch {
+    rawItems = []
+  }
+  if (!Array.isArray(rawItems) || rawItems.length === 0) {
+    return { error: 'Adicione pelo menos um item ao pedido' }
+  }
+
+  const resolvedItems: ResolvedOrderItem[] = []
+  for (const rawItem of rawItems as Record<string, unknown>[]) {
+    let colorComboKey = (typeof rawItem.colorComboKey === 'string' ? rawItem.colorComboKey : null) || null
+    if (typeof rawItem.colorChoicesJson === 'string' && rawItem.colorChoicesJson) {
+      const resolved = await resolveCustomColorComboKey(String(rawItem.productId ?? ''), rawItem.colorChoicesJson)
+      if ('error' in resolved) return { error: resolved.error }
+      colorComboKey = resolved.colorComboKey
+    }
+    const itemParsed = orderItemSchema.safeParse({ productId: rawItem.productId, colorComboKey, quantity: rawItem.quantity, unitPrice: rawItem.unitPrice })
+    if (!itemParsed.success) return { error: itemParsed.error.issues[0].message }
+    resolvedItems.push({
+      productId: itemParsed.data.productId,
+      colorComboKey: itemParsed.data.colorComboKey ?? null,
+      quantity: itemParsed.data.quantity,
+      unitPrice: itemParsed.data.unitPrice,
+    })
+  }
+  return { items: resolvedItems }
+}
+
+// Reconcilia cada par (productId, colorComboKey) DISTINTO entre os itens
+// recém-criados (createOrder/addOrderItems) -- compartilhado pra não
+// reconciliar o mesmo par duas vezes quando 2 itens do mesmo lote pedem
+// produto+cor iguais.
+async function reconcileDistinctPairs(items: ResolvedOrderItem[]): Promise<OrderReallocationEvent[]> {
+  const distinctPairs = new Map<string, { productId: string; colorComboKey: string | null }>()
+  for (const item of items) distinctPairs.set(`${item.productId}::${item.colorComboKey ?? ''}`, item)
+  const reallocations: OrderReallocationEvent[] = []
+  for (const { productId, colorComboKey } of distinctPairs.values()) {
+    reallocations.push(...(await reconcileOrderReservations(productId, colorComboKey)))
+  }
+  return reallocations
+}
+
 // Melhoria "Pedidos com múltiplos itens": um pedido agora é 1 cabeçalho
 // (channel/datas/comprador/número/observações, preenchido uma vez) + N
 // itens (1 produto+cor+quantidade+preço cada) -- o formulário manda os
 // campos do cabeçalho soltos e um `itemsJson` com a lista inteira (mesmo
 // padrão de createSaleBatch/createConsignmentDeliveryBatch: tudo cria de
-// uma vez, numa transação só). Cada item pode trazer seu próprio
-// `colorChoicesJson` (do CustomVariantPicker), resolvido pra colorComboKey
-// individualmente. Depois de criar, reconcilia cada par (productId,
-// colorComboKey) distinto entre os itens novos -- exatamente como
-// createOrder fazia pra 1 item só antes, só que em lote; os eventos de
+// uma vez, numa transação só). Depois de criar, reconcilia cada par
+// (productId, colorComboKey) distinto entre os itens novos; os eventos de
 // realocação de todos os itens voltam juntos pro form mostrar o aviso.
 export async function createOrder(formData: FormData): Promise<ActionResult> {
   const raw = Object.fromEntries(formData)
@@ -220,48 +269,45 @@ export async function createOrder(formData: FormData): Promise<ActionResult> {
   })
   if (!headerParsed.success) return { success: false, error: headerParsed.error.issues[0].message }
 
-  let rawItems: unknown = []
-  try {
-    rawItems = JSON.parse(String(raw.itemsJson ?? '[]'))
-  } catch {
-    rawItems = []
-  }
-  if (!Array.isArray(rawItems) || rawItems.length === 0) {
-    return { success: false, error: 'Adicione pelo menos um item ao pedido' }
-  }
-
-  const resolvedItems: { productId: string; colorComboKey: string | null; quantity: number; unitPrice: number }[] = []
-  for (const rawItem of rawItems as Record<string, unknown>[]) {
-    let colorComboKey = (typeof rawItem.colorComboKey === 'string' ? rawItem.colorComboKey : null) || null
-    if (typeof rawItem.colorChoicesJson === 'string' && rawItem.colorChoicesJson) {
-      const resolved = await resolveCustomColorComboKey(String(rawItem.productId ?? ''), rawItem.colorChoicesJson)
-      if ('error' in resolved) return { success: false, error: resolved.error }
-      colorComboKey = resolved.colorComboKey
-    }
-    const itemParsed = orderItemSchema.safeParse({ productId: rawItem.productId, colorComboKey, quantity: rawItem.quantity, unitPrice: rawItem.unitPrice })
-    if (!itemParsed.success) return { success: false, error: itemParsed.error.issues[0].message }
-    resolvedItems.push({
-      productId: itemParsed.data.productId,
-      colorComboKey: itemParsed.data.colorComboKey ?? null,
-      quantity: itemParsed.data.quantity,
-      unitPrice: itemParsed.data.unitPrice,
-    })
-  }
+  const resolved = await resolveOrderItemsJson(raw.itemsJson)
+  if ('error' in resolved) return { success: false, error: resolved.error }
 
   await prisma.order.create({
     data: {
       ...headerParsed.data,
-      items: { create: resolvedItems },
+      items: { create: resolved.items },
     },
   })
 
-  const distinctPairs = new Map<string, { productId: string; colorComboKey: string | null }>()
-  for (const item of resolvedItems) distinctPairs.set(`${item.productId}::${item.colorComboKey ?? ''}`, item)
+  const reallocations = await reconcileDistinctPairs(resolved.items)
 
-  const reallocations: OrderReallocationEvent[] = []
-  for (const { productId, colorComboKey } of distinctPairs.values()) {
-    reallocations.push(...(await reconcileOrderReservations(productId, colorComboKey)))
-  }
+  revalidatePath('/orders')
+  revalidatePath('/stock')
+  revalidatePath('/production')
+  revalidatePath('/assembly')
+  return { success: true, reallocations }
+}
+
+// Pedido do usuário: dava pra criar um pedido com N itens de uma vez
+// (createOrder acima), mas não dava pra ACRESCENTAR item a um pedido JÁ
+// criado (ex.: lembrar de incluir a peça BASE depois) -- único jeito era
+// cancelar e recriar o pedido inteiro. Mesmo parse/validação/reconciliação
+// de itemsJson que createOrder usa (resolveOrderItemsJson/
+// reconcileDistinctPairs compartilhados), só que os itens viram OrderItem
+// de um Order EXISTENTE em vez de criar um cabeçalho novo -- cabeçalho
+// (channel/datas/comprador/número/observações) nunca muda por aqui.
+export async function addOrderItems(orderId: string, formData: FormData): Promise<ActionResult> {
+  const order = await prisma.order.findUnique({ where: { id: orderId } })
+  if (!order) return { success: false, error: 'Pedido não encontrado.' }
+
+  const resolved = await resolveOrderItemsJson(formData.get('itemsJson') ?? undefined)
+  if ('error' in resolved) return { success: false, error: resolved.error }
+
+  await prisma.orderItem.createMany({
+    data: resolved.items.map((item) => ({ ...item, orderId })),
+  })
+
+  const reallocations = await reconcileDistinctPairs(resolved.items)
 
   revalidatePath('/orders')
   revalidatePath('/stock')

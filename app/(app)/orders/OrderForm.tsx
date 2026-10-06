@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createOrder } from '@/actions/orders'
+import { createOrder, addOrderItems } from '@/actions/orders'
 import { formatCurrency, ORDER_CHANNEL_LABELS } from '@/lib/format'
 import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
@@ -54,10 +54,18 @@ export function OrderForm({
   open,
   onOpenChange,
   products,
+  existingOrder,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   products: OrderProductOption[]
+  // Pedido do usuário "editar um pedido pra adicionar uma peça": quando
+  // setado, a modal esconde os campos de cabeçalho (canal/datas/comprador/
+  // número/observações já existem no pedido, nunca mudam por aqui) e
+  // confirmar chama addOrderItems(existingOrder.id, ...) em vez de
+  // createOrder -- todo o resto do fluxo (escolher produto, cor/variação,
+  // "+ Adicionar outra cor", editar item antes de confirmar) é o mesmo.
+  existingOrder?: { id: string; orderNumber: string | null }
 }) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -217,7 +225,7 @@ export function OrderForm({
   const totalValue = items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0)
 
   async function action() {
-    if (!channel) {
+    if (!existingOrder && !channel) {
       alert('Selecione o canal')
       return
     }
@@ -226,12 +234,14 @@ export function OrderForm({
       return
     }
     const fd = new FormData()
-    fd.set('channel', channel)
-    fd.set('orderDate', orderDate)
-    fd.set('deliveryDate', deliveryDate)
-    fd.set('buyerOrPlatform', buyerOrPlatform)
-    fd.set('orderNumber', orderNumber)
-    fd.set('notes', notes)
+    if (!existingOrder) {
+      fd.set('channel', channel)
+      fd.set('orderDate', orderDate)
+      fd.set('deliveryDate', deliveryDate)
+      fd.set('buyerOrPlatform', buyerOrPlatform)
+      fd.set('orderNumber', orderNumber)
+      fd.set('notes', notes)
+    }
     fd.set('itemsJson', JSON.stringify(items.map((i) => ({
       productId: i.productId,
       colorComboKey: i.colorChoices ? null : i.colorComboKey,
@@ -239,7 +249,7 @@ export function OrderForm({
       quantity: i.quantity,
       unitPrice: i.unitPrice,
     }))))
-    const result = await createOrder(fd)
+    const result = existingOrder ? await addOrderItems(existingOrder.id, fd) : await createOrder(fd)
     if (!result.success) {
       alert(result.error)
       return
@@ -400,7 +410,9 @@ export function OrderForm({
       {view === 'form' && (
         <form action={action} className="grid grid-cols-1 gap-3 p-5">
           <div className="mb-1 flex items-center justify-between">
-            <h3 className="font-display text-base font-semibold">Novo pedido</h3>
+            <h3 className="font-display text-base font-semibold">
+              {existingOrder ? `Adicionar item${existingOrder.orderNumber ? ` — Pedido #${existingOrder.orderNumber}` : ''}` : 'Novo pedido'}
+            </h3>
             <button type="button" onClick={() => dialogRef.current?.close()} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
           </div>
 
@@ -422,40 +434,42 @@ export function OrderForm({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="text-sm">
-              Canal *
-              <select value={channel} onChange={(e) => setChannel(e.target.value)} className="tk-input-full" required>
-                <option value="" disabled>Selecione</option>
-                {CHANNELS.map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm">
-              Comprador (opcional)
-              <input value={buyerOrPlatform} onChange={(e) => setBuyerOrPlatform(e.target.value)} className="tk-input-full" />
-            </label>
-            <label className="text-sm">
-              Data do pedido *
-              <input type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} className="tk-input-full" required />
-            </label>
-            <label className="text-sm">
-              Data de entrega *
-              <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="tk-input-full" required />
-            </label>
-            <label className="text-sm">
-              Número do pedido (opcional)
-              <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} className="tk-input-full" />
-            </label>
-            <label className="text-sm">
-              Observações (opcional)
-              <input value={notes} onChange={(e) => setNotes(e.target.value)} className="tk-input-full" />
-            </label>
-          </div>
+          {!existingOrder && (
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-sm">
+                Canal *
+                <select value={channel} onChange={(e) => setChannel(e.target.value)} className="tk-input-full" required>
+                  <option value="" disabled>Selecione</option>
+                  {CHANNELS.map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm">
+                Comprador (opcional)
+                <input value={buyerOrPlatform} onChange={(e) => setBuyerOrPlatform(e.target.value)} className="tk-input-full" />
+              </label>
+              <label className="text-sm">
+                Data do pedido *
+                <input type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} className="tk-input-full" required />
+              </label>
+              <label className="text-sm">
+                Data de entrega *
+                <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="tk-input-full" required />
+              </label>
+              <label className="text-sm">
+                Número do pedido (opcional)
+                <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} className="tk-input-full" />
+              </label>
+              <label className="text-sm">
+                Observações (opcional)
+                <input value={notes} onChange={(e) => setNotes(e.target.value)} className="tk-input-full" />
+              </label>
+            </div>
+          )}
 
           <div className="text-sm">
-            <p className="font-medium text-slate-700 dark:text-slate-300">Itens deste pedido</p>
+            <p className="font-medium text-slate-700 dark:text-slate-300">{existingOrder ? 'Itens a adicionar' : 'Itens deste pedido'}</p>
             {items.length === 0 ? (
               <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Nenhum item adicionado ainda.</p>
             ) : (
@@ -484,13 +498,13 @@ export function OrderForm({
           </button>
 
           <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm font-medium dark:bg-slate-800/60">
-            <span>Valor total do pedido</span>
+            <span>{existingOrder ? 'Valor dos itens a adicionar' : 'Valor total do pedido'}</span>
             <span>{items.length > 0 ? `${totalUnits} un - ${formatCurrency(totalValue)}` : '—'}</span>
           </div>
 
           <div className="mt-1 flex items-center justify-end gap-3">
             <button type="button" onClick={() => dialogRef.current?.close()} className="text-sm text-slate-500 hover:underline dark:text-slate-400">Cancelar</button>
-            <SubmitButton pendingLabel="Salvando…">Finalizar pedido</SubmitButton>
+            <SubmitButton pendingLabel="Salvando…">{existingOrder ? 'Adicionar ao pedido' : 'Finalizar pedido'}</SubmitButton>
           </div>
         </form>
       )}

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createOrder, cancelOrder, deleteOrder } from '@/actions/orders'
+import { createOrder, cancelOrder, deleteOrder, addOrderItems } from '@/actions/orders'
 import { createProductionRun } from '@/actions/productionRuns'
 import { reconcileAllPendingOrders } from '@/lib/orderReservations'
 
@@ -359,5 +359,48 @@ describe('reconcileOrderReservations dispara sozinho ao produzir PEÇA de produt
     const refreshed = await prisma.orderItem.findUniqueOrThrow({ where: { id: item.id } })
     expect(refreshed.status).toBe('AGUARDANDO_MONTAGEM')
     expect(refreshed.reservedQuantity).toBe(0)
+  })
+})
+
+// Pedido do usuário "editar um pedido pra adicionar uma peça": addOrderItems
+// acrescenta OrderItem a um Order já criado, sem tocar no cabeçalho --
+// mesma validação/reconciliação de createOrder, só que targeting um
+// orderId existente em vez de criar um Order novo.
+describe('addOrderItems', () => {
+  it('acrescenta um item a um pedido já existente, preservando o item original e reconciliando o novo', async () => {
+    const { product, printer, filament } = await createSupportRecords()
+    const base = await prisma.product.create({
+      data: { name: 'Peça base', category: 'Chaveiro', printerId: printer.id, filamentId: filament.id, weightGrams: 10, printTimeHours: 1, laborTimeHours: 0.1 },
+    })
+
+    const orderResult = await createOrder(orderFd({ productId: product.id, quantity: '2' }))
+    expect(orderResult.success).toBe(true)
+    const originalItem = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: originalItem.orderId } })
+
+    await produce(base.id, printer.id, filament.id, '5')
+
+    const addResult = await addOrderItems(order.id, fd({
+      itemsJson: JSON.stringify([{ productId: base.id, colorComboKey: filament.id, quantity: 5, unitPrice: 15 }]),
+    }))
+    expect(addResult.success).toBe(true)
+
+    const items = await prisma.orderItem.findMany({ where: { orderId: order.id }, orderBy: { createdAt: 'asc' } })
+    expect(items).toHaveLength(2)
+    expect(items[0].id).toBe(originalItem.id)
+    expect(items[0].productId).toBe(product.id)
+    expect(items[1].productId).toBe(base.id)
+    expect(items[1].quantity).toBe(5)
+    // Peça base tinha estoque pronto -- o novo item já nasce reservado,
+    // mesma reconciliação que createOrder dispara pra item novo.
+    expect(items[1].status).toBe('PRONTO_RESERVADO')
+    expect(items[1].reservedQuantity).toBe(5)
+  })
+
+  it('rejeita quando o pedido não existe', async () => {
+    const result = await addOrderItems('pedido-inexistente', fd({
+      itemsJson: JSON.stringify([{ productId: 'x', colorComboKey: null, quantity: 1, unitPrice: 10 }]),
+    }))
+    expect(result.success).toBe(false)
   })
 })

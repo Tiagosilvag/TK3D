@@ -92,6 +92,10 @@ type Tab = 'TODOS' | 'ATRASADOS' | 'PROXIMOS' | 'ENTREGUES'
 export function OrdersExplorer({ rows, products }: { rows: OrderRow[]; products: OrderProductOption[] }) {
   const [tab, setTab] = useState<Tab>('TODOS')
   const [formOpen, setFormOpen] = useState(false)
+  // Pedido do usuário "editar pedido pra adicionar peça": 2ª instância do
+  // mesmo OrderForm, em modo existingOrder (sem campos de cabeçalho) --
+  // aberta pelo botão "+ Adicionar item" dentro do modal de detalhe.
+  const [addItemOpen, setAddItemOpen] = useState(false)
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [selected, setSelected] = useState<OrderRow | null>(null)
 
@@ -161,6 +165,12 @@ export function OrdersExplorer({ rows, products }: { rows: OrderRow[]; products:
         </button>
       </div>
       <OrderForm open={formOpen} onOpenChange={setFormOpen} products={products} />
+      <OrderForm
+        open={addItemOpen}
+        onOpenChange={setAddItemOpen}
+        products={products}
+        existingOrder={selected ? { id: selected.id, orderNumber: selected.orderNumber } : undefined}
+      />
 
       <div className="mb-3 mt-6 flex flex-wrap gap-2">
         <button type="button" onClick={() => setTab('TODOS')} className={chipClass(tab === 'TODOS')}>Todos {rows.length}</button>
@@ -257,6 +267,14 @@ export function OrdersExplorer({ rows, products }: { rows: OrderRow[]; products:
               </div>
               <button type="button" onClick={() => dialogRef.current?.close()} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setAddItemOpen(true)}
+              className="rounded-lg border border-dashed border-slate-300 py-1.5 text-xs font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60"
+            >
+              + Adicionar item a este pedido
+            </button>
 
             <div className="space-y-2">
               {selected.items.map((item) => {
