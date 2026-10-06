@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createOrder, cancelOrder, deleteOrder, addOrderItems } from '@/actions/orders'
+import { createOrder, cancelOrder, deleteOrder, addOrderItems, updateOrderItem, removeOrderItem, updateOrderItemStatus } from '@/actions/orders'
 import { createProductionRun } from '@/actions/productionRuns'
 import { reconcileAllPendingOrders } from '@/lib/orderReservations'
 
@@ -10,6 +10,10 @@ async function cleanup() {
   await prisma.orderReallocation.deleteMany()
   await prisma.orderItem.deleteMany()
   await prisma.order.deleteMany()
+  // updateOrderItemStatus(ENTREGUE) cria uma Sale de verdade -- precisa
+  // sumir antes do Product (FK Sale_productId_fkey), mesmo motivo de
+  // qualquer outro teste de integração que passa por esse caminho.
+  await prisma.sale.deleteMany()
   await prisma.productAssembly.deleteMany()
   await prisma.productionRun.deleteMany()
   await prisma.productPartFilament.deleteMany()
@@ -401,6 +405,108 @@ describe('addOrderItems', () => {
     const result = await addOrderItems('pedido-inexistente', fd({
       itemsJson: JSON.stringify([{ productId: 'x', colorComboKey: null, quantity: 1, unitPrice: 10 }]),
     }))
+    expect(result.success).toBe(false)
+  })
+})
+
+// Pedido do usuário "editar item depois de adicionado": updateOrderItem
+// corrige quantidade/valor de um item já salvo; removeOrderItem tira o
+// item do pedido de vez. Os dois reconciliam a fila (productId,
+// colorComboKey) em seguida -- mesmo motor que createOrder/cancelOrder já
+// usam, só que disparado por uma edição/remoção em vez de criação.
+describe('updateOrderItem', () => {
+  it('diminuir a quantidade encolhe reservedQuantity (nunca fica maior que quantity) e libera a sobra pro pool', async () => {
+    const { product, printer, filament } = await createSupportRecords()
+    await produce(product.id, printer.id, filament.id, '5')
+
+    const orderResult = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '5' }))
+    expect(orderResult.success).toBe(true)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect(item.reservedQuantity).toBe(5)
+
+    const result = await updateOrderItem(item.id, fd({ quantity: '2', unitPrice: '30' }))
+    expect(result.success).toBe(true)
+
+    const updated = await prisma.orderItem.findUniqueOrThrow({ where: { id: item.id } })
+    expect(updated.quantity).toBe(2)
+    expect(updated.reservedQuantity).toBe(2)
+    expect(updated.status).toBe('PRONTO_RESERVADO')
+  })
+
+  it('rejeita editar um item que já virou venda (saleId setado)', async () => {
+    const { product, printer, filament } = await createSupportRecords()
+    await produce(product.id, printer.id, filament.id, '3')
+    await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '3' }))
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+
+    const delivered = await updateOrderItemStatus(item.id, fd({ status: 'ENTREGUE' }))
+    expect(delivered.success).toBe(true)
+
+    const result = await updateOrderItem(item.id, fd({ quantity: '1', unitPrice: '30' }))
+    expect(result.success).toBe(false)
+  })
+})
+
+describe('removeOrderItem', () => {
+  it('remove o item e libera a peça reservada pro próximo pedido da fila (prazo mais próximo)', async () => {
+    const { product, printer, filament } = await createSupportRecords()
+    await produce(product.id, printer.id, filament.id, '3')
+
+    // Pedido A (entrega mais perto) fica com a peça; pedido B (mais longe)
+    // nasce Aguardando produção -- mesmo cenário de prioridade que
+    // reconcileOrderReservations já cobre em createOrder.
+    const orderA = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '3' }, { deliveryDate: '2026-09-05' }))
+    expect(orderA.success).toBe(true)
+    const itemA = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id }, orderBy: { createdAt: 'asc' } })
+    expect(itemA.reservedQuantity).toBe(3)
+
+    const orderB = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '2' }, { deliveryDate: '2026-09-25' }))
+    expect(orderB.success).toBe(true)
+    const itemB = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id, id: { not: itemA.id } } })
+    expect(itemB.reservedQuantity).toBe(0)
+
+    // Pedido A tem só 1 item -- adiciona um 2º item qualquer pra passar da
+    // guarda "não remove o último item do pedido" e isolar o teste nela.
+    const base = await prisma.product.create({
+      data: { name: 'Peça base', category: 'Chaveiro', printerId: printer.id, filamentId: filament.id, weightGrams: 5, printTimeHours: 0.5, laborTimeHours: 0 },
+    })
+    await prisma.orderItem.create({ data: { orderId: itemA.orderId, productId: base.id, quantity: 1, unitPrice: 10 } })
+
+    const result = await removeOrderItem(itemA.id)
+    expect(result.success).toBe(true)
+
+    const stillThere = await prisma.orderItem.findUnique({ where: { id: itemA.id } })
+    expect(stillThere).toBeNull()
+
+    const refreshedB = await prisma.orderItem.findUniqueOrThrow({ where: { id: itemB.id } })
+    expect(refreshedB.reservedQuantity).toBe(2)
+    expect(refreshedB.status).toBe('PRONTO_RESERVADO')
+  })
+
+  it('rejeita remover um item que já virou venda (saleId setado)', async () => {
+    const { product, printer, filament } = await createSupportRecords()
+    await produce(product.id, printer.id, filament.id, '2')
+    const base = await prisma.product.create({
+      data: { name: 'Peça base', category: 'Chaveiro', printerId: printer.id, filamentId: filament.id, weightGrams: 5, printTimeHours: 0.5, laborTimeHours: 0 },
+    })
+    const orderResult = await createOrder(orderFd({ productId: product.id, colorComboKey: filament.id, quantity: '2' }))
+    expect(orderResult.success).toBe(true)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    await prisma.orderItem.create({ data: { orderId: item.orderId, productId: base.id, quantity: 1, unitPrice: 10 } })
+
+    const delivered = await updateOrderItemStatus(item.id, fd({ status: 'ENTREGUE' }))
+    expect(delivered.success).toBe(true)
+
+    const result = await removeOrderItem(item.id)
+    expect(result.success).toBe(false)
+  })
+
+  it('rejeita remover o único item do pedido (sugere excluir o pedido inteiro)', async () => {
+    const { product } = await createSupportRecords()
+    await createOrder(orderFd({ productId: product.id, quantity: '1' }))
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+
+    const result = await removeOrderItem(item.id)
     expect(result.success).toBe(false)
   })
 })

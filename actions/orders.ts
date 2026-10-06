@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { orderHeaderSchema, orderItemSchema, orderStatusEnum } from '@/lib/validation/order'
+import { orderHeaderSchema, orderItemSchema, orderStatusEnum, updateOrderItemSchema } from '@/lib/validation/order'
 import { getProductCostBreakdown } from '@/actions/products'
 import { consumePackagingForSale } from '@/actions/sales'
 import { resolveSalePlatformFee } from '@/actions/marketplacePlatforms'
@@ -422,6 +422,76 @@ export async function updateOrderItemStatus(id: string, formData: FormData): Pro
   revalidatePath('/stock')
   revalidatePath('/packaging')
   return { success: true }
+}
+
+// Pedido do usuário "editar item depois de adicionado": corrige
+// quantidade/valor de um OrderItem já salvo, sem precisar cancelar e
+// recriar o pedido inteiro. Só produto/cor continuam fixos (trocar isso
+// exigiria resolver combo/estoque de novo, fora de escopo aqui). Bloqueado
+// pra item que já virou Sale (saleId setado) -- aquilo é histórico de
+// venda de verdade, não dá pra editar por trás; o jeito de corrigir um
+// item já entregue é editar a Sale em Vendas. reconcileOrderReservations
+// recalcula reservedQuantity do zero pra TODO o pool (productId,
+// colorComboKey) usando a quantidade nova -- cobre tanto aumentar
+// (pode entrar na fila por mais peça) quanto diminuir (reservedQuantity
+// nunca fica maior que quantity depois, mesmo sem um cálculo manual de
+// "encolher" aqui).
+export async function updateOrderItem(id: string, formData: FormData): Promise<ActionResult> {
+  const parsed = updateOrderItemSchema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+
+  const item = await prisma.orderItem.findUniqueOrThrow({ where: { id } })
+  if (item.saleId) return { success: false, error: 'Este item já virou venda -- edite em Vendas, se necessário.' }
+
+  await prisma.orderItem.update({ where: { id }, data: { quantity: parsed.data.quantity, unitPrice: parsed.data.unitPrice } })
+  const reallocations = await reconcileOrderReservations(item.productId, item.colorComboKey)
+
+  revalidatePath('/orders')
+  revalidatePath('/stock')
+  revalidatePath('/production')
+  revalidatePath('/assembly')
+  return { success: true, reallocations }
+}
+
+// Pedido do usuário "editar item depois de adicionado": remove UM item do
+// pedido (ao contrário de deleteOrder, que apaga o cabeçalho inteiro) --
+// pra quando um item foi adicionado por engano. Mesmas 2 guardas de
+// deleteOrder, só que por item: saleId setado (virou venda de verdade,
+// histórico imutável) e FK RESTRICT de OrderReallocation (item que já
+// disputou prioridade com outro pedido -- orientado a cancelar o pedido
+// em vez de excluir, única ação que nunca apaga a linha). Guarda extra só
+// daqui: não deixa remover o ÚLTIMO item (um pedido sem nenhum item seria
+// um estado nunca previsto em nenhuma tela -- excluir o pedido inteiro é
+// a ação certa nesse caso).
+export async function removeOrderItem(id: string): Promise<ActionResult> {
+  const item = await prisma.orderItem.findUniqueOrThrow({ where: { id } })
+  if (item.saleId) return { success: false, error: 'Este item já virou venda -- remova a venda em Vendas, se necessário.' }
+
+  const siblingCount = await prisma.orderItem.count({ where: { orderId: item.orderId } })
+  if (siblingCount <= 1) return { success: false, error: 'Este é o único item do pedido -- exclua o pedido inteiro em vez de remover o item.' }
+
+  try {
+    await prisma.orderItem.delete({ where: { id } })
+  } catch (err) {
+    if (isForeignKeyConstraintError(err)) {
+      return { success: false, error: 'Este item tem histórico de realocação de peça com outro pedido e não pode ser removido direto -- cancele o pedido em vez disso.' }
+    }
+    throw err
+  }
+
+  const remaining = await prisma.orderItem.findMany({ where: { orderId: item.orderId }, select: { status: true } })
+  if (areAllItemsTerminal(remaining.map((r) => r.status))) {
+    const inbox = await prisma.marketplaceOrderInbox.findUnique({ where: { confirmedOrderId: item.orderId } })
+    if (inbox) await resolveNotificationsForResource('MarketplaceOrderInbox', inbox.id)
+  }
+
+  const reallocations = await reconcileOrderReservations(item.productId, item.colorComboKey)
+
+  revalidatePath('/orders')
+  revalidatePath('/stock')
+  revalidatePath('/production')
+  revalidatePath('/assembly')
+  return { success: true, reallocations }
 }
 
 // Melhoria "Pedidos com múltiplos itens": cancelar age no PEDIDO (todos os

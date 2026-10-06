@@ -1,12 +1,12 @@
 'use client'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { formatCurrency, getOrderStatusBadge, getDeadlineBadge, ORDER_CHANNEL_LABELS } from '@/lib/format'
 import { todayInBrasilia } from '@/lib/timezone'
 import { StatusBadge } from '@/components/StatusBadge'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { OrderForm, type OrderProductOption } from './OrderForm'
 import { OrderStatusForm } from './OrderStatusForm'
-import { deleteOrder, cancelOrder } from '@/actions/orders'
+import { deleteOrder, cancelOrder, updateOrderItem, removeOrderItem } from '@/actions/orders'
 import type { OrderChannel, OrderStatus } from '@prisma/client'
 
 export interface OrderReallocationTag {
@@ -79,6 +79,103 @@ function daysUntil(dateStr: string): number {
   const delivery = new Date(dateStr)
   delivery.setUTCHours(0, 0, 0, 0)
   return Math.round((delivery.getTime() - today.getTime()) / msPerDay)
+}
+
+// Pedido do usuário "editar depois de adicionado": quantidade/valor de um
+// item já salvo viram editáveis inline (clicar "Editar" troca o texto por
+// 2 inputs + Salvar/Cancelar); "Remover" tira o item do pedido de vez.
+// Só aparece quando o item ainda não virou venda (saleId null) -- depois
+// disso é histórico de venda de verdade, só editável em Vendas.
+function OrderItemCard({ item }: { item: OrderItemRow }) {
+  const [editing, setEditing] = useState(false)
+  const [quantity, setQuantity] = useState(String(item.quantity))
+  const [unitPrice, setUnitPrice] = useState(String(item.unitPrice))
+  const [error, setError] = useState<string | null>(null)
+  const [isPending, startTransition] = useTransition()
+
+  const itemBadge = getOrderStatusBadge(item.status)
+  const canEdit = !item.saleId
+
+  function startEdit() {
+    setQuantity(String(item.quantity))
+    setUnitPrice(String(item.unitPrice))
+    setError(null)
+    setEditing(true)
+  }
+
+  function saveEdit() {
+    const qty = parseInt(quantity, 10)
+    const price = parseFloat(unitPrice)
+    if (!Number.isFinite(qty) || qty <= 0) return setError('Quantidade inválida')
+    if (!Number.isFinite(price) || price <= 0) return setError('Valor inválido')
+    setError(null)
+    startTransition(async () => {
+      const fd = new FormData()
+      fd.set('quantity', String(qty))
+      fd.set('unitPrice', String(price))
+      const result = await updateOrderItem(item.id, fd)
+      if (!result.success) return setError(result.error ?? 'Erro ao salvar.')
+      setEditing(false)
+    })
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div
+            title={`itemId=${item.id} colorComboKey=${item.colorComboKey ?? ''}`}
+            className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-slate-100"
+          >
+            {item.colorHex && <span style={{ background: item.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+            {item.productName}{item.colorLabel && <span className="font-normal text-slate-500 dark:text-slate-400"> — {item.colorLabel}</span>}
+          </div>
+          {editing ? (
+            <div className="mt-1 flex items-center gap-2">
+              <input type="number" step="1" min="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="tk-input w-16 px-1.5 py-0.5 text-xs" />
+              <span className="text-xs text-slate-400">un ×</span>
+              <input type="number" step="0.01" min="0.01" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} className="tk-input w-24 px-1.5 py-0.5 text-xs" />
+            </div>
+          ) : (
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+              {item.quantity}un × {formatCurrency(item.unitPrice)}
+              {item.reservedQuantity > 0 && item.reservedQuantity < item.quantity && ` · ${item.reservedQuantity} de ${item.quantity} reservado`}
+            </p>
+          )}
+          {error && <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{error}</p>}
+          {item.reallocationsLost.map((r, i) => (
+            <p key={i} className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
+              ⚠ {r.quantity} peça{r.quantity === 1 ? '' : 's'} realocada{r.quantity === 1 ? '' : 's'} pro pedido {r.toOrderNumber ? `#${r.toOrderNumber}` : '(sem número)'} em {new Date(r.createdAt).toLocaleDateString('pt-BR')}
+            </p>
+          ))}
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <StatusBadge badge={itemBadge} />
+          <OrderStatusForm orderItemId={item.id} status={item.status} />
+          {canEdit && (
+            editing ? (
+              <div className="flex gap-2 text-xs">
+                <button type="button" onClick={saveEdit} disabled={isPending} className="font-medium text-violet-600 hover:underline dark:text-violet-400">
+                  {isPending ? 'Salvando…' : 'Salvar'}
+                </button>
+                <button type="button" onClick={() => setEditing(false)} className="text-slate-400 hover:underline">Cancelar</button>
+              </div>
+            ) : (
+              <div className="flex gap-2 text-xs">
+                <button type="button" onClick={startEdit} className="text-slate-400 hover:text-violet-600 dark:hover:text-violet-400">Editar</button>
+                <ConfirmDeleteForm
+                  action={async () => await removeOrderItem(item.id)}
+                  label="Remover"
+                  confirmMessage="Remover este item do pedido? A peça reservada volta pro estoque disponível."
+                  className="text-red-600 hover:underline dark:text-red-400"
+                />
+              </div>
+            )
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 type Tab = 'TODOS' | 'ATRASADOS' | 'PROXIMOS' | 'ENTREGUES'
@@ -277,37 +374,9 @@ export function OrdersExplorer({ rows, products }: { rows: OrderRow[]; products:
             </button>
 
             <div className="space-y-2">
-              {selected.items.map((item) => {
-                const itemBadge = getOrderStatusBadge(item.status)
-                return (
-                  <div key={item.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div
-                          title={`itemId=${item.id} colorComboKey=${item.colorComboKey ?? ''}`}
-                          className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-slate-100"
-                        >
-                          {item.colorHex && <span style={{ background: item.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                          {item.productName}{item.colorLabel && <span className="font-normal text-slate-500 dark:text-slate-400"> — {item.colorLabel}</span>}
-                        </div>
-                        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                          {item.quantity}un × {formatCurrency(item.unitPrice)}
-                          {item.reservedQuantity > 0 && item.reservedQuantity < item.quantity && ` · ${item.reservedQuantity} de ${item.quantity} reservado`}
-                        </p>
-                        {item.reallocationsLost.map((r, i) => (
-                          <p key={i} className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
-                            ⚠ {r.quantity} peça{r.quantity === 1 ? '' : 's'} realocada{r.quantity === 1 ? '' : 's'} pro pedido {r.toOrderNumber ? `#${r.toOrderNumber}` : '(sem número)'} em {new Date(r.createdAt).toLocaleDateString('pt-BR')}
-                          </p>
-                        ))}
-                      </div>
-                      <div className="flex shrink-0 flex-col items-end gap-1">
-                        <StatusBadge badge={itemBadge} />
-                        <OrderStatusForm orderItemId={item.id} status={item.status} />
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
+              {selected.items.map((item) => (
+                <OrderItemCard key={item.id} item={item} />
+              ))}
             </div>
 
             <div className="mt-1 flex justify-end">

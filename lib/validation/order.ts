@@ -53,6 +53,13 @@ export const orderBatchSchema = z.object({
   items: z.array(orderItemSchema).min(1, 'Adicione pelo menos um item ao pedido'),
 })
 
+// Pedido do usuário "editar item depois de adicionado": só quantidade/
+// valor são editáveis num item já salvo (trocar produto/cor exigiria
+// recalcular tudo -- fora de escopo, mesma limitação de sempre) -- reusa
+// as MESMAS regras de orderItemSchema pros dois campos, nunca duplicadas.
+export const updateOrderItemSchema = orderItemSchema.pick({ quantity: true, unitPrice: true })
+
 export type OrderHeaderInput = z.infer<typeof orderHeaderSchema>
 export type OrderItemInput = z.infer<typeof orderItemSchema>
 export type OrderBatchInput = z.infer<typeof orderBatchSchema>
+export type UpdateOrderItemInput = z.infer<typeof updateOrderItemSchema>
