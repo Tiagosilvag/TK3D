@@ -263,6 +263,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               filaments: p.filamentComponents.map((f) => ({ filamentId: f.filamentId, weightGrams: f.weightGrams.toNumber() })),
               printTimeHours: p.printTimeHours.toNumber(),
               quantityPerUnit: p.quantityPerUnit,
+              fixedRecipe: p.fixedRecipe,
             }))}
             printers={printerOptions}
             filaments={filamentOptions}

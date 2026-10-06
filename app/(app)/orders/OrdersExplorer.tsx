@@ -26,6 +26,10 @@ export interface OrderItemRow {
   unitPrice: number
   status: OrderStatus
   saleId: string | null
+  // Pedido do usuário "criar pedidos de encomendas de consignados
+  // também": mesmo papel de saleId acima, pro pedido canal CONSIGNADO --
+  // ao chegar em ENTREGUE, um dos dois (nunca os dois) fica preenchido.
+  consignmentDeliveryId: string | null
   reallocationsLost: OrderReallocationTag[]
 }
 
@@ -85,7 +89,10 @@ function daysUntil(dateStr: string): number {
 // item já salvo viram editáveis inline (clicar "Editar" troca o texto por
 // 2 inputs + Salvar/Cancelar); "Remover" tira o item do pedido de vez.
 // Só aparece quando o item ainda não virou venda (saleId null) -- depois
-// disso é histórico de venda de verdade, só editável em Vendas.
+// disso é histórico de venda de verdade, só editável em Vendas. Mesma
+// trava pra consignmentDeliveryId (pedido Consignado que já virou
+// ConsignmentDelivery -- editar isso por trás bagunçaria a entrega já
+// registrada, mesmo motivo que trava saleId).
 function OrderItemCard({ item }: { item: OrderItemRow }) {
   const [editing, setEditing] = useState(false)
   const [quantity, setQuantity] = useState(String(item.quantity))
@@ -94,7 +101,7 @@ function OrderItemCard({ item }: { item: OrderItemRow }) {
   const [isPending, startTransition] = useTransition()
 
   const itemBadge = getOrderStatusBadge(item.status)
-  const canEdit = !item.saleId
+  const canEdit = !item.saleId && !item.consignmentDeliveryId
 
   function startEdit() {
     setQuantity(String(item.quantity))
@@ -186,7 +193,7 @@ type Tab = 'TODOS' | 'ATRASADOS' | 'PROXIMOS' | 'ENTREGUES'
 // FilamentsExplorer.tsx (chipClass) e cards de resumo já usados em
 // sales/page.tsx. Cada linha é um PEDIDO (cabeçalho); clicar abre o
 // detalhe por item num modal.
-export function OrdersExplorer({ rows, products }: { rows: OrderRow[]; products: OrderProductOption[] }) {
+export function OrdersExplorer({ rows, products, partners }: { rows: OrderRow[]; products: OrderProductOption[]; partners: { id: string; name: string }[] }) {
   const [tab, setTab] = useState<Tab>('TODOS')
   const [formOpen, setFormOpen] = useState(false)
   // Pedido do usuário "editar pedido pra adicionar peça": 2ª instância do
@@ -261,11 +268,12 @@ export function OrdersExplorer({ rows, products }: { rows: OrderRow[]; products:
           + Novo pedido
         </button>
       </div>
-      <OrderForm open={formOpen} onOpenChange={setFormOpen} products={products} />
+      <OrderForm open={formOpen} onOpenChange={setFormOpen} products={products} partners={partners} />
       <OrderForm
         open={addItemOpen}
         onOpenChange={setAddItemOpen}
         products={products}
+        partners={partners}
         existingOrder={selected ? { id: selected.id, orderNumber: selected.orderNumber } : undefined}
       />
 
@@ -294,7 +302,7 @@ export function OrdersExplorer({ rows, products }: { rows: OrderRow[]; products:
             const badge = getOrderStatusBadge(status)
             const deadline = getDeadlineBadge(new Date(row.deliveryDate), status)
             const total = row.items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0)
-            const anySale = row.items.some((i) => i.saleId)
+            const anySale = row.items.some((i) => i.saleId || i.consignmentDeliveryId)
             return (
               <tr key={row.id} onClick={() => openDetail(row)} className="tk-row cursor-pointer align-top hover:bg-slate-50 dark:hover:bg-slate-800/60">
                 <td className="py-2">{new Date(row.orderDate).toLocaleDateString('pt-BR')}</td>

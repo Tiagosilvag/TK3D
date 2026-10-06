@@ -54,11 +54,15 @@ export function OrderForm({
   open,
   onOpenChange,
   products,
+  partners,
   existingOrder,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   products: OrderProductOption[]
+  // Pedido do usuário "criar pedidos de encomendas de consignados também":
+  // só parceiros ativos, mesmo padrão de outros seletores do app.
+  partners: { id: string; name: string }[]
   // Pedido do usuário "editar um pedido pra adicionar uma peça": quando
   // setado, a modal esconde os campos de cabeçalho (canal/datas/comprador/
   // número/observações já existem no pedido, nunca mudam por aqui) e
@@ -73,6 +77,7 @@ export function OrderForm({
 
   const [channel, setChannel] = useState('')
   const [buyerOrPlatform, setBuyerOrPlatform] = useState('')
+  const [consignmentPartnerId, setConsignmentPartnerId] = useState('')
   const [orderDate, setOrderDate] = useState(today())
   const [deliveryDate, setDeliveryDate] = useState(today())
   const [orderNumber, setOrderNumber] = useState('')
@@ -111,6 +116,7 @@ export function OrderForm({
     setView('form')
     setChannel('')
     setBuyerOrPlatform('')
+    setConsignmentPartnerId('')
     setOrderDate(today())
     setDeliveryDate(today())
     setOrderNumber('')
@@ -229,6 +235,10 @@ export function OrderForm({
       alert('Selecione o canal')
       return
     }
+    if (!existingOrder && channel === 'CONSIGNADO' && !consignmentPartnerId) {
+      alert('Selecione o parceiro de consignação')
+      return
+    }
     if (items.length === 0) {
       alert('Adicione pelo menos um item ao pedido')
       return
@@ -238,7 +248,13 @@ export function OrderForm({
       fd.set('channel', channel)
       fd.set('orderDate', orderDate)
       fd.set('deliveryDate', deliveryDate)
-      fd.set('buyerOrPlatform', buyerOrPlatform)
+      // Pedido do usuário "criar pedidos de encomendas de consignados
+      // também": canal Consignado grava o nome do parceiro em
+      // buyerOrPlatform automaticamente (sem pedir pra preencher duas
+      // vezes) -- consignmentPartnerId é o dado estruturado de verdade
+      // que o servidor usa.
+      fd.set('buyerOrPlatform', channel === 'CONSIGNADO' ? (partners.find((p) => p.id === consignmentPartnerId)?.name ?? '') : buyerOrPlatform)
+      fd.set('consignmentPartnerId', channel === 'CONSIGNADO' ? consignmentPartnerId : '')
       fd.set('orderNumber', orderNumber)
       fd.set('notes', notes)
     }
@@ -445,10 +461,22 @@ export function OrderForm({
                   ))}
                 </select>
               </label>
-              <label className="text-sm">
-                Comprador (opcional)
-                <input value={buyerOrPlatform} onChange={(e) => setBuyerOrPlatform(e.target.value)} className="tk-input-full" />
-              </label>
+              {channel === 'CONSIGNADO' ? (
+                <label className="text-sm">
+                  Parceiro *
+                  <select value={consignmentPartnerId} onChange={(e) => setConsignmentPartnerId(e.target.value)} className="tk-input-full" required>
+                    <option value="" disabled>Selecione</option>
+                    {partners.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <label className="text-sm">
+                  Comprador (opcional)
+                  <input value={buyerOrPlatform} onChange={(e) => setBuyerOrPlatform(e.target.value)} className="tk-input-full" />
+                </label>
+              )}
               <label className="text-sm">
                 Data do pedido *
                 <input type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} className="tk-input-full" required />

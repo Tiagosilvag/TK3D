@@ -109,6 +109,7 @@ export const ORDER_CHANNEL_LABELS: Record<OrderChannel, string> = {
   DIRETA: 'Direta',
   SHOPEE: 'Shopee',
   MERCADO_LIVRE: 'Mercado Livre',
+  CONSIGNADO: 'Consignado',
 }
 
 // 5.3: badge de canal de venda (Vendas), mesmo padrão {label, className}

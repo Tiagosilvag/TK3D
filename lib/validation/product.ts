@@ -80,6 +80,16 @@ export const productPartSchema = z.object({
   filaments: z.array(productPartFilamentSchema).min(1, 'Adicione ao menos um filamento'),
   printTimeHours: z.coerce.number().positive('Tempo de impressão deve ser maior que zero'),
   quantityPerUnit: z.coerce.number().int('Quantidade deve ser um número inteiro').positive('Quantidade deve ser maior que zero'),
+  // Pedido do usuário "receita fixa em qualquer peça": marca explicitamente
+  // que a cor desta peça não é escolhível em "Montar variação
+  // personalizada" mesmo tendo só 1 filamento -- ver comentário completo em
+  // ProductPart.fixedRecipe (schema.prisma) e getOrderablePartOptions
+  // (actions/orders.ts). Ao contrário de isComposite/usesGlue/isGift
+  // (checkboxBoolean, lidos direto de um campo de FormData), este campo
+  // vem de dentro de `partsJson` (já um boolean de verdade depois do
+  // JSON.parse em actions/products.ts) -- não usa checkboxBoolean, que
+  // espera string ('true'/'on').
+  fixedRecipe: z.boolean().optional().default(false),
 })
 
 export type ProductPartInput = z.infer<typeof productPartSchema>

@@ -142,6 +142,29 @@ describe('getOrderablePartOptions', () => {
     expect(baseOption.fixedLabel).toContain('Vermelho')
     expect(baseOption.fixedLabel).toContain('Azul')
   })
+
+  // Pedido do usuário "receita fixa em qualquer peça": ProductPart.fixedRecipe
+  // deixa fixar a cor de uma peça de 1 FILAMENTO SÓ também (até aqui só
+  // peça de 2+ filamentos virava fixa, sempre derivado da contagem).
+  it('peça de 1 filamento marcada fixedRecipe também vira fixa, mesmo sem 2+ componentes', async () => {
+    const { product, cabeca } = await createCompositeProduct()
+    await prisma.productPart.update({ where: { id: cabeca.id }, data: { fixedRecipe: true } })
+
+    const options = await getOrderablePartOptions(product.id)
+    const cabecaOption = options.find((o) => o.partId === cabeca.id)!
+    expect(cabecaOption.fixed).toBe(true)
+    expect(cabecaOption.colorOptions).toHaveLength(0)
+    expect(cabecaOption.fixedLabel).toContain('Vermelho')
+  })
+
+  it('peça de 1 filamento com fixedRecipe=false (default) continua cor variável como sempre foi', async () => {
+    const { product, cabeca } = await createCompositeProduct()
+
+    const options = await getOrderablePartOptions(product.id)
+    const cabecaOption = options.find((o) => o.partId === cabeca.id)!
+    expect(cabecaOption.fixed).toBe(false)
+    expect(cabecaOption.colorOptions.length).toBeGreaterThan(0)
+  })
 })
 
 describe('createOrder com colorChoicesJson (encomenda personalizada)', () => {

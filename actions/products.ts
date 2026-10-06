@@ -180,6 +180,7 @@ export async function createProduct(formData: FormData): Promise<ActionResult> {
             printerId: p.printerId,
             printTimeHours: p.printTimeHours,
             quantityPerUnit: p.quantityPerUnit,
+            fixedRecipe: p.fixedRecipe,
             filamentComponents: { create: p.filaments.map((f) => ({ filamentId: f.filamentId, weightGrams: f.weightGrams })) },
           },
         })
@@ -258,6 +259,7 @@ export async function updateProduct(id: string, formData: FormData): Promise<Act
             printerId: part.printerId,
             printTimeHours: part.printTimeHours,
             quantityPerUnit: part.quantityPerUnit,
+            fixedRecipe: part.fixedRecipe,
           }
           const filamentComponents = part.filaments.map((f) => ({ filamentId: f.filamentId, weightGrams: f.weightGrams }))
           if (part.id) {
@@ -380,6 +382,7 @@ export async function duplicateProduct(id: string): Promise<ActionResult & { pro
           printerId: part.printerId,
           printTimeHours: part.printTimeHours,
           quantityPerUnit: part.quantityPerUnit,
+          fixedRecipe: part.fixedRecipe,
           filamentComponents: { create: part.filamentComponents.map((f) => ({ filamentId: f.filamentId, weightGrams: f.weightGrams })) },
         },
       })

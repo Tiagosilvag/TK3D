@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const orderChannelEnum = z.enum(['DIRETA', 'SHOPEE', 'MERCADO_LIVRE'])
+export const orderChannelEnum = z.enum(['DIRETA', 'SHOPEE', 'MERCADO_LIVRE', 'CONSIGNADO'])
 // Melhoria "Pedidos com reserva de estoque": RECEBIDO/EM_PRODUCAO/PRONTO/
 // DESPACHADO/CONCLUIDO ficam listados só porque uma venda antiga ainda
 // pode carregar um desses valores (nunca mais escritos por código novo,
@@ -26,16 +26,25 @@ export const orderStatusEnum = z.enum([
 // schemas abaixo validam cada metade separadamente. orderItemSchema é
 // aplicado item a item (o formulário manda um itemsJson com a lista
 // inteira, actions/orders.ts faz o parse + valida cada um).
-export const orderHeaderSchema = z.object({
-  channel: orderChannelEnum,
-  orderDate: z.coerce.date({ errorMap: () => ({ message: 'Data inválida' }) }),
-  // Quando precisa estar pronto/entregue -- decide prioridade entre itens
-  // de pedidos diferentes disputando a mesma peça (reconcileOrderReservations).
-  deliveryDate: z.coerce.date({ errorMap: () => ({ message: 'Data de entrega inválida' }) }),
-  buyerOrPlatform: z.string().optional().nullable(),
-  orderNumber: z.string().optional().nullable(),
-  notes: z.string().optional().nullable(),
-})
+export const orderHeaderSchema = z
+  .object({
+    channel: orderChannelEnum,
+    orderDate: z.coerce.date({ errorMap: () => ({ message: 'Data inválida' }) }),
+    // Quando precisa estar pronto/entregue -- decide prioridade entre itens
+    // de pedidos diferentes disputando a mesma peça (reconcileOrderReservations).
+    deliveryDate: z.coerce.date({ errorMap: () => ({ message: 'Data de entrega inválida' }) }),
+    buyerOrPlatform: z.string().optional().nullable(),
+    orderNumber: z.string().optional().nullable(),
+    notes: z.string().optional().nullable(),
+    // Pedido do usuário "criar pedidos de encomendas de consignados
+    // também": obrigatório só pra channel=CONSIGNADO (refine abaixo) --
+    // nulo em todo pedido Direta/Shopee/Mercado Livre.
+    consignmentPartnerId: z.string().optional().nullable(),
+  })
+  .refine((data) => data.channel !== 'CONSIGNADO' || !!data.consignmentPartnerId, {
+    message: 'Selecione o parceiro de consignação',
+    path: ['consignmentPartnerId'],
+  })
 
 export const orderItemSchema = z.object({
   productId: z.string().min(1, 'Selecione um produto'),

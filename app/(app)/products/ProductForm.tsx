@@ -69,6 +69,9 @@ type PartRow = {
   filaments: PartFilamentRow[]
   printTimeHours: string
   quantityPerUnit: string
+  // Pedido do usuário "receita fixa em qualquer peça" -- ver comentário
+  // completo em ProductPart.fixedRecipe (schema.prisma).
+  fixedRecipe: boolean
 }
 
 type ExistingPart = {
@@ -77,6 +80,7 @@ type ExistingPart = {
   printerId: string
   filaments: { filamentId: string; weightGrams: number }[]
   printTimeHours: number
+  fixedRecipe: boolean
   quantityPerUnit: number
 }
 
@@ -89,7 +93,7 @@ function emptyPartFilamentRow(): PartFilamentRow {
 }
 
 function emptyPartRow(): PartRow {
-  return { name: '', printerId: '', filaments: [emptyPartFilamentRow()], printTimeHours: '', quantityPerUnit: '1' }
+  return { name: '', printerId: '', filaments: [emptyPartFilamentRow()], printTimeHours: '', quantityPerUnit: '1', fixedRecipe: false }
 }
 
 export function ProductForm({
@@ -168,6 +172,7 @@ export function ProductForm({
           filaments: p.filaments.map((f) => ({ filamentId: f.filamentId, weightGrams: String(f.weightGrams) })),
           printTimeHours: String(p.printTimeHours),
           quantityPerUnit: String(p.quantityPerUnit),
+          fixedRecipe: p.fixedRecipe,
         }))
       : [emptyPartRow()],
   )
@@ -255,6 +260,7 @@ export function ProductForm({
             filaments: p.filaments.map((f) => ({ filamentId: f.filamentId, weightGrams: parseFloat(f.weightGrams) })),
             printTimeHours: parseFloat(p.printTimeHours),
             quantityPerUnit: parseInt(p.quantityPerUnit, 10),
+            fixedRecipe: p.filaments.length > 1 || p.fixedRecipe,
           })),
         ),
       )
@@ -492,6 +498,21 @@ export function ProductForm({
                 <label className="text-xs">
                   Qtd. por unidade *
                   <input type="number" step="1" min="1" value={row.quantityPerUnit} onChange={(e) => updatePartRow(i, { quantityPerUnit: e.target.value })} className="tk-input-full" required />
+                </label>
+                {/* Pedido do usuário "receita fixa em qualquer peça": peça
+                    de 2+ filamentos já é SEMPRE fixa (estrutural, não dá
+                    pra "destravar" -- checkbox fica marcada e desabilitada
+                    só pra mostrar isso); peça de 1 filamento é um toggle
+                    de verdade. */}
+                <label className="flex items-end gap-1.5 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={row.filaments.length > 1 || row.fixedRecipe}
+                    disabled={row.filaments.length > 1}
+                    onChange={(e) => updatePartRow(i, { fixedRecipe: e.target.checked })}
+                    className="mb-1.5 rounded border"
+                  />
+                  <span>Receita fixa (cor não muda por pedido)</span>
                 </label>
                 {/* Bug "clicar em Remover peça já exclui": ação client-side
                     (sem confirmação nenhuma) apagava a peça inteira -- com

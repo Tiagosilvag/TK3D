@@ -64,8 +64,12 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
     const part = partById.get(partStatus.partId)
     // Peça sintética (produto simples com insumo/acessório): sem
     // ProductPart real, sempre cor variável (mesmo tratamento de
-    // getAssemblyStatus pro caso !isComposite).
-    const isFixedRecipe = part ? part.filamentComponents.length >= 2 : false
+    // getAssemblyStatus pro caso !isComposite). Peça real é fixa quando
+    // tem 2+ componentes (estrutural, sempre foi assim) OU quando o
+    // usuário marcou `fixedRecipe` explicitamente no cadastro do produto
+    // (pedido "receita fixa em qualquer peça" -- deixa fixar também uma
+    // peça de 1 filamento só).
+    const isFixedRecipe = part ? (part.fixedRecipe || part.filamentComponents.length >= 2) : false
 
     if (isFixedRecipe) {
       const label = part!.filamentComponents.map((c) => `${c.filament.manufacturer} ${c.filament.colorName} (${c.filament.material})`).join(' + ')
@@ -266,6 +270,7 @@ export async function createOrder(formData: FormData): Promise<ActionResult> {
     buyerOrPlatform: raw.buyerOrPlatform || null,
     orderNumber: raw.orderNumber || null,
     notes: raw.notes || null,
+    consignmentPartnerId: raw.consignmentPartnerId || null,
   })
   if (!headerParsed.success) return { success: false, error: headerParsed.error.issues[0].message }
 
@@ -320,13 +325,15 @@ export async function addOrderItems(orderId: string, formData: FormData): Promis
 // enum de Sale só distingue esses dois grandes grupos) -- o nome exato da
 // plataforma vai pro campo Comprador/Plataforma da Sale, então a
 // informação não se perde mesmo sem 4.1 (plataformas configuráveis) ainda
-// existir.
-const ORDER_CHANNEL_TO_SALE_CHANNEL: Record<OrderChannel, SaleChannel> = {
+// existir. `Exclude<OrderChannel, 'CONSIGNADO'>` (em vez de OrderChannel
+// puro) documenta no tipo que Consignado nunca passa por aqui -- vira
+// ConsignmentDelivery em updateOrderItemStatus, nunca Sale.
+const ORDER_CHANNEL_TO_SALE_CHANNEL: Record<Exclude<OrderChannel, 'CONSIGNADO'>, SaleChannel> = {
   DIRETA: 'DIRETA',
   SHOPEE: 'MARKETPLACE',
   MERCADO_LIVRE: 'MARKETPLACE',
 }
-const ORDER_CHANNEL_PLATFORM_LABEL: Record<OrderChannel, string> = {
+const ORDER_CHANNEL_PLATFORM_LABEL: Record<Exclude<OrderChannel, 'CONSIGNADO'>, string> = {
   DIRETA: 'Direta',
   SHOPEE: 'Shopee',
   MERCADO_LIVRE: 'Mercado Livre',
@@ -354,61 +361,89 @@ async function resolveMarketplaceNotificationIfTerminal(orderId: string, status:
 
 // Muda o status de um ITEM do pedido (não o pedido inteiro -- cada item
 // tem seu próprio ciclo de vida desde "Pedidos com múltiplos itens"); ao
-// chegar em ENTREGUE pela primeira vez (nunca se já tiver saleId --
-// idempotente contra clique duplo/reentrada), cria a Sale correspondente
-// com o costSnapshot já congelado (mesmo padrão de createSale em
-// actions/sales.ts), puxando canal/comprador/número do CABEÇALHO (Order)
-// via include, e vincula via OrderItem.saleId. Os status intermediários
-// (AGUARDANDO_PRODUCAO/PARCIAL_.../AGUARDANDO_MONTAGEM/PRONTO_RESERVADO)
-// não são setados por aqui -- são derivados por reconcileOrderReservations,
-// a UI só mostra (ver OrderStatusForm.tsx).
+// chegar em ENTREGUE pela primeira vez (nunca se já virou Sale OU
+// ConsignmentDelivery -- idempotente contra clique duplo/reentrada, os
+// dois mutuamente exclusivos por item), cria o registro correspondente
+// com o costSnapshot já congelado quando é Sale (mesmo padrão de
+// createSale em actions/sales.ts), puxando canal/comprador/número do
+// CABEÇALHO (Order) via include. Pedido do usuário "criar pedidos de
+// encomendas de consignados também": canal CONSIGNADO cria uma
+// ConsignmentDelivery em vez de Sale (ver comentário na função abaixo).
+// Os status intermediários (AGUARDANDO_PRODUCAO/PARCIAL_.../
+// AGUARDANDO_MONTAGEM/PRONTO_RESERVADO) não são setados por aqui -- são
+// derivados por reconcileOrderReservations, a UI só mostra
+// (ver OrderStatusForm.tsx).
 export async function updateOrderItemStatus(id: string, formData: FormData): Promise<ActionResult> {
   const parsed = updateStatusSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
   const item = await prisma.orderItem.findUniqueOrThrow({ where: { id }, include: { order: true } })
 
-  if (parsed.data.status !== 'ENTREGUE' || item.saleId) {
+  if (parsed.data.status !== 'ENTREGUE' || item.saleId || item.consignmentDeliveryId) {
     await prisma.orderItem.update({ where: { id }, data: { status: parsed.data.status } })
     await resolveMarketplaceNotificationIfTerminal(item.orderId, parsed.data.status)
     revalidatePath('/orders')
     return { success: true }
   }
 
-  const breakdown = await getProductCostBreakdown(item.productId)
-  const saleChannel = ORDER_CHANNEL_TO_SALE_CHANNEL[item.order.channel]
-  const platformFee = await resolveSalePlatformFee(saleChannel, item.unitPrice.toNumber(), item.productId)
-  const snapshot = buildSaleCostSnapshot(
-    breakdown,
-    item.quantity,
-    platformFee ? { feePercent: platformFee.feePercent, feeFixed: platformFee.feeFixed, amountTotal: platformFee.feeAmountPerUnit * item.quantity } : undefined,
-  )
-
-  await prisma.$transaction(async (tx) => {
-    const sale = await tx.sale.create({
-      data: {
-        channel: saleChannel,
-        productId: item.productId,
-        colorComboKey: item.colorComboKey,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        saleDate: new Date(),
-        buyerOrPlatform: item.order.buyerOrPlatform ?? ORDER_CHANNEL_PLATFORM_LABEL[item.order.channel],
-        notes: item.order.orderNumber ? `Pedido #${item.order.orderNumber}` : null,
-        costSnapshot: snapshot as unknown as Prisma.InputJsonValue,
-        // Melhoria "Vendas: múltiplos produtos numa venda": Sale.batchId é
-        // NOT NULL -- item de pedido concluído sempre vira uma venda de 1
-        // item só, então recebe seu próprio lote (mesmo raciocínio de
-        // createSale).
-        batchId: randomUUID(),
-      },
+  if (item.order.channel === 'CONSIGNADO') {
+    // Mesmo shape que createConsignmentDelivery grava hoje
+    // (actions/consignmentDeliveries.ts) -- entrega em consignação nunca
+    // consome embalagem (isso só acontece na venda final, registrada
+    // depois em Consignação > Relatórios de venda) nem monta
+    // costSnapshot (ConsignmentDelivery não tem esse campo).
+    await prisma.$transaction(async (tx) => {
+      const delivery = await tx.consignmentDelivery.create({
+        data: {
+          batchId: randomUUID(),
+          partnerId: item.order.consignmentPartnerId!,
+          productId: item.productId,
+          colorComboKey: item.colorComboKey,
+          quantityDelivered: item.quantity,
+          unitPrice: item.unitPrice,
+          deliveryDate: new Date(),
+          notes: item.order.orderNumber ? `Pedido #${item.order.orderNumber}` : null,
+        },
+      })
+      await tx.orderItem.update({ where: { id }, data: { status: 'ENTREGUE', consignmentDeliveryId: delivery.id } })
     })
-    await tx.orderItem.update({ where: { id }, data: { status: 'ENTREGUE', saleId: sale.id } })
-    // Melhoria "Histórico de consumo": mesmo consumo de embalagem que
-    // createSale aplica (actions/sales.ts) -- item concluído vira Sale
-    // aqui direto (nunca chama createSale), então precisa do mesmo passo.
-    await consumePackagingForSale(tx, sale.id, item.productId, item.quantity)
-  })
+  } else {
+    const breakdown = await getProductCostBreakdown(item.productId)
+    const saleChannel = ORDER_CHANNEL_TO_SALE_CHANNEL[item.order.channel]
+    const platformLabel = ORDER_CHANNEL_PLATFORM_LABEL[item.order.channel]
+    const platformFee = await resolveSalePlatformFee(saleChannel, item.unitPrice.toNumber(), item.productId)
+    const snapshot = buildSaleCostSnapshot(
+      breakdown,
+      item.quantity,
+      platformFee ? { feePercent: platformFee.feePercent, feeFixed: platformFee.feeFixed, amountTotal: platformFee.feeAmountPerUnit * item.quantity } : undefined,
+    )
+
+    await prisma.$transaction(async (tx) => {
+      const sale = await tx.sale.create({
+        data: {
+          channel: saleChannel,
+          productId: item.productId,
+          colorComboKey: item.colorComboKey,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          saleDate: new Date(),
+          buyerOrPlatform: item.order.buyerOrPlatform ?? platformLabel,
+          notes: item.order.orderNumber ? `Pedido #${item.order.orderNumber}` : null,
+          costSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+          // Melhoria "Vendas: múltiplos produtos numa venda": Sale.batchId é
+          // NOT NULL -- item de pedido concluído sempre vira uma venda de 1
+          // item só, então recebe seu próprio lote (mesmo raciocínio de
+          // createSale).
+          batchId: randomUUID(),
+        },
+      })
+      await tx.orderItem.update({ where: { id }, data: { status: 'ENTREGUE', saleId: sale.id } })
+      // Melhoria "Histórico de consumo": mesmo consumo de embalagem que
+      // createSale aplica (actions/sales.ts) -- item concluído vira Sale
+      // aqui direto (nunca chama createSale), então precisa do mesmo passo.
+      await consumePackagingForSale(tx, sale.id, item.productId, item.quantity)
+    })
+  }
 
   // ENTREGUE é terminal -- sai da conta de "reservado", reconcilia pra
   // dar a próxima peça (se sobrar alguma, o que não deveria acontecer já
@@ -421,6 +456,7 @@ export async function updateOrderItemStatus(id: string, formData: FormData): Pro
   revalidatePath('/sales')
   revalidatePath('/stock')
   revalidatePath('/packaging')
+  revalidatePath('/consignment/deliveries')
   return { success: true }
 }
 
@@ -442,6 +478,7 @@ export async function updateOrderItem(id: string, formData: FormData): Promise<A
 
   const item = await prisma.orderItem.findUniqueOrThrow({ where: { id } })
   if (item.saleId) return { success: false, error: 'Este item já virou venda -- edite em Vendas, se necessário.' }
+  if (item.consignmentDeliveryId) return { success: false, error: 'Este item já virou entrega de consignação -- edite em Consignação, se necessário.' }
 
   await prisma.orderItem.update({ where: { id }, data: { quantity: parsed.data.quantity, unitPrice: parsed.data.unitPrice } })
   const reallocations = await reconcileOrderReservations(item.productId, item.colorComboKey)
@@ -466,6 +503,7 @@ export async function updateOrderItem(id: string, formData: FormData): Promise<A
 export async function removeOrderItem(id: string): Promise<ActionResult> {
   const item = await prisma.orderItem.findUniqueOrThrow({ where: { id } })
   if (item.saleId) return { success: false, error: 'Este item já virou venda -- remova a venda em Vendas, se necessário.' }
+  if (item.consignmentDeliveryId) return { success: false, error: 'Este item já virou entrega de consignação -- remova a entrega em Consignação, se necessário.' }
 
   const siblingCount = await prisma.orderItem.count({ where: { orderId: item.orderId } })
   if (siblingCount <= 1) return { success: false, error: 'Este é o único item do pedido -- exclua o pedido inteiro em vez de remover o item.' }
@@ -547,6 +585,9 @@ export async function deleteOrder(id: string): Promise<ActionResult> {
   const order = await prisma.order.findUniqueOrThrow({ where: { id }, include: { items: true } })
   if (order.items.some((i) => i.saleId)) {
     return { success: false, error: 'Este pedido já tem item(ns) entregue(s) que viraram venda — remova a venda em Vendas, se necessário.' }
+  }
+  if (order.items.some((i) => i.consignmentDeliveryId)) {
+    return { success: false, error: 'Este pedido já tem item(ns) entregue(s) que viraram entrega de consignação — remova a entrega em Consignação, se necessário.' }
   }
   const pairs = new Map<string, { productId: string; colorComboKey: string | null }>()
   for (const i of order.items) pairs.set(`${i.productId}::${i.colorComboKey ?? ''}`, i)

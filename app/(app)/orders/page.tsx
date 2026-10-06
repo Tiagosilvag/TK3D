@@ -8,7 +8,7 @@ import type { MarketplaceOrderInboxItem } from '@/lib/mercadoLivre/orders'
 export const dynamic = 'force-dynamic'
 
 export default async function OrdersPage() {
-  const [orders, variantProducts, filaments, pendingInbox] = await Promise.all([
+  const [orders, variantProducts, filaments, pendingInbox, partners] = await Promise.all([
     prisma.order.findMany({
       orderBy: { deliveryDate: 'asc' },
       include: {
@@ -32,6 +32,9 @@ export default async function OrdersPage() {
     // Caixa de entrada de pedidos Mercado Livre (Task 10): linhas criadas
     // pelo webhook/poller (Tasks 7-9) esperando confirmação humana.
     prisma.marketplaceOrderInbox.findMany({ where: { status: 'PENDENTE' }, orderBy: { receivedAt: 'asc' } }),
+    // Pedido do usuário "criar pedidos de encomendas de consignados
+    // também": seletor de parceiro em "Novo pedido", só ativo.
+    prisma.consignmentPartner.findMany({ where: { active: true }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
   ])
   const filamentStockById = new Map(filaments.map((f) => [f.id, f.currentStockGrams.toNumber()]))
 
@@ -93,6 +96,7 @@ export default async function OrdersPage() {
         unitPrice: item.unitPrice.toNumber(),
         status: item.status,
         saleId: item.saleId,
+        consignmentDeliveryId: item.consignmentDeliveryId,
         reallocationsLost: item.reallocationsLost.map((r) => ({
           quantity: r.quantity,
           toOrderNumber: r.toOrderItem.order.orderNumber,
@@ -114,7 +118,7 @@ export default async function OrdersPage() {
     <div className="tk-page">
       <h1 className="tk-page-title">Pedidos</h1>
       <MarketplaceInboxSection pendingOrders={pendingOrders} products={products} />
-      <OrdersExplorer rows={rows} products={products} />
+      <OrdersExplorer rows={rows} products={products} partners={partners} />
     </div>
   )
 }
