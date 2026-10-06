@@ -6,6 +6,7 @@ import {
   productionRunSchema,
   productionRunWasteUpdateSchema,
   productionRunBatchSchema,
+  productionRunDemandBatchSchema,
   createPlateSchema,
 } from '@/lib/validation/productionRun'
 import {
@@ -584,6 +585,100 @@ export async function createProductionRunBatch(formData: FormData): Promise<Acti
   revalidatePath('/supplies')
   // Ver comentário no primeiro revalidatePath('/assembly') acima (bug
   // "excluir/cancelar produção não atualiza Montagem/Estoque").
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
+  revalidatePath('/orders')
+  return { success: true }
+}
+
+// Pedido do usuário: "quero conseguir registrar produção de todos os
+// pendentes, quero selecionar todos ou alguns" -- registra em lote a
+// partir do painel "Peças pendentes de encomenda" (DemandQueuePanel),
+// aberto com um subconjunto (todas ou algumas) das linhas pendentes
+// marcadas pelo usuário. Mesma garantia "tudo ou nada" de
+// createProductionRunBatch (reservedGramsByFilament evita double-booking
+// quando 2+ linhas selecionadas compartilham o mesmo filamento) -- só que,
+// ao contrário daquela função (1 produto só por chamada), cada item aqui
+// pode ser de um PRODUTO DIFERENTE (a fila de demanda nunca se limita a 1
+// produto), então a reconciliação/auto-montagem rodam por item (productId
+// próprio), não uma vez só no fim pro produto inteiro.
+export async function createProductionRunDemandBatch(formData: FormData): Promise<ActionResult> {
+  const raw = Object.fromEntries(formData)
+  let items: unknown = []
+  try {
+    items = JSON.parse(String(raw.itemsJson ?? '[]'))
+  } catch {
+    items = []
+  }
+  const parsed = productionRunDemandBatchSchema.safeParse({ items })
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+
+  const batchId = randomUUID()
+  const allOps: Prisma.PrismaPromise<unknown>[] = []
+  const reservedGramsByFilament = new Map<string, number>()
+  // Reconciliar/auto-montar por (productId, filamentId) distinto -- 2
+  // produtos diferentes podem coincidentemente reutilizar o mesmo
+  // filamentId, então a chave precisa dos dois, não só do filamento (ao
+  // contrário de createProductionRunBatch, que já sabe que productId é
+  // sempre o mesmo pro lote inteiro).
+  const usedPairs = new Map<string, { productId: string; filamentId: string }>()
+  const autoAssembleCandidates: { productId: string; productPartId: string | null; quantitySuccess: number; filamentId: string; filamentUsages: { filamentId: string }[] }[] = []
+
+  for (const item of parsed.data.items) {
+    const quantityFailed = Math.max(0, item.quantityPlanned - item.quantitySuccess)
+    const [first, ...restFilaments] = item.filaments
+    const filamentUsages = restFilaments.length > 0
+      ? item.filaments.map((f) => ({
+          filamentId: f.filamentId,
+          gramsUsed: f.weightGramsPerUnit * item.quantityPlanned,
+          gramsWasted: f.gramsWasted,
+        }))
+      : undefined
+
+    const result = await prepareProductionRunCreation(
+      {
+        productId: item.productId,
+        productPartId: item.productPartId ?? null,
+        printerId: item.printerId,
+        filamentId: first.filamentId,
+        date: item.date,
+        quantityPlanned: item.quantityPlanned,
+        quantitySuccess: item.quantitySuccess,
+        quantityFailed,
+        gramsUsed: first.weightGramsPerUnit * item.quantityPlanned,
+        gramsWasted: first.gramsWasted,
+        timeWastedHours: item.timeWastedHours,
+        wasteReason: item.wasteReason ?? null,
+        notes: item.notes ?? null,
+        batchId,
+      },
+      filamentUsages,
+      reservedGramsByFilament,
+    )
+    if (!result.success) return result
+    allOps.push(...result.ops)
+    usedPairs.set(`${item.productId}::${first.filamentId}`, { productId: item.productId, filamentId: first.filamentId })
+    autoAssembleCandidates.push({
+      productId: item.productId,
+      productPartId: item.productPartId ?? null,
+      quantitySuccess: item.quantitySuccess,
+      filamentId: first.filamentId,
+      filamentUsages: filamentUsages ?? [],
+    })
+  }
+
+  await prisma.$transaction(allOps)
+  for (const { productId, filamentId } of usedPairs.values()) {
+    await maybeReconcileAfterProduction(productId, filamentId)
+  }
+  for (const candidate of autoAssembleCandidates) {
+    await maybeAutoAssembleAfterProduction(candidate)
+  }
+
+  revalidatePath('/production')
+  revalidatePath('/filaments')
+  revalidatePath('/accessories')
+  revalidatePath('/supplies')
   revalidatePath('/assembly')
   revalidatePath('/stock')
   revalidatePath('/orders')
