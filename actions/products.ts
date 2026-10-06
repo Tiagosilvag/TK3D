@@ -326,6 +326,97 @@ export async function deleteProduct(id: string): Promise<ActionResult> {
   return { success: true }
 }
 
+// Pedido do usuário: "copiar um anúncio" (produto na tela Produtos) --
+// clona a ficha técnica inteira (peças/componentes de filamento, insumos,
+// acessórios, acessório-por-cor, embalagens, produto-como-componente, e
+// Brinde quando isGift) num Product novo, pra cadastrar rápido algo quase
+// igual a um já existente (ex.: mesma caneca, estampa diferente) sem
+// preencher tudo nos formulários de novo. Nunca clona histórico
+// transacional (ProductionRun/ProductAssembly/Sale/fotos/Anúncios) --
+// aquilo pertence à produção/venda REAL de cada produto, não à ficha
+// técnica. suggestedPrice/marketplacePrice também ficam de fora (de
+// propósito, mesma regra do schema: só gravados por "Aplicar preço
+// calculado" explícito do usuário, nunca copiados/inventados).
+export async function duplicateProduct(id: string): Promise<ActionResult & { productId?: string }> {
+  const source = await prisma.product.findUnique({
+    where: { id },
+    include: {
+      parts: { include: { filamentComponents: true } },
+      supplyUsages: true,
+      accessoryUsages: true,
+      accessoryColorUsages: true,
+      packagingUsages: true,
+      componentUsages: true,
+      giftMaterials: true,
+      giftEquipment: true,
+    },
+  })
+  if (!source) return { success: false, error: 'Produto não encontrado.' }
+
+  const created = await prisma.$transaction(async (tx) => {
+    const clone = await tx.product.create({
+      data: {
+        name: `${source.name} (cópia)`,
+        category: source.category,
+        isComposite: source.isComposite,
+        printerId: source.printerId,
+        filamentId: source.filamentId,
+        weightGrams: source.weightGrams,
+        printTimeHours: source.printTimeHours,
+        laborTimeHours: source.laborTimeHours,
+        finishingType: source.finishingType,
+        usesGlue: source.usesGlue,
+        notes: source.notes,
+        isGift: source.isGift,
+        giftEnergyCostPerKwh: source.giftEnergyCostPerKwh,
+      },
+    })
+
+    for (const part of source.parts) {
+      await tx.productPart.create({
+        data: {
+          productId: clone.id,
+          name: part.name,
+          printerId: part.printerId,
+          printTimeHours: part.printTimeHours,
+          quantityPerUnit: part.quantityPerUnit,
+          filamentComponents: { create: part.filamentComponents.map((f) => ({ filamentId: f.filamentId, weightGrams: f.weightGrams })) },
+        },
+      })
+    }
+    if (source.supplyUsages.length > 0) {
+      await tx.productSupplyUsage.createMany({ data: source.supplyUsages.map((u) => ({ productId: clone.id, supplyId: u.supplyId, quantity: u.quantity })) })
+    }
+    if (source.accessoryUsages.length > 0) {
+      await tx.productAccessoryUsage.createMany({ data: source.accessoryUsages.map((u) => ({ productId: clone.id, accessoryId: u.accessoryId, quantity: u.quantity })) })
+    }
+    if (source.accessoryColorUsages.length > 0) {
+      await tx.productAccessoryColorUsage.createMany({ data: source.accessoryColorUsages.map((u) => ({ productId: clone.id, colorComboKey: u.colorComboKey, accessoryId: u.accessoryId, quantity: u.quantity })) })
+    }
+    if (source.packagingUsages.length > 0) {
+      await tx.productPackagingUsage.createMany({ data: source.packagingUsages.map((u) => ({ productId: clone.id, packagingItemId: u.packagingItemId, quantity: u.quantity })) })
+    }
+    if (source.componentUsages.length > 0) {
+      await tx.productComponentUsage.createMany({ data: source.componentUsages.map((u) => ({ productId: clone.id, componentProductId: u.componentProductId, quantity: u.quantity })) })
+    }
+    if (source.giftMaterials.length > 0) {
+      await tx.productGiftMaterial.createMany({ data: source.giftMaterials.map((m) => ({ productId: clone.id, description: m.description, unitCost: m.unitCost })) })
+    }
+    if (source.giftEquipment.length > 0) {
+      await tx.productGiftEquipmentUsage.createMany({
+        data: source.giftEquipment.map((e) => ({ productId: clone.id, name: e.name, purchasePrice: e.purchasePrice, usefulLifeUses: e.usefulLifeUses, powerWatts: e.powerWatts, minutesPerUnit: e.minutesPerUnit })),
+      })
+    }
+
+    return clone
+  })
+
+  revalidatePath('/products')
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
+  return { success: true, productId: created.id }
+}
+
 // Melhoria "Produto-como-componente": custo médio de produção de UM
 // produto (usado quando ele é consumido como componente de outro, ex.:
 // Mosquetão dentro de Chaveiro Café) -- média ponderada por unidade bem-
