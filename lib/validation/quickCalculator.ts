@@ -11,11 +11,19 @@ export const quickCalcUsageSchema = z.object({
   quantity: z.number().positive('Quantidade deve ser maior que zero'),
 })
 
+// Melhoria "Calculadora rápida multi-filamento": filamentId/weightGrams
+// únicos viraram filamentComponents (mesma mudança ProductPart/
+// ProductPartFilament já fez pro formulário completo de produto) -- pelo
+// menos 1 componente sempre exigido.
+export const quickCalcFilamentComponentSchema = z.object({
+  filamentId: z.string().min(1),
+  weightGrams: z.number().positive('Peso deve ser maior que zero'),
+})
+
 export const quickCalcProductSchema = z.object({
   name: z.string().min(1, 'Nome é obrigatório'),
   category: z.string().min(1, 'Selecione a categoria'),
-  filamentId: z.string().min(1, 'Selecione um filamento'),
-  weightGrams: z.number().positive('Peso deve ser maior que zero'),
+  filamentComponents: z.array(quickCalcFilamentComponentSchema).min(1, 'Selecione ao menos um filamento'),
   printerId: z.string().min(1).nullable(),
   printTimeHours: z.number().positive('Tempo de impressão deve ser maior que zero'),
   laborTimeHours: z.number().nonnegative('Tempo de mão de obra não pode ser negativo'),

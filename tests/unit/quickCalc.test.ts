@@ -4,8 +4,7 @@ import { calculateQuickEstimate } from '@/lib/quickCalc'
 describe('calculateQuickEstimate', () => {
   it('soma filamento + impressora + insumos/acessórios + mão de obra', () => {
     const result = calculateQuickEstimate({
-      weightGrams: 10,
-      filamentPricePerGram: 0.08,
+      filamentComponents: [{ weightGrams: 10, pricePerGram: 0.08 }],
       printTimeHours: 2,
       printerCostPerHour: 0.9,
       suppliesAndAccessoriesCost: 1.5,
@@ -19,10 +18,9 @@ describe('calculateQuickEstimate', () => {
     expect(result.total).toBeCloseTo(0.8 + 1.8 + 1.5 + 10 / 12, 4)
   })
 
-  it('sem filamento selecionado (pricePerGram=0) nem insumos/acessórios, soma só impressora + mão de obra', () => {
+  it('sem filamento selecionado nem insumos/acessórios, soma só impressora + mão de obra', () => {
     const result = calculateQuickEstimate({
-      weightGrams: 10,
-      filamentPricePerGram: 0,
+      filamentComponents: [],
       printTimeHours: 1,
       printerCostPerHour: 0.5,
       suppliesAndAccessoriesCost: 0,
@@ -33,5 +31,21 @@ describe('calculateQuickEstimate', () => {
     expect(result.suppliesAndAccessoriesCost).toBe(0)
     expect(result.laborCost).toBe(0)
     expect(result.total).toBeCloseTo(0.5, 4)
+  })
+
+  it('multi-material: soma o custo de cada componente de filamento separadamente', () => {
+    const result = calculateQuickEstimate({
+      filamentComponents: [
+        { weightGrams: 15, pricePerGram: 0.08 },
+        { weightGrams: 8, pricePerGram: 0.12 },
+      ],
+      printTimeHours: 1,
+      printerCostPerHour: 0.5,
+      suppliesAndAccessoriesCost: 0,
+      laborTimeHours: 0,
+      laborCostPerHour: 10,
+    })
+    expect(result.filamentCost).toBeCloseTo(15 * 0.08 + 8 * 0.12, 4)
+    expect(result.total).toBeCloseTo(15 * 0.08 + 8 * 0.12 + 0.5, 4)
   })
 })

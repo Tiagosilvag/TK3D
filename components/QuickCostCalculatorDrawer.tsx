@@ -16,6 +16,11 @@ const DEFAULT_PRINT_TIME_HOURS = 1
 const AVERAGE_PRINTER_CHOICE = 'AVERAGE'
 
 type SelectedItem = { kind: 'supply' | 'accessory'; id: string; name: string; unitCost: number; quantity: number; unit?: string }
+// Melhoria "Calculadora rápida multi-filamento": 1+ filamentos ao mesmo
+// tempo (impressão multi-material), cada um com seu próprio peso -- mesmo
+// conceito de ProductPartFilament (CLAUDE.md), só que resolvido no client
+// antes de existir qualquer ProductPart de verdade.
+type SelectedFilament = { filamentId: string; weightGrams: number }
 
 function chipClass(active: boolean): string {
   return `rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
@@ -64,8 +69,7 @@ export function QuickCostCalculatorButton() {
   const panelRef = useRef<HTMLDivElement>(null)
   const [isPending, startTransition] = useTransition()
 
-  const [filamentId, setFilamentId] = useState<string | null>(null)
-  const [weightGrams, setWeightGrams] = useState(DEFAULT_WEIGHT_GRAMS)
+  const [selectedFilaments, setSelectedFilaments] = useState<SelectedFilament[]>([])
   const [printTimeHours, setPrintTimeHours] = useState(DEFAULT_PRINT_TIME_HOURS)
   const [laborTimeHours, setLaborTimeHours] = useState(5 / 60)
   const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([])
@@ -99,8 +103,7 @@ export function QuickCostCalculatorButton() {
   }, [isOpen])
 
   function resetToDefaults() {
-    setFilamentId(null)
-    setWeightGrams(DEFAULT_WEIGHT_GRAMS)
+    setSelectedFilaments([])
     setPrintTimeHours(DEFAULT_PRINT_TIME_HOURS)
     setLaborTimeHours(data?.defaultLaborTimeHours ?? 5 / 60)
     setSelectedItems([])
@@ -113,6 +116,18 @@ export function QuickCostCalculatorButton() {
 
   function close() {
     setIsOpen(false)
+  }
+
+  function addFilament(f: { id: string }) {
+    setSelectedFilaments((prev) => (prev.some((i) => i.filamentId === f.id) ? prev : [...prev, { filamentId: f.id, weightGrams: DEFAULT_WEIGHT_GRAMS }]))
+  }
+
+  function removeFilament(filamentId: string) {
+    setSelectedFilaments((prev) => prev.filter((i) => i.filamentId !== filamentId))
+  }
+
+  function updateFilamentWeight(filamentId: string, weightGrams: number) {
+    setSelectedFilaments((prev) => prev.map((i) => (i.filamentId === filamentId ? { ...i, weightGrams } : i)))
   }
 
   function addItem(kind: 'supply' | 'accessory', opt: { id: string; name: string; unitCost: number; unit?: string; defaultUsage?: number | null }) {
@@ -130,12 +145,14 @@ export function QuickCostCalculatorButton() {
     setSelectedItems((prev) => prev.map((i) => (i.kind === kind && i.id === id ? { ...i, quantity } : i)))
   }
 
-  const filament = data?.filaments.find((f) => f.id === filamentId) ?? null
   const suppliesAndAccessoriesCost = selectedItems.reduce((sum, i) => sum + i.quantity * i.unitCost, 0)
+  const filamentComponents = selectedFilaments.map((sf) => ({
+    weightGrams: sf.weightGrams,
+    pricePerGram: data?.filaments.find((f) => f.id === sf.filamentId)?.pricePerGram ?? 0,
+  }))
 
   const breakdown = calculateQuickEstimate({
-    weightGrams,
-    filamentPricePerGram: filament?.pricePerGram ?? 0,
+    filamentComponents,
     printTimeHours,
     printerCostPerHour: data?.averagePrinterCostPerHour ?? 0,
     suppliesAndAccessoriesCost,
@@ -149,8 +166,7 @@ export function QuickCostCalculatorButton() {
     printerChoice === AVERAGE_PRINTER_CHOICE
       ? breakdown
       : calculateQuickEstimate({
-          weightGrams,
-          filamentPricePerGram: filament?.pricePerGram ?? 0,
+          filamentComponents,
           printTimeHours,
           printerCostPerHour: registerPrinterCostPerHour,
           suppliesAndAccessoriesCost,
@@ -159,7 +175,7 @@ export function QuickCostCalculatorButton() {
         })
 
   function handleCreateProduct() {
-    if (!filamentId) return setFormError('Selecione um filamento.')
+    if (selectedFilaments.length === 0) return setFormError('Selecione ao menos um filamento.')
     if (!productName.trim()) return setFormError('Informe o nome do produto.')
     if (!productCategory.trim()) return setFormError('Informe a categoria.')
     setFormError(null)
@@ -167,8 +183,7 @@ export function QuickCostCalculatorButton() {
       const result = await createProductFromQuickCalc({
         name: productName.trim(),
         category: productCategory.trim(),
-        filamentId,
-        weightGrams,
+        filamentComponents: selectedFilaments,
         printerId: printerChoice === AVERAGE_PRINTER_CHOICE ? null : printerChoice,
         printTimeHours,
         laborTimeHours,
@@ -216,25 +231,57 @@ export function QuickCostCalculatorButton() {
                 <div className="space-y-5">
                   <div>
                     <div className="flex items-center justify-between">
-                      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Filamento</p>
+                      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                        Filamento{selectedFilaments.length > 1 ? 's (multi-material)' : ''}
+                      </p>
                       {data.filaments.length === 0 && <span className="text-xs text-amber-600 dark:text-amber-400">Nenhum cadastrado</span>}
                     </div>
+                    {/* Multi-select: clicar de novo num chip já escolhido
+                        remove -- cada filamento selecionado ganha seu
+                        próprio peso logo abaixo (impressão multi-material,
+                        mesmo conceito de ProductPartFilament). */}
                     <div className="mt-1 flex flex-wrap gap-1.5">
-                      {data.filaments.map((f) => (
-                        <button key={f.id} type="button" onClick={() => setFilamentId(f.id)} className={`flex items-center gap-1.5 ${chipClass(filamentId === f.id)}`}>
-                          {f.colorHex && <span style={{ background: f.colorHex }} className="inline-block h-2 w-2 shrink-0 rounded-full" />}
-                          {f.name}
-                        </button>
-                      ))}
+                      {data.filaments.map((f) => {
+                        const active = selectedFilaments.some((i) => i.filamentId === f.id)
+                        return (
+                          <button
+                            key={f.id}
+                            type="button"
+                            onClick={() => (active ? removeFilament(f.id) : addFilament(f))}
+                            className={`flex items-center gap-1.5 ${chipClass(active)}`}
+                          >
+                            {f.colorHex && <span style={{ background: f.colorHex }} className="inline-block h-2 w-2 shrink-0 rounded-full" />}
+                            {f.name}
+                          </button>
+                        )
+                      })}
                     </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <div className="flex flex-wrap gap-1">
-                        {WEIGHT_PRESETS_GRAMS.map((g) => (
-                          <button key={g} type="button" onClick={() => setWeightGrams(g)} className={chipClass(weightGrams === g)}>{g}g</button>
-                        ))}
+                    {selectedFilaments.length > 0 && (
+                      <div className="mt-2 space-y-1.5">
+                        {selectedFilaments.map((sf) => {
+                          const f = data.filaments.find((x) => x.id === sf.filamentId)
+                          return (
+                            <div key={sf.filamentId} className="rounded-lg bg-slate-50 px-2 py-1.5 dark:bg-slate-800/60">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm">
+                                  {f?.colorHex && <span style={{ background: f.colorHex }} className="inline-block h-2 w-2 shrink-0 rounded-full" />}
+                                  {f?.name ?? '—'}
+                                </span>
+                                <button type="button" onClick={() => removeFilament(sf.filamentId)} className="shrink-0 text-slate-400 hover:text-red-600 dark:hover:text-red-400">✕</button>
+                              </div>
+                              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                                <div className="flex flex-wrap gap-1">
+                                  {WEIGHT_PRESETS_GRAMS.map((g) => (
+                                    <button key={g} type="button" onClick={() => updateFilamentWeight(sf.filamentId, g)} className={chipClass(sf.weightGrams === g)}>{g}g</button>
+                                  ))}
+                                </div>
+                                <Stepper value={sf.weightGrams} onChange={(v) => updateFilamentWeight(sf.filamentId, v)} step={1} min={1} format={formatGrams} />
+                              </div>
+                            </div>
+                          )
+                        })}
                       </div>
-                      <Stepper value={weightGrams} onChange={setWeightGrams} step={1} min={1} format={formatGrams} />
-                    </div>
+                    )}
                     <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Custo filamento: {formatCurrency(breakdown.filamentCost)}</p>
                   </div>
 
