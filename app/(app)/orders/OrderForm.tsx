@@ -4,11 +4,27 @@ import { useRouter } from 'next/navigation'
 import { createOrder, addOrderItems } from '@/actions/orders'
 import { formatCurrency, ORDER_CHANNEL_LABELS } from '@/lib/format'
 import { todayInBrasiliaString as today } from '@/lib/timezone'
+import { chipClass } from '@/components/Chip'
+import { Stepper } from '@/components/Stepper'
 import { SubmitButton } from '@/components/SubmitButton'
 import { CustomVariantPicker, type CustomVariantChoice } from './CustomVariantPicker'
 import type { OrderReallocationEvent } from '@/lib/orderReservations'
 
 const CHANNELS = Object.entries(ORDER_CHANNEL_LABELS) as [keyof typeof ORDER_CHANNEL_LABELS, string][]
+
+const DELIVERY_CHIPS = [
+  { label: 'Hoje', days: 0 },
+  { label: 'Amanhã', days: 1 },
+  { label: 'Em 2 dias', days: 2 },
+  { label: 'Em 4 dias', days: 4 },
+  { label: 'Semana que vem', days: 7 },
+]
+
+function addDays(days: number): string {
+  const d = new Date(`${today()}T00:00:00`)
+  d.setDate(d.getDate() + days)
+  return d.toISOString().slice(0, 10)
+}
 
 // Melhoria "Pedidos com múltiplos itens": mesmo shape de
 // SaleForm.tsx#ProductVariantOption/ProductOption -- Pedidos escolhe
@@ -40,21 +56,117 @@ interface ItemDraft {
   unitPrice: number
 }
 
-// Melhoria "Pedidos com múltiplos itens" §1-3: cadastro vira modal com um
-// fluxo em passos (mesmo padrão de DeliveryBatchForm.tsx em Entregas de
-// consignação) -- dados do cabeçalho preenchidos uma vez, "+ Adicionar
-// item" abre a lista de produtos, escolher um produto abre suas
-// variantes de cor (conhecidas -- "Disponível agora"/"Sob encomenda" -- ou
-// "+ Criar nova variação" via CustomVariantPicker, peça a peça), preencher
-// quantidade/valor e confirmar volta pra lista principal do modal. Repete
-// pra quantos itens forem necessários -- tudo vira UMA submissão
-// (createOrder), 1 Order (cabeçalho) + N OrderItem compartilhando esse
-// cabeçalho.
+function requiresColorChoice(product: OrderProductOption): boolean {
+  return product.variants.length > 0 || product.needsAssembly
+}
+
+function genItemId(): string {
+  return `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+// Redesign "Pedidos" §3 -- cartão de 1 item já adicionado ao pedido: chips
+// de cor/variação (+ "✦ Personalizar cores" via CustomVariantPicker já
+// existente), Stepper de quantidade/valor, aviso de estoque (quanto vai
+// pra fila de produção) e "+ outra cor deste produto" (empilha uma 2ª
+// linha do MESMO produto, pro caso de pedir cores diferentes de uma vez).
+function ItemCard({
+  draft,
+  product,
+  onChange,
+  onRemove,
+  onAddAnotherColor,
+}: {
+  draft: ItemDraft
+  product: OrderProductOption
+  onChange: (patch: Partial<ItemDraft>) => void
+  onRemove: () => void
+  onAddAnotherColor: () => void
+}) {
+  const needsColor = requiresColorChoice(product)
+  const variant = draft.colorComboKey ? product.variants.find((v) => v.key === draft.colorComboKey) : undefined
+  const available = draft.colorChoices ? 0 : (variant?.available ?? 0)
+  const toProduce = Math.max(0, draft.quantity - available)
+
+  return (
+    <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+      <div className="flex items-start justify-between gap-2">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+          {draft.colorHex && <span style={{ background: draft.colorHex }} className="mr-1.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+          {product.productName}
+        </span>
+        <button type="button" onClick={onRemove} aria-label="Remover item" className="shrink-0 text-slate-400 hover:text-red-600 dark:hover:text-red-400">🗑</button>
+      </div>
+
+      {needsColor && (
+        <div className="mt-2">
+          <p className="mb-1 text-xs text-slate-500 dark:text-slate-400">Variação</p>
+          <div className="flex flex-wrap gap-1.5">
+            {draft.colorChoices ? (
+              <span className={chipClass(true)}>{draft.colorLabel}</span>
+            ) : (
+              product.variants.map((v) => (
+                <button
+                  key={v.key}
+                  type="button"
+                  onClick={() => onChange({ colorComboKey: v.key, colorChoices: null, colorLabel: v.label, colorHex: v.colorHex })}
+                  className={chipClass(draft.colorComboKey === v.key)}
+                >
+                  {v.label} · {v.available} disp.
+                </button>
+              ))
+            )}
+            <CustomVariantPicker
+              key={product.productId}
+              productId={product.productId}
+              onConfirm={(choice: CustomVariantChoice) => onChange({ colorComboKey: null, colorChoices: choice.choices, colorLabel: choice.label, colorHex: null })}
+              trigger={<button type="button" className={chipClass(false)}>✦ Personalizar cores</button>}
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="mt-2 flex flex-wrap items-center gap-4">
+        <label className="text-xs text-slate-500 dark:text-slate-400">
+          <span className="mb-1 block">Quantidade</span>
+          <Stepper value={draft.quantity} min={1} step={1} onChange={(v) => onChange({ quantity: v })} />
+        </label>
+        <label className="text-xs text-slate-500 dark:text-slate-400">
+          <span className="mb-1 block">Valor unitário</span>
+          <Stepper value={draft.unitPrice} min={0} step={1} onChange={(v) => onChange({ unitPrice: v })} />
+        </label>
+        <div className="text-xs text-slate-500 dark:text-slate-400">
+          <span className="mb-1 block">Subtotal</span>
+          <span className="text-sm font-medium tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(draft.quantity * draft.unitPrice)}</span>
+        </div>
+      </div>
+
+      {needsColor && (draft.colorComboKey || draft.colorChoices) && (
+        <p className={`mt-1.5 text-xs ${toProduce > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+          {toProduce > 0 ? `✓ ${available} em estoque → ${toProduce} vão pra produção` : `✓ ${available} em estoque`}
+        </p>
+      )}
+
+      {needsColor && (
+        <button type="button" onClick={onAddAnotherColor} className="mt-2 text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+          + Adicionar outra cor deste produto
+        </button>
+      )}
+    </div>
+  )
+}
+
+// Redesign "Pedidos" §3 -- fluxo de criação em UMA tela só (sem
+// sub-modais): 3 seções numeradas (Cliente/Itens/Entrega) empilhadas no
+// mesmo scroll, resumo+total ao vivo no rodapé. "existingOrder" continua
+// sendo o modo mais simples de "+ Adicionar item a um pedido já existente"
+// (só a seção de Itens aparece, sem cabeçalho/entrega -- esses já existem
+// no pedido e nunca mudam por aqui).
 export function OrderForm({
   open,
   onOpenChange,
   products,
   partners,
+  recentBuyers,
   existingOrder,
 }: {
   open: boolean
@@ -63,47 +175,29 @@ export function OrderForm({
   // Pedido do usuário "criar pedidos de encomendas de consignados também":
   // só parceiros ativos, mesmo padrão de outros seletores do app.
   partners: { id: string; name: string }[]
+  // Redesign "Pedidos" §3 Cliente: chips derivados dos nomes mais
+  // recentes/distintos de Order.buyerOrPlatform (getRecentOrderBuyers,
+  // decisão confirmada com o usuário -- nunca uma tabela de Cliente nova).
+  recentBuyers: string[]
   // Pedido do usuário "editar um pedido pra adicionar uma peça": quando
-  // setado, a modal esconde os campos de cabeçalho (canal/datas/comprador/
-  // número/observações já existem no pedido, nunca mudam por aqui) e
-  // confirmar chama addOrderItems(existingOrder.id, ...) em vez de
-  // createOrder -- todo o resto do fluxo (escolher produto, cor/variação,
-  // "+ Adicionar outra cor", editar item antes de confirmar) é o mesmo.
+  // setado, o formulário esconde Cliente/Entrega (já existem no pedido,
+  // nunca mudam por aqui) e confirmar chama addOrderItems(existingOrder.id,
+  // ...) em vez de createOrder.
   existingOrder?: { id: string; orderNumber: string | null }
 }) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
-  const [view, setView] = useState<'form' | 'pickProduct' | 'pickVariant'>('form')
 
   const [channel, setChannel] = useState('')
   const [buyerOrPlatform, setBuyerOrPlatform] = useState('')
   const [consignmentPartnerId, setConsignmentPartnerId] = useState('')
-  const [orderDate, setOrderDate] = useState(today())
   const [deliveryDate, setDeliveryDate] = useState(today())
   const [orderNumber, setOrderNumber] = useState('')
   const [notes, setNotes] = useState('')
+  const [notesOpen, setNotesOpen] = useState(false)
   const [items, setItems] = useState<ItemDraft[]>([])
-  const [reallocations, setReallocations] = useState<OrderReallocationEvent[] | null>(null)
-
-  const [selectedProduct, setSelectedProduct] = useState<OrderProductOption | null>(null)
   const [productSearch, setProductSearch] = useState('')
-  const [addColorComboKey, setAddColorComboKey] = useState('')
-  const [addCustomChoice, setAddCustomChoice] = useState<CustomVariantChoice | null>(null)
-  const [addQuantity, setAddQuantity] = useState('1')
-  const [addUnitPrice, setAddUnitPrice] = useState('')
-  // Bug "não dá pra editar um item já adicionado": clicar no lápis de uma
-  // linha de `items` preenche editingItemId + os campos acima com os
-  // valores dela e abre o MESMO painel "pickVariant" de adicionar --
-  // confirmAddItem substitui a linha existente em vez de criar outra
-  // quando editingItemId está setado.
-  const [editingItemId, setEditingItemId] = useState<string | null>(null)
-  // Pedido "adicionar várias cores do mesmo produto, mais rápido":
-  // "+ Adicionar outra cor" empilha a cor/quantidade atual aqui e limpa só
-  // a cor+quantidade (mantém o valor unitário, geralmente igual pras
-  // várias cores) pra escolher a próxima -- confirmAddItem no fim soma
-  // isso tudo + a última cor preenchida de uma vez só. Só faz sentido no
-  // fluxo de ADICIONAR (nunca usado durante edição de 1 item existente).
-  const [pendingLines, setPendingLines] = useState<ItemDraft[]>([])
+  const [reallocations, setReallocations] = useState<OrderReallocationEvent[] | null>(null)
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -113,122 +207,75 @@ export function OrderForm({
   }, [open])
 
   function resetForm() {
-    setView('form')
     setChannel('')
     setBuyerOrPlatform('')
     setConsignmentPartnerId('')
-    setOrderDate(today())
     setDeliveryDate(today())
     setOrderNumber('')
     setNotes('')
+    setNotesOpen(false)
     setItems([])
     setProductSearch('')
-    setEditingItemId(null)
-    setPendingLines([])
   }
 
-  function openVariantPicker(product: OrderProductOption) {
-    setSelectedProduct(product)
-    setEditingItemId(null)
-    setPendingLines([])
-    setAddColorComboKey('')
-    setAddCustomChoice(null)
-    setAddQuantity('1')
-    setAddUnitPrice('')
-    setView('pickVariant')
+  // Tocar num chip de produto: cria o 1º item desse produto (qty 1) ou
+  // soma +1 -- em produto de cor obrigatória, soma na ÚLTIMA cor
+  // adicionada (criar outra cor é o botão dedicado dentro do card, não o
+  // chip de produto).
+  function tapProduct(product: OrderProductOption) {
+    setItems((prev) => {
+      const draftsForProduct = prev.filter((i) => i.productId === product.productId)
+      if (draftsForProduct.length === 0) {
+        return [...prev, {
+          id: genItemId(),
+          productId: product.productId,
+          productName: product.productName,
+          colorComboKey: null,
+          colorChoices: null,
+          colorLabel: null,
+          colorHex: null,
+          quantity: 1,
+          unitPrice: 0,
+        }]
+      }
+      const lastId = draftsForProduct[draftsForProduct.length - 1].id
+      return prev.map((i) => (i.id === lastId ? { ...i, quantity: i.quantity + 1 } : i))
+    })
   }
 
-  // Abre o mesmo painel de adicionar item, pré-preenchido com os valores
-  // da linha clicada -- trocar de produto ali dentro (via "←" até
-  // "Escolher produto") também funciona, editingItemId continua setado.
-  function openEditItem(item: ItemDraft) {
-    const product = products.find((p) => p.productId === item.productId)
-    if (!product) return
-    setSelectedProduct(product)
-    setEditingItemId(item.id)
-    setPendingLines([])
-    setAddColorComboKey(item.colorChoices ? '' : (item.colorComboKey ?? ''))
-    setAddCustomChoice(item.colorChoices ? { label: item.colorLabel ?? '', choices: item.colorChoices } : null)
-    setAddQuantity(String(item.quantity))
-    setAddUnitPrice(String(item.unitPrice))
-    setView('pickVariant')
+  function addAnotherColor(product: OrderProductOption) {
+    setItems((prev) => [...prev, {
+      id: genItemId(),
+      productId: product.productId,
+      productName: product.productName,
+      colorComboKey: null,
+      colorChoices: null,
+      colorLabel: null,
+      colorHex: null,
+      quantity: 1,
+      unitPrice: 0,
+    }])
   }
 
-  const requiresColorChoice = Boolean(selectedProduct && (selectedProduct.variants.length > 0 || selectedProduct.needsAssembly))
-
-  function genItemId(): string {
-    return `item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  }
-
-  // Valida e monta UMA linha a partir dos campos atuais (cor/quantidade/
-  // valor) -- usado tanto por "+ Adicionar outra cor" (empilha e segue
-  // escolhendo) quanto pelo botão final (fecha com a última cor + tudo
-  // empilhado). `alert` só dispara aqui, nunca duas vezes pro mesmo clique.
-  function buildCurrentLine(): ItemDraft | null {
-    if (!selectedProduct) return null
-    if (requiresColorChoice && !addColorComboKey && !addCustomChoice) {
-      alert('Selecione a cor/variação pedida')
-      return null
-    }
-    const qty = parseInt(addQuantity, 10)
-    const price = parseFloat(addUnitPrice)
-    if (!Number.isFinite(qty) || qty <= 0) {
-      alert('Informe uma quantidade válida')
-      return null
-    }
-    if (!Number.isFinite(price) || price <= 0) {
-      alert('Informe um valor unitário válido')
-      return null
-    }
-    const variant = addColorComboKey ? selectedProduct.variants.find((v) => v.key === addColorComboKey) : undefined
-    return {
-      id: editingItemId ?? genItemId(),
-      productId: selectedProduct.productId,
-      productName: selectedProduct.productName,
-      colorComboKey: addCustomChoice ? null : (addColorComboKey || null),
-      colorChoices: addCustomChoice ? addCustomChoice.choices : null,
-      colorLabel: addCustomChoice ? addCustomChoice.label : (variant?.label ?? null),
-      colorHex: variant?.colorHex ?? null,
-      quantity: qty,
-      unitPrice: price,
-    }
-  }
-
-  function queueAnotherColor() {
-    const line = buildCurrentLine()
-    if (!line) return
-    setPendingLines((prev) => [...prev, line])
-    setAddColorComboKey('')
-    setAddCustomChoice(null)
-    setAddQuantity('1')
-    // addUnitPrice fica como está de propósito -- normalmente é o mesmo
-    // valor pras várias cores do mesmo produto, menos digitação.
-  }
-
-  function removePendingLine(id: string) {
-    setPendingLines((prev) => prev.filter((l) => l.id !== id))
-  }
-
-  function confirmAddItem() {
-    const line = buildCurrentLine()
-    if (!line) return
-    if (editingItemId) {
-      setItems((prev) => prev.map((i) => (i.id === editingItemId ? line : i)))
-    } else {
-      setItems((prev) => [...prev, ...pendingLines, line])
-    }
-    setSelectedProduct(null)
-    setEditingItemId(null)
-    setPendingLines([])
-    setView('form')
+  function updateItem(id: string, patch: Partial<ItemDraft>) {
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)))
   }
 
   function removeItem(id: string) {
     setItems((prev) => prev.filter((i) => i.id !== id))
   }
 
+  const productChipCount = (productId: string) => items.filter((i) => i.productId === productId).reduce((sum, i) => sum + i.quantity, 0)
+
   const totalUnits = items.reduce((sum, i) => sum + i.quantity, 0)
   const totalValue = items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0)
+  const unitsToProduce = items.reduce((sum, i) => {
+    const product = products.find((p) => p.productId === i.productId)
+    if (!product || !requiresColorChoice(product)) return sum
+    const variant = i.colorComboKey ? product.variants.find((v) => v.key === i.colorComboKey) : undefined
+    const available = i.colorChoices ? 0 : (variant?.available ?? 0)
+    return sum + Math.max(0, i.quantity - available)
+  }, 0)
 
   async function action() {
     if (!existingOrder && !channel) {
@@ -239,14 +286,29 @@ export function OrderForm({
       alert('Selecione o parceiro de consignação')
       return
     }
+    if (!existingOrder && channel !== 'CONSIGNADO' && !buyerOrPlatform.trim()) {
+      alert('Informe o cliente')
+      return
+    }
     if (items.length === 0) {
       alert('Adicione pelo menos um item ao pedido')
       return
     }
+    for (const item of items) {
+      const product = products.find((p) => p.productId === item.productId)
+      if (product && requiresColorChoice(product) && !item.colorComboKey && !item.colorChoices) {
+        alert(`Selecione a cor/variação de ${product.productName}`)
+        return
+      }
+      if (item.unitPrice <= 0) {
+        alert(`Informe o valor unitário de ${item.productName}`)
+        return
+      }
+    }
     const fd = new FormData()
     if (!existingOrder) {
       fd.set('channel', channel)
-      fd.set('orderDate', orderDate)
+      fd.set('orderDate', today())
       fd.set('deliveryDate', deliveryDate)
       // Pedido do usuário "criar pedidos de encomendas de consignados
       // também": canal Consignado grava o nome do parceiro em
@@ -271,12 +333,6 @@ export function OrderForm({
       return
     }
     router.refresh()
-    // Bug "modal não fecha nem avisa que foi criado": sem realocação pra
-    // mostrar, fecha a modal igual todo outro cadastro do app (mesmo
-    // padrão de ProductsExplorer.tsx etc.) -- o pedido já aparece na lista
-    // por trás (router.refresh() acima), essa é a confirmação. Com
-    // realocação, mantém aberta (reseta os campos pra um pedido novo) só
-    // pra garantir que o aviso âmbar seja visto antes de sumir.
     const reallocs = result.reallocations && result.reallocations.length > 0 ? result.reallocations : null
     if (reallocs) {
       resetForm()
@@ -286,152 +342,26 @@ export function OrderForm({
     }
   }
 
+  const term = productSearch.trim().toLowerCase()
+  const visibleProducts = term ? products.filter((p) => p.productName.toLowerCase().includes(term)) : products
+
+  const canSubmit = items.length > 0 && (Boolean(existingOrder) || (channel === 'CONSIGNADO' ? Boolean(consignmentPartnerId) : Boolean(buyerOrPlatform.trim())))
+
   return (
     <dialog
       ref={dialogRef}
       onClose={() => { onOpenChange(false); resetForm() }}
-      className="w-full [--tk-dialog-cap:32rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      className="w-full [--tk-dialog-cap:34rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
-      {view === 'pickProduct' && (
-        <div className="grid grid-cols-1 gap-3 p-5">
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setView('form')} aria-label="Voltar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">←</button>
-            <h3 className="font-display text-base font-semibold">Escolher produto</h3>
-          </div>
-          <input
-            autoFocus
-            type="search"
-            value={productSearch}
-            onChange={(e) => setProductSearch(e.target.value)}
-            placeholder="Buscar produto..."
-            className="tk-input-full"
-          />
-          <div className="max-h-80 space-y-1 overflow-y-auto">
-            {(() => {
-              const term = productSearch.trim().toLowerCase()
-              const visible = term ? products.filter((p) => p.productName.toLowerCase().includes(term)) : products
-              return visible.length === 0 ? (
-                <p className="px-2 py-4 text-center text-sm text-slate-400 dark:text-slate-500">Nenhum produto encontrado.</p>
-              ) : (
-                visible.map((p) => (
-                  <button
-                    key={p.productId}
-                    type="button"
-                    onClick={() => openVariantPicker(p)}
-                    className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5 text-left text-sm hover:border-violet-400 dark:border-slate-700 dark:hover:border-violet-500"
-                  >
-                    {p.productName}
-                    <span aria-hidden className="text-slate-400">›</span>
-                  </button>
-                ))
-              )
-            })()}
-          </div>
+      <div className="flex max-h-[85vh] flex-col">
+        <div className="flex items-center justify-between border-b border-slate-200 p-4 dark:border-slate-800">
+          <h3 className="font-display text-base font-semibold">
+            {existingOrder ? `Adicionar item${existingOrder.orderNumber ? ` — Pedido #${existingOrder.orderNumber}` : ''}` : 'Novo pedido'}
+          </h3>
+          <button type="button" onClick={() => dialogRef.current?.close()} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
         </div>
-      )}
 
-      {view === 'pickVariant' && selectedProduct && (
-        <div className="grid grid-cols-1 gap-3 p-5">
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setView('pickProduct')} aria-label="Voltar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">←</button>
-            <h3 className="font-display text-base font-semibold">{editingItemId ? `Editar item — ${selectedProduct.productName}` : selectedProduct.productName}</h3>
-          </div>
-
-          {/* Pedido "adicionar várias cores do mesmo produto, mais rápido":
-              cada clique em "+ Adicionar outra cor" empilha aqui -- essa
-              lista só existe durante o fluxo de ADICIONAR (nunca ao editar
-              1 item já existente). */}
-          {pendingLines.length > 0 && (
-            <div className="space-y-1.5">
-              {pendingLines.map((line) => (
-                <div key={line.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-sm dark:bg-slate-800/60">
-                  <span className="flex min-w-0 items-center gap-2">
-                    {line.colorHex && <span style={{ background: line.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                    <span className="min-w-0 truncate">{line.colorLabel ?? 'Sem cor'} <span className="text-slate-500 dark:text-slate-400">x{line.quantity}</span></span>
-                  </span>
-                  <button type="button" onClick={() => removePendingLine(line.id)} aria-label="Remover cor" className="shrink-0 text-slate-400 hover:text-red-600 dark:hover:text-red-400">🗑</button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {requiresColorChoice && (
-            <div className="text-sm">
-              <span className="mb-1 block">Cor/Variação *</span>
-              {addCustomChoice ? (
-                <div className="flex items-center gap-2 rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1.5 text-sm dark:border-violet-700 dark:bg-violet-500/10">
-                  <span className="min-w-0 flex-1 truncate text-violet-800 dark:text-violet-300">{addCustomChoice.label || 'Personalizado'}</span>
-                  <button type="button" onClick={() => setAddCustomChoice(null)} className="shrink-0 text-xs font-medium text-violet-700 hover:underline dark:text-violet-300">
-                    Trocar
-                  </button>
-                </div>
-              ) : (
-                <>
-                  {selectedProduct.variants.length > 0 && (
-                    <select value={addColorComboKey} onChange={(e) => setAddColorComboKey(e.target.value)} className="tk-input-full">
-                      <option value="" disabled>Selecione a cor</option>
-                      {selectedProduct.variants.map((v) => (
-                        <option key={v.key} value={v.key}>
-                          {v.label} ({v.available} {v.available === 1 ? 'disponível' : 'disponíveis'})
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  {/* Bug "sem opção de variação nova pra produto simples": antes só
-                      aparecia pra produto que precisa de montagem -- mas pedir
-                      uma cor ainda não produzida faz sentido pra QUALQUER
-                      produto com Cor/Variação obrigatória (requiresColorChoice
-                      já garante isso, nem precisa repetir a condição aqui).
-                      resolveCustomColorComboKey (actions/orders.ts) grava no
-                      formato certo pros dois casos. */}
-                  <CustomVariantPicker
-                    key={selectedProduct.productId}
-                    productId={selectedProduct.productId}
-                    onConfirm={(choice) => { setAddCustomChoice(choice); setAddColorComboKey('') }}
-                    trigger={
-                      <button type="button" className="mt-1 text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
-                        + Criar nova variação
-                      </button>
-                    }
-                  />
-                </>
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <label className="text-sm">
-              Quantidade
-              <input type="number" step="1" min="1" value={addQuantity} onChange={(e) => setAddQuantity(e.target.value)} className="tk-input-full" />
-            </label>
-            <label className="text-sm">
-              Valor unitário
-              <input type="number" step="0.01" min="0.01" value={addUnitPrice} onChange={(e) => setAddUnitPrice(e.target.value)} className="tk-input-full" />
-            </label>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            {!editingItemId && requiresColorChoice && (
-              <button type="button" onClick={queueAnotherColor} className="rounded-lg border border-dashed border-slate-300 py-1.5 text-xs font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60">
-                + Adicionar outra cor deste produto
-              </button>
-            )}
-            <button type="button" onClick={confirmAddItem} className="tk-btn-primary">
-              {editingItemId ? 'Salvar alterações' : pendingLines.length > 0 ? `Adicionar ${pendingLines.length + 1} itens ao pedido` : 'Adicionar item'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {view === 'form' && (
-        <form action={action} className="grid grid-cols-1 gap-3 p-5">
-          <div className="mb-1 flex items-center justify-between">
-            <h3 className="font-display text-base font-semibold">
-              {existingOrder ? `Adicionar item${existingOrder.orderNumber ? ` — Pedido #${existingOrder.orderNumber}` : ''}` : 'Novo pedido'}
-            </h3>
-            <button type="button" onClick={() => dialogRef.current?.close()} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
-          </div>
-
+        <div className="flex-1 space-y-5 overflow-y-auto p-4">
           {reallocations && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
               <div className="flex items-start justify-between gap-2">
@@ -451,91 +381,133 @@ export function OrderForm({
           )}
 
           {!existingOrder && (
-            <div className="grid grid-cols-2 gap-3">
-              <label className="text-sm">
-                Canal *
-                <select value={channel} onChange={(e) => setChannel(e.target.value)} className="tk-input-full" required>
-                  <option value="" disabled>Selecione</option>
-                  {CHANNELS.map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
-                </select>
-              </label>
-              {channel === 'CONSIGNADO' ? (
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">1 · Cliente</p>
+              <div className="flex flex-wrap gap-2">
+                {recentBuyers.map((name) => (
+                  <button key={name} type="button" onClick={() => setBuyerOrPlatform(name)} className={chipClass(buyerOrPlatform === name)}>
+                    {name}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-3">
                 <label className="text-sm">
-                  Parceiro *
-                  <select value={consignmentPartnerId} onChange={(e) => setConsignmentPartnerId(e.target.value)} className="tk-input-full" required>
+                  Canal *
+                  <select value={channel} onChange={(e) => setChannel(e.target.value)} className="tk-input-full" required>
                     <option value="" disabled>Selecione</option>
-                    {partners.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
+                    {CHANNELS.map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
                     ))}
                   </select>
                 </label>
-              ) : (
+                {channel === 'CONSIGNADO' ? (
+                  <label className="text-sm">
+                    Parceiro *
+                    <select value={consignmentPartnerId} onChange={(e) => setConsignmentPartnerId(e.target.value)} className="tk-input-full" required>
+                      <option value="" disabled>Selecione</option>
+                      {partners.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <label className="text-sm">
+                    Cliente (+ Novo cliente)
+                    <input value={buyerOrPlatform} onChange={(e) => setBuyerOrPlatform(e.target.value)} placeholder="Nome do cliente" className="tk-input-full" />
+                  </label>
+                )}
                 <label className="text-sm">
-                  Comprador (opcional)
-                  <input value={buyerOrPlatform} onChange={(e) => setBuyerOrPlatform(e.target.value)} className="tk-input-full" />
+                  Número do pedido (opcional)
+                  <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} className="tk-input-full" />
                 </label>
-              )}
-              <label className="text-sm">
-                Data do pedido *
-                <input type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} className="tk-input-full" required />
-              </label>
-              <label className="text-sm">
-                Data de entrega *
-                <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="tk-input-full" required />
-              </label>
-              <label className="text-sm">
-                Número do pedido (opcional)
-                <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} className="tk-input-full" />
-              </label>
-              <label className="text-sm">
-                Observações (opcional)
-                <input value={notes} onChange={(e) => setNotes(e.target.value)} className="tk-input-full" />
-              </label>
+              </div>
             </div>
           )}
 
-          <div className="text-sm">
-            <p className="font-medium text-slate-700 dark:text-slate-300">{existingOrder ? 'Itens a adicionar' : 'Itens deste pedido'}</p>
-            {items.length === 0 ? (
-              <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Nenhum item adicionado ainda.</p>
-            ) : (
-              <div className="mt-1.5 space-y-1.5">
-                {items.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
-                    <button type="button" onClick={() => openEditItem(item)} className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm hover:underline">
-                      {item.colorHex && <span style={{ background: item.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                      <span className="min-w-0 truncate">
-                        {item.productName}{item.colorLabel && <span className="text-slate-500 dark:text-slate-400"> - {item.colorLabel}</span>} <span className="text-slate-500 dark:text-slate-400">x{item.quantity}</span>
-                      </span>
-                    </button>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span className="text-sm text-slate-500 dark:text-slate-400">{formatCurrency(item.quantity * item.unitPrice)}</span>
-                      <button type="button" onClick={() => openEditItem(item)} aria-label="Editar item" title="Editar" className="text-slate-400 hover:text-violet-600 dark:hover:text-violet-400">✎</button>
-                      <button type="button" onClick={() => removeItem(item.id)} aria-label="Remover item" className="text-slate-400 hover:text-red-600 dark:hover:text-red-400">🗑</button>
-                    </div>
-                  </div>
-                ))}
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{existingOrder ? 'Itens a adicionar' : '2 · Itens'}</p>
+            <input
+              type="search"
+              value={productSearch}
+              onChange={(e) => setProductSearch(e.target.value)}
+              placeholder="Buscar produto..."
+              className="tk-input-full"
+            />
+            <div className="mt-2 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
+              {visibleProducts.map((p) => {
+                const count = productChipCount(p.productId)
+                return (
+                  <button key={p.productId} type="button" onClick={() => tapProduct(p)} className={`relative ${chipClass(count > 0)}`}>
+                    {p.productName}
+                    {count > 0 && <span className="ml-1.5 rounded-full bg-white/20 px-1.5 text-[10px]">{count}</span>}
+                  </button>
+                )
+              })}
+              {visibleProducts.length === 0 && <p className="px-1 py-2 text-sm text-slate-400 dark:text-slate-500">Nenhum produto encontrado.</p>}
+            </div>
+
+            {items.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {items.map((item) => {
+                  const product = products.find((p) => p.productId === item.productId)
+                  if (!product) return null
+                  return (
+                    <ItemCard
+                      key={item.id}
+                      draft={item}
+                      product={product}
+                      onChange={(patch) => updateItem(item.id, patch)}
+                      onRemove={() => removeItem(item.id)}
+                      onAddAnotherColor={() => addAnotherColor(product)}
+                    />
+                  )
+                })}
               </div>
             )}
           </div>
 
-          <button type="button" onClick={() => { setProductSearch(''); setView('pickProduct') }} className="rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60">
-            + Adicionar item
-          </button>
+          {!existingOrder && (
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">3 · Entrega</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {DELIVERY_CHIPS.map((c) => {
+                  const value = addDays(c.days)
+                  return (
+                    <button key={c.label} type="button" onClick={() => setDeliveryDate(value)} className={chipClass(deliveryDate === value)}>
+                      {c.label}
+                    </button>
+                  )
+                })}
+                <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="tk-input px-2 py-1 text-xs" />
+              </div>
+              {notesOpen ? (
+                <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observação" className="tk-input-full mt-2" autoFocus />
+              ) : (
+                <button type="button" onClick={() => setNotesOpen(true)} className="mt-2 text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                  + Adicionar observação
+                </button>
+              )}
+            </div>
+          )}
+        </div>
 
-          <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm font-medium dark:bg-slate-800/60">
-            <span>{existingOrder ? 'Valor dos itens a adicionar' : 'Valor total do pedido'}</span>
-            <span>{items.length > 0 ? `${totalUnits} un - ${formatCurrency(totalValue)}` : '—'}</span>
+        <div className="border-t border-slate-200 p-4 dark:border-slate-800">
+          <div className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+            {!existingOrder && <>{buyerOrPlatform || '—'} · </>}
+            {totalUnits > 0 ? `${totalUnits} un` : 'Nenhum item'} · {formatCurrency(totalValue)}
+            {!existingOrder && deliveryDate && <> · entrega {new Date(`${deliveryDate}T00:00:00`).toLocaleDateString('pt-BR')}</>}
+            {unitsToProduce > 0 && (
+              <> · <span className="font-medium text-amber-600 dark:text-amber-400">{unitsToProduce} unidade{unitsToProduce === 1 ? '' : 's'} vai{unitsToProduce === 1 ? '' : 'ão'} pra fila de produção</span></>
+            )}
           </div>
-
-          <div className="mt-1 flex items-center justify-end gap-3">
+          <div className="flex items-center justify-end gap-3">
             <button type="button" onClick={() => dialogRef.current?.close()} className="text-sm text-slate-500 hover:underline dark:text-slate-400">Cancelar</button>
-            <SubmitButton pendingLabel="Salvando…">{existingOrder ? 'Adicionar ao pedido' : 'Finalizar pedido'}</SubmitButton>
+            <form action={action}>
+              <SubmitButton pendingLabel="Salvando…" disabled={!canSubmit}>{existingOrder ? 'Adicionar ao pedido' : 'Criar pedido'}</SubmitButton>
+            </form>
           </div>
-        </form>
-      )}
+        </div>
+      </div>
     </dialog>
   )
 }

@@ -2,9 +2,11 @@
 import { z } from 'zod'
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { orderHeaderSchema, orderItemSchema, orderStatusEnum, updateOrderItemSchema } from '@/lib/validation/order'
+import { orderHeaderSchema, orderItemSchema, orderStatusEnum, updateOrderItemSchema, orderDraftItemUpdateSchema } from '@/lib/validation/order'
+import { formatCurrency } from '@/lib/format'
 import { getProductCostBreakdown } from '@/actions/products'
-import { consumePackagingForSale } from '@/actions/sales'
+import { consumePackagingForSale, deleteSale } from '@/actions/sales'
+import { deleteConsignmentDelivery } from '@/actions/consignmentDeliveries'
 import { resolveSalePlatformFee } from '@/actions/marketplacePlatforms'
 import { buildSaleCostSnapshot } from '@/lib/costing'
 import { productNeedsAssembly } from '@/lib/products'
@@ -460,6 +462,91 @@ export async function updateOrderItemStatus(id: string, formData: FormData): Pro
   return { success: true }
 }
 
+// Redesign "Pedidos" -- toast "Desfazer" do botão "✓ Entregar tudo":
+// reverte exatamente o que updateOrderItemStatus('ENTREGUE') acabou de
+// criar, reaproveitando deleteSale (restaura embalagem) ou
+// deleteConsignmentDelivery (consignado) em vez de duplicar aquela
+// lógica. Zera o vínculo (saleId/consignmentDeliveryId) e devolve o item
+// pro status AGUARDANDO_PRODUCAO-como-placeholder só pra entrar de volta
+// no pool não-terminal de reconcileOrderReservations -- que já
+// recalcula o status de verdade (provavelmente PRONTO_RESERVADO de
+// novo, já que a peça nunca deixou de existir fisicamente) na mesma
+// chamada.
+export async function undoOrderItemDelivery(id: string): Promise<ActionResult> {
+  const item = await prisma.orderItem.findUniqueOrThrow({ where: { id } })
+  if (item.saleId) {
+    await deleteSale(item.saleId)
+    await prisma.orderItem.update({ where: { id }, data: { saleId: null, status: 'AGUARDANDO_PRODUCAO' } })
+  } else if (item.consignmentDeliveryId) {
+    await deleteConsignmentDelivery(item.consignmentDeliveryId)
+    await prisma.orderItem.update({ where: { id }, data: { consignmentDeliveryId: null, status: 'AGUARDANDO_PRODUCAO' } })
+  } else {
+    return { success: false, error: 'Nada para desfazer neste item.' }
+  }
+  await reconcileOrderReservations(item.productId, item.colorComboKey)
+  revalidatePath('/orders')
+  revalidatePath('/sales')
+  revalidatePath('/stock')
+  revalidatePath('/production')
+  revalidatePath('/assembly')
+  revalidatePath('/consignment/deliveries')
+  return { success: true }
+}
+
+// Pedido do usuário (redesign "Pedidos"): "opção de editar o valor mesmo
+// depois de entregue" -- até aqui, um item com saleId/consignmentDeliveryId
+// setado (já virou Sale/ConsignmentDelivery) ficava travado por completo em
+// updateOrderItem/updateOrderDraft, com a mensagem "edite em Vendas/
+// Consignação, se necessário". O VALOR (preço cobrado) é a correção mais
+// comum depois de entregue (cliente negociou desconto, erro de digitação) e
+// não precisa da trava inteira -- só reabre esse 1 campo, reaproveitando o
+// mesmo recálculo de costSnapshot que updateSale (actions/sales.ts) já faz
+// pra qualquer edição de venda (preço novo muda a taxa de plataforma
+// percentual, então o snapshot precisa refletir isso; produto/quantidade
+// continuam os mesmos, só o preço muda). ConsignmentDelivery não tem
+// costSnapshot (a venda de verdade só acontece depois, via
+// ConsignmentSaleReport) -- só atualiza unitPrice. Gera 1 OrderEditLog
+// (mesmo padrão de updateOrderDraft) pra aparecer no "Histórico de
+// alterações" do drawer -- é uma edição de pedido como qualquer outra, só
+// que feita depois do item já ter saído.
+export async function updateDeliveredItemPrice(orderItemId: string, formData: FormData): Promise<ActionResult> {
+  const parsed = z.object({ unitPrice: z.coerce.number().positive('Valor inválido') }).safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  const { unitPrice } = parsed.data
+
+  const item = await prisma.orderItem.findUniqueOrThrow({ where: { id: orderItemId }, include: { product: true } })
+  if (!item.saleId && !item.consignmentDeliveryId) return { success: false, error: 'Este item ainda não foi entregue.' }
+
+  const oldUnitPrice = item.unitPrice.toNumber()
+  if (oldUnitPrice === unitPrice) return { success: true }
+
+  if (item.saleId) {
+    const sale = await prisma.sale.findUniqueOrThrow({ where: { id: item.saleId } })
+    const breakdown = await getProductCostBreakdown(sale.productId)
+    const platformFee = await resolveSalePlatformFee(sale.channel, unitPrice, sale.productId)
+    const snapshot = buildSaleCostSnapshot(
+      breakdown,
+      sale.quantity,
+      platformFee ? { feePercent: platformFee.feePercent, feeFixed: platformFee.feeFixed, amountTotal: platformFee.feeAmountPerUnit * sale.quantity } : undefined,
+    )
+    await prisma.sale.update({ where: { id: sale.id }, data: { unitPrice, costSnapshot: snapshot as unknown as Prisma.InputJsonValue } })
+  } else {
+    await prisma.consignmentDelivery.update({ where: { id: item.consignmentDeliveryId! }, data: { unitPrice } })
+  }
+  await prisma.orderItem.update({ where: { id: orderItemId }, data: { unitPrice } })
+  await prisma.orderEditLog.create({
+    data: {
+      orderId: item.orderId,
+      changes: [{ label: `${item.product.name}: valor (pós-entrega)`, from: formatCurrency(oldUnitPrice), to: formatCurrency(unitPrice) }],
+    },
+  })
+
+  revalidatePath('/orders')
+  revalidatePath('/sales')
+  revalidatePath('/consignment/deliveries')
+  return { success: true }
+}
+
 // Pedido do usuário "editar item depois de adicionado": corrige
 // quantidade/valor de um OrderItem já salvo, sem precisar cancelar e
 // recriar o pedido inteiro. Só produto/cor continuam fixos (trocar isso
@@ -530,6 +617,151 @@ export async function removeOrderItem(id: string): Promise<ActionResult> {
   revalidatePath('/production')
   revalidatePath('/assembly')
   return { success: true, reallocations }
+}
+
+// Redesign "Pedidos" -- drawer de detalhe: ao contrário de
+// updateOrderItem/removeOrderItem/addOrderItems (cada um salva 1 mudança
+// na hora), o drawer deixa editar quantidade/valor de vários itens,
+// adicionar item novo, remover item E trocar a data de entrega numa
+// ÚNICA sessão, só gravada no clique de "Salvar alterações" -- esta
+// action aplica tudo de uma vez e grava 1 OrderEditLog descrevendo a
+// sessão inteira (nunca 1 log por campo). Reaproveita as MESMAS guardas
+// de updateOrderItem/removeOrderItem (bloqueado se saleId/
+// consignmentDeliveryId) e o mesmo resolveOrderItemsJson que createOrder/
+// addOrderItems já usam pra itens novos -- nenhuma regra de negócio
+// duplicada, só orquestrada em lote.
+function formatDiffDate(d: Date): string {
+  return d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
+}
+
+export async function updateOrderDraft(orderId: string, formData: FormData): Promise<ActionResult> {
+  const raw = Object.fromEntries(formData)
+
+  const order = await prisma.order.findUnique({ where: { id: orderId }, include: { items: { include: { product: true } } } })
+  if (!order) return { success: false, error: 'Pedido não encontrado.' }
+  const itemById = new Map(order.items.map((i) => [i.id, i]))
+
+  let itemUpdatesRaw: unknown = []
+  let removedItemIdsRaw: unknown = []
+  try {
+    itemUpdatesRaw = JSON.parse(String(raw.itemUpdatesJson ?? '[]'))
+    removedItemIdsRaw = JSON.parse(String(raw.removedItemIdsJson ?? '[]'))
+  } catch {
+    return { success: false, error: 'Dados de edição inválidos.' }
+  }
+  const itemUpdatesParsed = z.array(orderDraftItemUpdateSchema).safeParse(itemUpdatesRaw)
+  if (!itemUpdatesParsed.success) return { success: false, error: itemUpdatesParsed.error.issues[0].message }
+  const removedItemIdsParsed = z.array(z.string()).safeParse(removedItemIdsRaw)
+  if (!removedItemIdsParsed.success) return { success: false, error: 'Dados de edição inválidos.' }
+  const itemUpdates = itemUpdatesParsed.data
+  const removedItemIds = removedItemIdsParsed.data
+
+  const newItemsResolved = raw.newItemsJson ? await resolveOrderItemsJson(raw.newItemsJson) : { items: [] }
+  if ('error' in newItemsResolved) return { success: false, error: newItemsResolved.error }
+  const newItems = newItemsResolved.items
+
+  // Guardas -- mesmas de updateOrderItem/removeOrderItem, checadas ANTES
+  // de qualquer escrita (tudo ou nada: uma sessão inteira falha junto se
+  // um item alvo já virou Sale/ConsignmentDelivery).
+  for (const { id } of itemUpdates) {
+    const item = itemById.get(id)
+    if (!item) return { success: false, error: 'Item não encontrado neste pedido.' }
+    if (item.saleId) return { success: false, error: 'Um item já virou venda -- edite em Vendas, se necessário.' }
+    if (item.consignmentDeliveryId) return { success: false, error: 'Um item já virou entrega de consignação -- edite em Consignação, se necessário.' }
+  }
+  for (const id of removedItemIds) {
+    const item = itemById.get(id)
+    if (!item) return { success: false, error: 'Item não encontrado neste pedido.' }
+    if (item.saleId) return { success: false, error: 'Um item já virou venda -- remova a venda em Vendas, se necessário.' }
+    if (item.consignmentDeliveryId) return { success: false, error: 'Um item já virou entrega de consignação -- remova a entrega em Consignação, se necessário.' }
+  }
+  const remainingCount = order.items.length - removedItemIds.length + newItems.length
+  if (remainingCount < 1) return { success: false, error: 'O pedido precisa ficar com pelo menos 1 item.' }
+
+  let newDeliveryDate: Date | null = null
+  if (raw.deliveryDate) {
+    const parsedDate = z.coerce.date({ errorMap: () => ({ message: 'Data de entrega inválida' }) }).safeParse(raw.deliveryDate)
+    if (!parsedDate.success) return { success: false, error: parsedDate.error.issues[0].message }
+    if (parsedDate.data.getTime() !== order.deliveryDate.getTime()) newDeliveryDate = parsedDate.data
+  }
+
+  // Monta o resumo ANTES de escrever nada (compara contra o snapshot já
+  // carregado em `order`) -- se nada mudou de verdade (ex.: usuário abriu
+  // e fechou o drawer sem editar nada), não grava OrderEditLog nenhum.
+  const changes: { label: string; from: string; to: string }[] = []
+  for (const { id, quantity, unitPrice } of itemUpdates) {
+    const item = itemById.get(id)!
+    if (item.quantity !== quantity) changes.push({ label: `${item.product.name}: quantidade`, from: String(item.quantity), to: String(quantity) })
+    if (item.unitPrice.toNumber() !== unitPrice) changes.push({ label: `${item.product.name}: valor`, from: formatCurrency(item.unitPrice.toNumber()), to: formatCurrency(unitPrice) })
+  }
+  for (const id of removedItemIds) {
+    const item = itemById.get(id)!
+    changes.push({ label: 'Item removido', from: item.product.name, to: '—' })
+  }
+  if (newItems.length > 0) {
+    const newProducts = await prisma.product.findMany({ where: { id: { in: newItems.map((i) => i.productId) } }, select: { id: true, name: true } })
+    const nameById = new Map(newProducts.map((p) => [p.id, p.name]))
+    for (const item of newItems) changes.push({ label: 'Item adicionado', from: '—', to: `${nameById.get(item.productId) ?? item.productId} (${item.quantity}x)` })
+  }
+  if (newDeliveryDate) changes.push({ label: 'Entrega', from: formatDiffDate(order.deliveryDate), to: formatDiffDate(newDeliveryDate) })
+
+  if (changes.length === 0) return { success: true }
+
+  for (const { id, quantity, unitPrice } of itemUpdates) {
+    await prisma.orderItem.update({ where: { id }, data: { quantity, unitPrice } })
+  }
+  if (removedItemIds.length > 0) {
+    await prisma.orderItem.deleteMany({ where: { id: { in: removedItemIds } } })
+  }
+  if (newItems.length > 0) {
+    await prisma.orderItem.createMany({ data: newItems.map((item) => ({ ...item, orderId })) })
+  }
+  if (newDeliveryDate) {
+    await prisma.order.update({ where: { id: orderId }, data: { deliveryDate: newDeliveryDate } })
+  }
+  await prisma.orderEditLog.create({ data: { orderId, changes } })
+
+  // Reconcilia todo (productId, colorComboKey) distinto tocado pela
+  // sessão -- itens editados, removidos e novos (mesmo padrão de
+  // reconcileDistinctPairs, só que por cima dos 3 grupos de uma vez).
+  const touched = new Map<string, { productId: string; colorComboKey: string | null }>()
+  for (const { id } of itemUpdates) {
+    const item = itemById.get(id)!
+    touched.set(`${item.productId}::${item.colorComboKey ?? ''}`, item)
+  }
+  for (const id of removedItemIds) {
+    const item = itemById.get(id)!
+    touched.set(`${item.productId}::${item.colorComboKey ?? ''}`, item)
+  }
+  for (const item of newItems) {
+    touched.set(`${item.productId}::${item.colorComboKey ?? ''}`, item)
+  }
+  const reallocations: OrderReallocationEvent[] = []
+  for (const { productId, colorComboKey } of touched.values()) {
+    reallocations.push(...(await reconcileOrderReservations(productId, colorComboKey)))
+  }
+
+  const remaining = await prisma.orderItem.findMany({ where: { orderId }, select: { status: true } })
+  if (areAllItemsTerminal(remaining.map((r) => r.status))) {
+    const inbox = await prisma.marketplaceOrderInbox.findUnique({ where: { confirmedOrderId: orderId } })
+    if (inbox) await resolveNotificationsForResource('MarketplaceOrderInbox', inbox.id)
+  }
+
+  revalidatePath('/orders')
+  revalidatePath('/stock')
+  revalidatePath('/production')
+  revalidatePath('/assembly')
+  return { success: true, reallocations }
+}
+
+// Redesign "Pedidos" -- seção "Histórico de alterações" do drawer: 1
+// findMany simples ordenado por data, mesmo padrão de
+// getStockAdjustmentHistory (actions/stockAdjustments.ts). "Pedido
+// criado" nunca é uma linha gravada aqui -- a UI sintetiza essa 1ª
+// entrada a partir de `order.createdAt`, já disponível sem query extra.
+export async function getOrderEditHistory(orderId: string): Promise<{ id: string; changes: { label: string; from: string; to: string }[]; createdAt: Date }[]> {
+  const logs = await prisma.orderEditLog.findMany({ where: { orderId }, orderBy: { createdAt: 'desc' } })
+  return logs.map((l) => ({ id: l.id, changes: l.changes as { label: string; from: string; to: string }[], createdAt: l.createdAt }))
 }
 
 // Melhoria "Pedidos com múltiplos itens": cancelar age no PEDIDO (todos os
@@ -850,6 +1082,23 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
   }
 
   return { productionRows, assemblyRows }
+}
+
+// Redesign "Pedidos" -- "Novo pedido" §1 Cliente: chips dos nomes mais
+// recentes/distintos já usados em Order.buyerOrPlatform (texto livre,
+// nunca existiu tabela de Cliente -- decisão confirmada com o usuário:
+// derivar dos valores já digitados em vez de criar uma entidade nova).
+// "+ Novo cliente" continua sendo só digitar um nome novo, que vira o
+// texto do próximo pedido, exatamente como já funciona hoje.
+export async function getRecentOrderBuyers(limit = 6): Promise<string[]> {
+  const rows = await prisma.order.findMany({
+    where: { buyerOrPlatform: { not: null } },
+    select: { buyerOrPlatform: true },
+    distinct: ['buyerOrPlatform'],
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  })
+  return rows.map((r) => r.buyerOrPlatform!).filter(Boolean)
 }
 
 // Bug "pedido antigo fica travado mostrando falta produzir pra sempre":

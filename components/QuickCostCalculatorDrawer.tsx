@@ -7,6 +7,7 @@ import { calculateQuickEstimate } from '@/lib/quickCalc'
 import { getQuickCalculatorData, createProductFromQuickCalc, type QuickCalculatorData } from '@/actions/quickCalculator'
 import { NavCalculatorIcon } from '@/components/NavIcons'
 import { HoursInput } from '@/components/HoursInput'
+import { chipClass } from '@/components/Chip'
 
 const WEIGHT_PRESETS_GRAMS = [5, 10, 20, 50, 100]
 const TIME_PRESETS_MIN = [15, 30, 60, 120, 240]
@@ -21,14 +22,6 @@ type SelectedItem = { kind: 'supply' | 'accessory'; id: string; name: string; un
 // conceito de ProductPartFilament (CLAUDE.md), só que resolvido no client
 // antes de existir qualquer ProductPart de verdade.
 type SelectedFilament = { filamentId: string; weightGrams: number }
-
-function chipClass(active: boolean): string {
-  return `rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
-    active
-      ? 'bg-gradient-to-r from-violet-600 to-blue-600 text-white dark:from-violet-500 dark:to-blue-500 dark:text-slate-950'
-      : 'border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800'
-  }`
-}
 
 function Stepper({ value, onChange, step, min = 0, format }: { value: number; onChange: (v: number) => void; step: number; min?: number; format: (v: number) => string }) {
   return (

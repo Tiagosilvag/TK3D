@@ -68,7 +68,17 @@ export const orderBatchSchema = z.object({
 // as MESMAS regras de orderItemSchema pros dois campos, nunca duplicadas.
 export const updateOrderItemSchema = orderItemSchema.pick({ quantity: true, unitPrice: true })
 
+// Redesign "Pedidos": o drawer de detalhe salva TUDO que mudou numa
+// sessão de edição de uma vez só ("Salvar alterações"), não campo a
+// campo como updateOrderItem/removeOrderItem faziam -- updateOrderDraft
+// (actions/orders.ts) usa estes 3 schemas pros 3 tipos de mudança que
+// cabem numa sessão (item existente editado, item novo adicionado, item
+// removido), reaproveitando updateOrderItemSchema/orderItemSchema sem
+// duplicar as regras de quantidade/valor.
+export const orderDraftItemUpdateSchema = updateOrderItemSchema.extend({ id: z.string().min(1) })
+
 export type OrderHeaderInput = z.infer<typeof orderHeaderSchema>
 export type OrderItemInput = z.infer<typeof orderItemSchema>
 export type OrderBatchInput = z.infer<typeof orderBatchSchema>
 export type UpdateOrderItemInput = z.infer<typeof updateOrderItemSchema>
+export type OrderDraftItemUpdateInput = z.infer<typeof orderDraftItemUpdateSchema>

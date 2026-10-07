@@ -74,6 +74,57 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   CANCELADO: 'Cancelado',
 }
 
+// Redesign "Pedidos": o protótipo usa 4 cores por item (Aguardando
+// produção=âmbar / Em produção=roxo / Pronto=azul / Entregue=verde) em
+// vez do badge de 11 valores de getOrderStatusBadge acima. Decisão
+// confirmada com o usuário: não existe sinal nenhum de "imprimindo
+// agora" no sistema (ProductionRun só é gravado DEPOIS de pronto) --
+// "Em produção" é só um RÓTULO novo pro status PARCIAL_AGUARDANDO_PRODUCAO
+// que já existe (reserved>0 mas <quantity), sem schema novo. Função
+// própria (não mexe em getOrderStatusBadge/ORDER_STATUS_LABELS, que
+// continuam servindo a tabela/badge "oficial" de 11 valores em outras
+// telas) -- usada só pela lista/drawer novos (barra segmentada + texto
+// "o que falta"). `barClassName` é a cor sólida de 1 segmento da barra
+// (bg-500, sem o par bg-50/text-700 de badge); valores legados
+// (RECEBIDO...CONCLUIDO, nunca mais escritos) mapeiam pro bucket mais
+// parecido, só pra pedido antigo ainda renderizar algo sensato.
+export interface OrderItemDisplayStatus {
+  label: string
+  badgeClassName: string
+  barClassName: string
+}
+
+const ORDER_ITEM_DISPLAY_STATUS: Record<OrderStatus, OrderItemDisplayStatus> = {
+  AGUARDANDO_PRODUCAO: { label: 'Aguardando produção', badgeClassName: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400', barClassName: 'bg-amber-500' },
+  AGUARDANDO_MONTAGEM: { label: 'Aguardando produção', badgeClassName: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400', barClassName: 'bg-amber-500' },
+  PARCIAL_AGUARDANDO_PRODUCAO: { label: 'Em produção', badgeClassName: 'bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400', barClassName: 'bg-violet-500' },
+  PRONTO_RESERVADO: { label: 'Pronto', badgeClassName: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400', barClassName: 'bg-sky-500' },
+  ENTREGUE: { label: 'Entregue', badgeClassName: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400', barClassName: 'bg-emerald-500' },
+  CANCELADO: { label: 'Cancelado', badgeClassName: 'bg-slate-100 text-slate-400 line-through dark:bg-slate-800 dark:text-slate-500', barClassName: 'bg-slate-400' },
+  // Legado (nunca mais escrito) -- mapeado pro bucket mais próximo.
+  RECEBIDO: { label: 'Aguardando produção', badgeClassName: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400', barClassName: 'bg-amber-500' },
+  EM_PRODUCAO: { label: 'Em produção', badgeClassName: 'bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-400', barClassName: 'bg-violet-500' },
+  PRONTO: { label: 'Pronto', badgeClassName: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400', barClassName: 'bg-sky-500' },
+  DESPACHADO: { label: 'Pronto', badgeClassName: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400', barClassName: 'bg-sky-500' },
+  CONCLUIDO: { label: 'Entregue', badgeClassName: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400', barClassName: 'bg-emerald-500' },
+}
+
+export function getOrderItemDisplayStatus(status: OrderStatus): OrderItemDisplayStatus {
+  return ORDER_ITEM_DISPLAY_STATUS[status]
+}
+
+// Redesign "Pedidos" -- linha "↳ o que mudou" da lista (badge "Editado"),
+// derivada do OrderEditLog mais recente: mostra as 2 primeiras mudanças da
+// sessão (texto já pronto como "label from → to") + "+N" se sobrar mais,
+// nunca a lista inteira (isso fica só dentro do drawer, seção "Histórico
+// de alterações").
+export function summarizeOrderEditChanges(changes: { label: string; from: string; to: string }[]): string {
+  if (changes.length === 0) return ''
+  const shown = changes.slice(0, 2).map((c) => `${c.label} ${c.from} → ${c.to}`)
+  const extra = changes.length - shown.length
+  return shown.join(' · ') + (extra > 0 ? ` · +${extra}` : '')
+}
+
 // Melhoria "Pedidos com reserva de estoque": etiqueta de prazo com cor por
 // urgência -- verde (folga), amarelo (≤3 dias), vermelho (atrasado).
 // Pedido terminal (ENTREGUE/CANCELADO) nunca mostra "atrasado" (prazo

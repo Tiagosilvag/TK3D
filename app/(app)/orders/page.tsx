@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { getProductVariantStockOptions } from '@/lib/reports'
-import { resolveOrderItemColorLabel } from '@/actions/orders'
+import { resolveOrderItemColorLabel, getRecentOrderBuyers } from '@/actions/orders'
+import { summarizeOrderEditChanges } from '@/lib/format'
 import { OrdersExplorer, type OrderRow } from './OrdersExplorer'
 import { MarketplaceInboxSection } from './MarketplaceInboxSection'
 import type { MarketplaceOrderInboxItem } from '@/lib/mercadoLivre/orders'
@@ -8,7 +9,7 @@ import type { MarketplaceOrderInboxItem } from '@/lib/mercadoLivre/orders'
 export const dynamic = 'force-dynamic'
 
 export default async function OrdersPage() {
-  const [orders, variantProducts, filaments, pendingInbox, partners] = await Promise.all([
+  const [orders, variantProducts, filaments, pendingInbox, partners, recentBuyers] = await Promise.all([
     prisma.order.findMany({
       orderBy: { deliveryDate: 'asc' },
       include: {
@@ -18,6 +19,10 @@ export default async function OrdersPage() {
             reallocationsLost: { include: { toOrderItem: { include: { order: { select: { orderNumber: true } } } } }, orderBy: { createdAt: 'desc' } },
           },
         },
+        // Redesign "Pedidos" -- badge "Editado" + "↳ o que mudou" da lista:
+        // só o log mais recente (take: 1) é usado na tabela; o histórico
+        // completo só é buscado no drawer (getOrderEditHistory), sob demanda.
+        editLogs: { orderBy: { createdAt: 'desc' }, take: 1 },
       },
     }),
     // Brinde nunca é vendido sozinho -- excluído do seletor (já filtrado
@@ -35,6 +40,8 @@ export default async function OrdersPage() {
     // Pedido do usuário "criar pedidos de encomendas de consignados
     // também": seletor de parceiro em "Novo pedido", só ativo.
     prisma.consignmentPartner.findMany({ where: { active: true }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    // Redesign "Pedidos" §3 Cliente: chips de clientes recentes.
+    getRecentOrderBuyers(),
   ])
   const filamentStockById = new Map(filaments.map((f) => [f.id, f.currentStockGrams.toNumber()]))
 
@@ -80,6 +87,9 @@ export default async function OrdersPage() {
     orderNumber: o.orderNumber,
     orderDate: o.orderDate.toISOString(),
     deliveryDate: o.deliveryDate.toISOString(),
+    createdAt: o.createdAt.toISOString(),
+    editedAt: o.editLogs[0]?.createdAt.toISOString() ?? null,
+    lastChangeSummary: o.editLogs[0] ? summarizeOrderEditChanges(o.editLogs[0].changes as { label: string; from: string; to: string }[]) : null,
     channel: o.channel,
     buyerOrPlatform: o.buyerOrPlatform,
     notes: o.notes,
@@ -118,7 +128,7 @@ export default async function OrdersPage() {
     <div className="tk-page">
       <h1 className="tk-page-title">Pedidos</h1>
       <MarketplaceInboxSection pendingOrders={pendingOrders} products={products} />
-      <OrdersExplorer rows={rows} products={products} partners={partners} />
+      <OrdersExplorer rows={rows} products={products} partners={partners} recentBuyers={recentBuyers} />
     </div>
   )
 }

@@ -1236,6 +1236,28 @@ model Order {
   updatedAt       DateTime     @updatedAt
   items           OrderItem[]
   inboxEntries    MarketplaceOrderInbox[]
+  // Redesign "Pedidos": 1 linha por sessão de edição salva (não 1 por
+  // campo mudado) -- ver OrderEditLog.
+  editLogs        OrderEditLog[]
+}
+
+// Redesign "Pedidos" §"selo Editado + histórico de alterações": cada
+// clique em "Salvar alterações" no drawer de detalhe grava 1 linha aqui,
+// mesmo que a sessão tenha mudado vários campos/itens de uma vez --
+// nunca 1 linha por campo (exatamente o modelo que o próprio pedido do
+// usuário sugeriu: "historico { quando, usuario, descricao } // 1
+// entrada por 'Salvar alterações'"). `changes` é um array já formatado
+// pro "o que mudou" (usado tanto no "↳" da lista quanto na timeline do
+// drawer) -- mesmo espírito de Json congelado que costSnapshot já usa
+// em ProductionRun/Sale, nunca recalculado depois de gravado.
+model OrderEditLog {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  changes   Json     // Array<{ label: string, from: string, to: string }>
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
 }
 
 // 1 produto+cor+quantidade+preço pedido, com seu próprio ciclo de vida
