@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { getProductionStatusBadge, WASTE_REASON_LABELS, getOrderItemDisplayStatus, summarizeOrderEditChanges } from '@/lib/format'
+import { getProductionStatusBadge, WASTE_REASON_LABELS, getOrderItemDisplayStatus, summarizeOrderEditChanges, getMarginBadge, formatDayHeader } from '@/lib/format'
 import type { ProductionStatus, WasteReason, OrderStatus } from '@prisma/client'
 
 // Task 8 (spec §5.4/§6, task-8 brief): history table renders a colored
@@ -103,5 +103,48 @@ describe('summarizeOrderEditChanges', () => {
       { label: 'C', from: '1', to: '2' },
     ])
     expect(summary).toBe('A 1 → 2 · B 1 → 2 · +1')
+  })
+})
+
+// Redesign "Vendas" §4: pílula de margem (Lucro ÷ Recebido) -- 3 faixas
+// de cor + bucket neutro pra margem sem base de cálculo (Recebido = 0).
+describe('getMarginBadge', () => {
+  it('verde para margem >= 40%', () => {
+    expect(getMarginBadge(0.4).className).toContain('emerald')
+    expect(getMarginBadge(0.52).className).toContain('emerald')
+  })
+
+  it('amarelo para margem entre 20% e 40%', () => {
+    expect(getMarginBadge(0.2).className).toContain('amber')
+    expect(getMarginBadge(0.39).className).toContain('amber')
+  })
+
+  it('vermelho para margem abaixo de 20%, incluindo negativa', () => {
+    expect(getMarginBadge(0.19).className).toContain('red')
+    expect(getMarginBadge(0).className).toContain('red')
+    expect(getMarginBadge(-0.1).className).toContain('red')
+  })
+
+  it('neutro quando não há margem calculável (null)', () => {
+    const badge = getMarginBadge(null)
+    expect(badge.className).not.toContain('emerald')
+    expect(badge.className).not.toContain('amber')
+    expect(badge.className).not.toContain('red')
+  })
+})
+
+// Redesign "Vendas" §1: cabeçalho de grupo-por-dia -- dia da semana
+// abreviado e capitalizado + data pt-BR, formatado em UTC (mesma
+// convenção de todo DateTime data-only do app -- nunca o fuso do
+// processo, pra não descolar do dia gravado perto da virada).
+describe('formatDayHeader', () => {
+  it('formata dia da semana abreviado capitalizado + data pt-BR', () => {
+    // 2026-10-07 é uma quarta-feira.
+    expect(formatDayHeader(new Date('2026-10-07T00:00:00Z'))).toBe('Qua 07/10/2026')
+  })
+
+  it('capitaliza corretamente outro dia da semana', () => {
+    // 2026-10-04 é um domingo.
+    expect(formatDayHeader(new Date('2026-10-04T00:00:00Z'))).toBe('Dom 04/10/2026')
   })
 })

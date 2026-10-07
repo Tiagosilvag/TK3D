@@ -177,6 +177,35 @@ export function getSaleChannelBadge(channel: SaleChannel): StatusBadge {
   return SALE_CHANNEL_BADGES[channel]
 }
 
+// Redesign "Vendas": pílula de margem (Lucro ÷ Recebido) -- mesmas 3
+// faixas em toda a tela nova (linha-resumo do grupo, linha de item
+// expandida, card de KPI "Lucro líquido"), nunca uma conta repetida em
+// cada lugar que precisa da cor. `margin` null (ex. Recebido = 0, sem
+// base pra calcular %) cai no bucket neutro -- nunca inventa uma faixa.
+const MARGIN_BADGES = {
+  alta: { label: '', className: 'text-emerald-600 dark:text-emerald-400' },
+  media: { label: '', className: 'text-amber-600 dark:text-amber-400' },
+  baixa: { label: '', className: 'text-red-600 dark:text-red-400' },
+  neutra: { label: '', className: 'text-slate-400 dark:text-slate-500' },
+} as const
+
+export function getMarginBadge(margin: number | null): StatusBadge {
+  if (margin === null) return MARGIN_BADGES.neutra
+  if (margin >= 0.4) return MARGIN_BADGES.alta
+  if (margin >= 0.2) return MARGIN_BADGES.media
+  return MARGIN_BADGES.baixa
+}
+
+// Redesign "Vendas": cabeçalho de grupo-por-dia -- "Qua 07/10/2026" (dia
+// da semana abreviado capitalizado + data pt-BR). `toLocaleDateString`
+// com weekday:'short' devolve algo como "qua." (minúsculo, com ponto) --
+// capitalizado e sem o ponto fica mais limpo como título de seção.
+export function formatDayHeader(date: Date): string {
+  const weekday = date.toLocaleDateString('pt-BR', { weekday: 'short', timeZone: 'UTC' }).replace('.', '')
+  const day = date.toLocaleDateString('pt-BR', { timeZone: 'UTC' })
+  return `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)} ${day}`
+}
+
 // Anúncios: mesmas cores de SALE_CHANNEL_BADGES pra Shopee/Mercado Livre
 // (consistência visual -- é a mesma plataforma em telas diferentes).
 const MARKETPLACE_PLATFORM_BADGES: Record<MarketplacePlatformKind, StatusBadge> = {
