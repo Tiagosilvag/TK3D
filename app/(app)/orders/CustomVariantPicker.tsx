@@ -1,5 +1,6 @@
 'use client'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { getOrderablePartOptions, type OrderablePartOption } from '@/actions/orders'
 import { ComboSelect } from '../assembly/ComboSelect'
 
@@ -15,6 +16,18 @@ export interface CustomVariantChoice {
 // opções (getOrderablePartOptions) só na 1ª abertura por produto --
 // OrderForm.tsx monta este componente com key={productId}, então trocar
 // de produto remonta do zero.
+//
+// Bug "Confirmar fecha o pedido inteiro": este painel vivia num <dialog>
+// nativo próprio (showModal()) aninhado dentro do <dialog> de OrderForm
+// (já aberto) -- mesmo bug de stacking de 2 <dialog> nativos empilhados
+// já diagnosticado em ComponentCategoryCard.tsx (picker dentro de
+// AssemblyDetailModal): fechar o de CIMA (close(), ao clicar Confirmar)
+// dispara um evento 'close' nativo espúrio no de BAIXO (OrderForm),
+// fechando o pedido inteiro e perdendo os itens já adicionados. Fix:
+// mesmo padrão já usado em ComboSelect/ComponentCategoryCard -- painel
+// comum controlado por estado React (backdrop + painel portado pro
+// <dialog> ancestral via closest('dialog'), Esc/clique-fora fecham via
+// listener), nunca <dialog>/showModal().
 export function CustomVariantPicker({
   productId,
   onConfirm,
@@ -24,16 +37,34 @@ export function CustomVariantPicker({
   onConfirm: (choice: CustomVariantChoice) => void
   trigger: React.ReactNode
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
+  const triggerRef = useRef<HTMLSpanElement>(null)
+  const [open, setOpen] = useState(false)
+  const [mounted, setMounted] = useState(false)
   const [options, setOptions] = useState<OrderablePartOption[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [selections, setSelections] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
 
-  async function open() {
+  useEffect(() => setMounted(true), [])
+
+  useEffect(() => {
+    if (!open) return
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') close()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [open])
+
+  function close() {
+    setOpen(false)
     setError(null)
-    dialogRef.current?.showModal()
+  }
+
+  async function openPanel() {
+    setError(null)
+    setOpen(true)
     if (options) return
     setLoading(true)
     setLoadError(null)
@@ -66,62 +97,67 @@ export function CustomVariantPicker({
       .map((o) => `${o.partName}: ${o.colorOptions.find((c) => c.key === selections[o.partId])?.label ?? ''}`)
       .join(' · ')
     onConfirm({ choices: selections, label })
-    dialogRef.current?.close()
+    close()
   }
 
   return (
     <>
-      <span onClick={open}>{trigger}</span>
-      <dialog
-        ref={dialogRef}
-        onClose={() => setError(null)}
-        className="w-96 rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
-      >
-        <div className="grid grid-cols-1 gap-3 p-4">
-          <h3 className="font-display text-sm font-semibold">Montar variação personalizada</h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Escolha a cor de cada peça de cor variável -- se ainda não existir pronta, o sistema já cria a pendência de produção/montagem certa.
-          </p>
+      <span ref={triggerRef} onClick={openPanel}>{trigger}</span>
 
-          {loading && <p className="text-sm text-slate-500 dark:text-slate-400">Carregando peças…</p>}
-          {loadError && <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>}
+      {mounted && open && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={close}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-96 max-w-full rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+          >
+            <div className="grid grid-cols-1 gap-3 p-4">
+              <h3 className="font-display text-sm font-semibold">Montar variação personalizada</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Escolha a cor de cada peça de cor variável -- se ainda não existir pronta, o sistema já cria a pendência de produção/montagem certa.
+              </p>
 
-          {options && options.length === 0 && (
-            <p className="text-sm text-slate-500 dark:text-slate-400">Este produto não tem peças cadastradas.</p>
-          )}
+              {loading && <p className="text-sm text-slate-500 dark:text-slate-400">Carregando peças…</p>}
+              {loadError && <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>}
 
-          {options?.map((o) => (
-            <label key={o.partId} className="text-sm">
-              {o.partName}
-              {o.fixed ? (
-                <p className="mt-1 rounded-lg border border-transparent bg-slate-50 px-2.5 py-1.5 text-sm text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
-                  {o.fixedLabel} (receita fixa)
-                </p>
-              ) : (
-                <div className="mt-1">
-                  <ComboSelect
-                    options={o.colorOptions}
-                    value={selections[o.partId] ?? ''}
-                    onChange={(key) => setSelections((prev) => ({ ...prev, [o.partId]: key }))}
-                    allowUnavailable
-                  />
-                </div>
+              {options && options.length === 0 && (
+                <p className="text-sm text-slate-500 dark:text-slate-400">Este produto não tem peças cadastradas.</p>
               )}
-            </label>
-          ))}
 
-          {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+              {options?.map((o) => (
+                <label key={o.partId} className="text-sm">
+                  {o.partName}
+                  {o.fixed ? (
+                    <p className="mt-1 rounded-lg border border-transparent bg-slate-50 px-2.5 py-1.5 text-sm text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+                      {o.fixedLabel} (receita fixa)
+                    </p>
+                  ) : (
+                    <div className="mt-1">
+                      <ComboSelect
+                        options={o.colorOptions}
+                        value={selections[o.partId] ?? ''}
+                        onChange={(key) => setSelections((prev) => ({ ...prev, [o.partId]: key }))}
+                        allowUnavailable
+                      />
+                    </div>
+                  )}
+                </label>
+              ))}
 
-          <div className="mt-2 flex items-center justify-end gap-3">
-            <button type="button" onClick={() => dialogRef.current?.close()} className="text-sm text-slate-500 hover:underline dark:text-slate-400">
-              Cancelar
-            </button>
-            <button type="button" onClick={confirm} disabled={loading || !options} className="tk-btn-primary disabled:cursor-not-allowed disabled:opacity-60">
-              Confirmar
-            </button>
+              {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+
+              <div className="mt-2 flex items-center justify-end gap-3">
+                <button type="button" onClick={close} className="text-sm text-slate-500 hover:underline dark:text-slate-400">
+                  Cancelar
+                </button>
+                <button type="button" onClick={confirm} disabled={loading || !options} className="tk-btn-primary disabled:cursor-not-allowed disabled:opacity-60">
+                  Confirmar
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
-      </dialog>
+        </div>,
+        triggerRef.current?.closest('dialog') ?? document.body,
+      )}
     </>
   )
 }
