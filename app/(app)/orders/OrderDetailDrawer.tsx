@@ -237,10 +237,21 @@ export function OrderDetailDrawer({
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-slate-100">
-                        {item.colorHex && <span style={{ background: item.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                        <span className="truncate">{item.productName}{item.colorLabel && <span className="font-normal text-slate-500 dark:text-slate-400"> — {item.colorLabel}</span>}</span>
+                        <span className="truncate">{item.productName}</span>
                         {changed && <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-400">ALTERADO</span>}
                       </div>
+                      {/* Bug "cor não aparece": nome do produto + cor dividiam a
+                          MESMA linha com `truncate`, competindo por espaço com o
+                          badge de status ao lado -- combinação longa (produto +
+                          peça + cor) cortava a cor no meio ("ARGOLA — ..."),
+                          sem jeito de ver o resto. Cor ganha linha própria, que
+                          QUEBRA em vez de cortar (nunca escondida). */}
+                      {item.colorLabel && (
+                        <p className="mt-0.5 flex items-start gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                          {item.colorHex && <span style={{ background: item.colorHex }} className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full" />}
+                          <span className="break-words">{item.colorLabel}</span>
+                        </p>
+                      )}
                     </div>
                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${display.badgeClassName}`}>{display.label}</span>
                   </div>
