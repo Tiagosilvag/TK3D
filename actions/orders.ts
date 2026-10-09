@@ -37,6 +37,28 @@ export interface OrderablePartOption {
   colorOptions: AssemblyPartColorOption[]
 }
 
+// Bug "pedido com acessório de cor variável nunca reconcilia, mesmo já
+// produzido e montado": esta função só mapeava status.parts (peça
+// impressa), nunca status.accessoryRequirements -- um produto com
+// acessório de cor variável (ex.: CORRENTE Prata/Dourada numa CANECA)
+// montava a combinação de cor do pedido (colorComboKey, via
+// resolveCustomColorComboKey abaixo) SEM a escolha do acessório, porque
+// "+ Montar variação personalizada" nunca oferecia essa opção pra
+// escolher. confirmAssembly (actions/assembly.ts#performAssembly), por
+// outro lado, SEMPRE grava a cor do acessório escolhido em
+// ProductAssembly.colorChoices junto com as peças (mesma lógica que
+// ConfirmAssemblyForm.tsx já mescla na tela de Montagem) -- a chave
+// serializada (serializeColorChoices) da montagem real sempre tinha 1
+// campo A MAIS que a do pedido, então nunca batiam, por mais que se
+// produzisse/montasse: reconcileOrderReservations (e "Recalcular
+// pedidos") exige IGUALDADE EXATA da chave inteira. Fix: mescla acessório
+// com "irmãos" de cor (colorOptions não nulo) na mesma lista de opções,
+// com o MESMO formato de peça (key = Accessory.id, igual
+// colorChoicesToStore[accessory.id] grava) -- igual ao merge que
+// ConfirmAssemblyForm.tsx já faz pro lado da Montagem. Acessório sem
+// "irmãos" (colorOptions null) nunca vira opção aqui, mesmo motivo de
+// performAssembly nunca gravar uma chave pra ele.
+//
 // Encomenda com variação personalizada: opções de cor por peça pro
 // seletor de Pedidos -- ao contrário de AssemblyPartColorOption puro
 // (getAssemblyStatus), que só lista combo JÁ produzido alguma vez, aqui
@@ -62,7 +84,7 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
 
   const partById = new Map(parts.map((p) => [p.id, p]))
 
-  return status.parts.map((partStatus): OrderablePartOption => {
+  const partOptions = status.parts.map((partStatus): OrderablePartOption => {
     const part = partById.get(partStatus.partId)
     // Peça sintética (produto simples com insumo/acessório): sem
     // ProductPart real, sempre cor variável (mesmo tratamento de
@@ -105,6 +127,12 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
 
     return { partId: partStatus.partId, partName: partStatus.name, fixed: false, fixedLabel: null, colorOptions: merged }
   })
+
+  const accessoryOptions: OrderablePartOption[] = status.accessoryRequirements
+    .filter((a) => a.colorOptions)
+    .map((a) => ({ partId: a.id, partName: a.name, fixed: false, fixedLabel: null, colorOptions: a.colorOptions! }))
+
+  return [...partOptions, ...accessoryOptions]
 }
 
 // Bug "não mostra a cor da variação criada": a tabela de Pedidos resolvia

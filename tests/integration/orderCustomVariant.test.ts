@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client'
 import { createOrder, getOrderablePartOptions, getOrderDemandQueue, resolveOrderItemColorLabel } from '@/actions/orders'
 import { createProductionRun } from '@/actions/productionRuns'
 import { confirmAssembly } from '@/actions/assembly'
+import { serializeColorChoices } from '@/lib/reports'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -10,11 +11,16 @@ async function cleanup() {
   await prisma.orderReallocation.deleteMany()
   await prisma.orderItem.deleteMany()
   await prisma.order.deleteMany()
+  await prisma.stockConsumption.deleteMany()
   await prisma.productAssembly.deleteMany()
   await prisma.productionRun.deleteMany()
+  await prisma.productAccessoryUsage.deleteMany()
   await prisma.productPartFilament.deleteMany()
   await prisma.productPart.deleteMany()
   await prisma.product.deleteMany()
+  await prisma.accessoryPurchase.deleteMany()
+  await prisma.accessory.deleteMany({ where: { name: 'Corrente Bolinha' } })
+  await prisma.accessoryTypeRecord.deleteMany({ where: { name: 'Corrente Teste' } })
   await prisma.printer.deleteMany()
   await prisma.filament.deleteMany()
 }
@@ -524,5 +530,82 @@ describe('getOrderDemandQueue -- peça de receita fixa não fica presa quando o 
     const queue = await getOrderDemandQueue()
     const rowsForItem = queue.productionRows.filter((r) => r.orderItemId === item.id)
     expect(rowsForItem).toEqual([])
+  })
+})
+
+// Bug "pedido com acessório de cor variável nunca reconcilia, mesmo já
+// produzido e montado": CANECA FLAMENGO (produto real do usuário) tem um
+// acessório de cor variável (CORRENTE Prata/Dourada) -- "+ Montar variação
+// personalizada" nunca oferecia essa escolha (getOrderablePartOptions só
+// mapeava status.parts), então o colorComboKey gravado no pedido ficava
+// SEM a cor do acessório, enquanto confirmAssembly sempre grava a cor do
+// acessório junto -- as duas chaves nunca batiam, reconcileOrderReservations
+// (e "Recalcular pedidos") nunca reconciliava o pedido, não importa quanto
+// se produzisse/montasse da combinação certa.
+describe('bug "pedido com acessório de cor variável nunca reconcilia, mesmo já produzido e montado"', () => {
+  async function buildSimpleProductWithColorVariableAccessory() {
+    const printer = await prisma.printer.create({ data: { name: 'P3', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+    const vermelho = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Vermelho', colorHex: '#ff0000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+    const type = await prisma.accessoryTypeRecord.create({ data: { name: 'Corrente Teste' } })
+    const prata = await prisma.accessory.create({ data: { name: 'Corrente Bolinha', type: type.id, colorName: 'Prata', currentStock: 20, avgUnitCost: 0.3 } })
+    const dourada = await prisma.accessory.create({ data: { name: 'Corrente Bolinha', type: type.id, colorName: 'Dourada', currentStock: 20, avgUnitCost: 0.3 } })
+    const product = await prisma.product.create({
+      data: {
+        name: 'Caneca Teste Acessório', category: 'Copo',
+        printerId: printer.id, filamentId: vermelho.id, weightGrams: 10, printTimeHours: 0.5, laborTimeHours: 0,
+        accessoryUsages: { create: [{ accessoryId: prata.id, quantity: 1 }] },
+      },
+    })
+    return { printer, vermelho, type, prata, dourada, product }
+  }
+
+  it('getOrderablePartOptions inclui o acessório de cor variável como opção escolhível (não só as peças)', async () => {
+    const { prata, dourada, product } = await buildSimpleProductWithColorVariableAccessory()
+    const options = await getOrderablePartOptions(product.id)
+    const accessoryOption = options.find((o) => o.partId === prata.id)
+    expect(accessoryOption).toBeDefined()
+    expect(accessoryOption!.fixed).toBe(false)
+    expect(accessoryOption!.colorOptions.map((o) => o.key).sort()).toEqual([dourada.id, prata.id].sort())
+  })
+
+  it('pedido grava a MESMA chave que confirmAssembly grava -- reconcilia pra Pronto — reservado assim que a combinação pedida é produzida e montada', async () => {
+    const { printer, vermelho, prata, product } = await buildSimpleProductWithColorVariableAccessory()
+
+    const orderResult = await createOrder(orderFdWithColors(product.id, { [product.id]: vermelho.id, [prata.id]: prata.id }))
+    expect(orderResult.success).toBe(true)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    // Chave exata que confirmAssembly vai gravar em ProductAssembly.colorChoices
+    // pra esta combinação -- antes do fix, item.colorComboKey nunca incluía
+    // a entrada do acessório (prata.id), então nunca batia com isto.
+    expect(item.colorComboKey).toBe(serializeColorChoices({ [product.id]: vermelho.id, [prata.id]: prata.id }))
+    expect(item.status).toBe('AGUARDANDO_PRODUCAO')
+
+    const prodResult = await createProductionRun(fd({
+      productId: product.id,
+      printerId: printer.id,
+      filamentId: vermelho.id,
+      date: '2026-09-01',
+      quantityPlanned: '1',
+      quantitySuccess: '1',
+      quantityFailed: '0',
+      gramsUsed: '10',
+      gramsWasted: '0',
+      timeWastedHours: '0',
+    }))
+    expect(prodResult.success).toBe(true)
+
+    const assemblyResult = await confirmAssembly(fd({
+      productId: product.id,
+      quantity: '1',
+      notes: '',
+      colorChoicesJson: JSON.stringify({ [product.id]: vermelho.id, [prata.id]: prata.id }),
+      accessoryUsagesJson: JSON.stringify([{ id: prata.id, quantityPerUnit: 1 }]),
+      supplyUsagesJson: '[]',
+    }))
+    expect(assemblyResult.success).toBe(true)
+
+    const updatedItem = await prisma.orderItem.findUniqueOrThrow({ where: { id: item.id } })
+    expect(updatedItem.status).toBe('PRONTO_RESERVADO')
+    expect(updatedItem.reservedQuantity).toBe(1)
   })
 })
