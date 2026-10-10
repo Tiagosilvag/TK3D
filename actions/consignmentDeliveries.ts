@@ -134,6 +134,26 @@ export async function updateConsignmentDeliveryQuantity(id: string, formData: Fo
   return { success: true }
 }
 
+// Bug "editar o valor não dá": a coluna "Preço unit." no modal de detalhe de
+// uma entrega (DeliveriesExplorer) só mostrava o valor, sem forma nenhuma de
+// corrigi-lo depois de registrado (preço errado na hora de registrar a
+// entrega não tinha como ser consertado sem excluir e recriar a linha
+// inteira) -- mesmo padrão de updateConsignmentDeliveryQuantity acima, só
+// que pro preço em vez da quantidade. Nunca mexe em relatório de venda já
+// registrado contra esta entrega (ConsignmentSaleReport.unitPrice é
+// congelado no momento da venda, igual costSnapshot -- ver comentário do
+// schema), só o preço de referência pras vendas FUTURAS contra esta linha.
+export async function updateConsignmentDeliveryUnitPrice(id: string, formData: FormData): Promise<ActionResult> {
+  const unitPrice = Number(String(formData.get('unitPrice') ?? '').replace(',', '.'))
+  if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+    return { success: false, error: 'Preço inválido' }
+  }
+
+  await prisma.consignmentDelivery.update({ where: { id }, data: { unitPrice } })
+  revalidatePath('/consignment/deliveries')
+  return { success: true }
+}
+
 // Pedido "caso eu queira pegar alguma peça que esteja com o parceiro eu
 // consigo, voltando pro meu estoque" + revisão "quero que ao devolver marque
 // igual quando é cancelado, com opção de desfazer/apagar -- a mesma lógica
