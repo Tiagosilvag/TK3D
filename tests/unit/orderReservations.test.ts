@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { serializeColorChoices, deserializeColorChoices } from '@/lib/reports'
 import { maxAssemblableUnitsForCombo } from '@/lib/orderReservations'
-import type { AssemblyStatus, AssemblyPartStatus } from '@/actions/assembly'
+import type { AssemblyStatus, AssemblyPartStatus, AssemblyPartColorOption } from '@/actions/assembly'
+
+function colorOption(o: { key: string; filamentIds: string[]; label: string; available: number; colorHex: string | null }): AssemblyPartColorOption {
+  return { ...o, colors: [], material: null }
+}
 
 describe('serializeColorChoices / deserializeColorChoices', () => {
   it('é um round-trip: deserializar o que foi serializado devolve o mapa original', () => {
@@ -56,8 +60,8 @@ describe('maxAssemblableUnitsForCombo', () => {
 
   it('combo disponível em todas as peças: mínimo entre floor(available/quantityPerUnit) de cada peça', () => {
     const status = makeStatus([
-      variablePart({ partId: 'cabeca', quantityPerUnit: 1, colorOptions: [{ key: 'vermelho', filamentIds: ['vermelho'], label: 'Vermelho', available: 10, colorHex: '#f00' }] }),
-      variablePart({ partId: 'corpo', quantityPerUnit: 2, colorOptions: [{ key: 'azul', filamentIds: ['azul'], label: 'Azul', available: 10, colorHex: '#00f' }] }),
+      variablePart({ partId: 'cabeca', quantityPerUnit: 1, colorOptions: [colorOption({ key: 'vermelho', filamentIds: ['vermelho'], label: 'Vermelho', available: 10, colorHex: '#f00' })] }),
+      variablePart({ partId: 'corpo', quantityPerUnit: 2, colorOptions: [colorOption({ key: 'azul', filamentIds: ['azul'], label: 'Azul', available: 10, colorHex: '#00f' })] }),
     ])
     const comboKey = serializeColorChoices({ cabeca: 'vermelho', corpo: 'azul' })
     // cabeca: floor(10/1)=10, corpo: floor(10/2)=5 -- mínimo é 5
@@ -70,8 +74,8 @@ describe('maxAssemblableUnitsForCombo', () => {
         partId: 'cabeca',
         quantityPerUnit: 1,
         colorOptions: [
-          { key: 'vermelho', filamentIds: ['vermelho'], label: 'Vermelho', available: 0, colorHex: '#f00' },
-          { key: 'azul', filamentIds: ['azul'], label: 'Azul', available: 20, colorHex: '#00f' },
+          colorOption({ key: 'vermelho', filamentIds: ['vermelho'], label: 'Vermelho', available: 0, colorHex: '#f00' }),
+          colorOption({ key: 'azul', filamentIds: ['azul'], label: 'Azul', available: 20, colorHex: '#00f' }),
         ],
       }),
     ], 20) // maxAssemblableUnits "cego à cor" veria 20 disponível (a soma/melhor cor)
@@ -89,7 +93,7 @@ describe('maxAssemblableUnitsForCombo', () => {
 
   it('peça sem escolha no combo (nunca produzida nessa cor): 0', () => {
     const status = makeStatus([
-      variablePart({ partId: 'cabeca', quantityPerUnit: 1, colorOptions: [{ key: 'vermelho', filamentIds: ['vermelho'], label: 'Vermelho', available: 10, colorHex: '#f00' }] }),
+      variablePart({ partId: 'cabeca', quantityPerUnit: 1, colorOptions: [colorOption({ key: 'vermelho', filamentIds: ['vermelho'], label: 'Vermelho', available: 10, colorHex: '#f00' })] }),
     ])
     const comboKey = serializeColorChoices({ cabeca: 'verde' })
     expect(maxAssemblableUnitsForCombo(status, comboKey)).toBe(0)

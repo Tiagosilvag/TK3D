@@ -402,6 +402,13 @@ export interface VariantAttr {
   // diferentes) ou acessório (sem material) ficam com `material: null`.
   shortValue: string
   material: string | null
+  // Redesign "Variação de peças em Pedidos": `colorHexes`/`shortValue` são
+  // arrays PARALELOS mas não pareados (ex. hex[0] pode não ser a cor de
+  // shortValue.split(' + ')[0] se algum filamento não tiver hex) -- `colors`
+  // é a versão pareada, 1 elemento por filamento/acessório do combo, na
+  // ordem do cadastro, pro componente VariacaoPecas renderizar bolinha+nome
+  // intercalados sem depender de zipar dois arrays separados.
+  colors: { hex: string | null; name: string }[]
 }
 
 const VARIANT_ATTR_TIER_RANK: Record<VariantAttrTier, number> = { produto: 0, complemento: 1, acessorio: 2 }
@@ -476,7 +483,15 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
           // Produto simples sem componente: a única variação é a cor dele
           // mesmo -- sempre hierarquia "produto" (é o produto em si, não um
           // complemento nem um acessório aplicado).
-          attrs: [{ name: 'Cor', value: label, tier: 'produto' as const, colorHexes: f?.colorHex ? [f.colorHex] : [], shortValue: f?.colorName ?? label, material: f?.material ?? null }],
+          attrs: [{
+            name: 'Cor',
+            value: label,
+            tier: 'produto' as const,
+            colorHexes: f?.colorHex ? [f.colorHex] : [],
+            shortValue: f?.colorName ?? label,
+            material: f?.material ?? null,
+            colors: f ? [{ hex: f.colorHex ?? null, name: f.colorName }] : [],
+          }],
           filamentIds: [r.filamentId],
         }
       })
@@ -563,6 +578,16 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
     return { shortValue, material }
   }
 
+  // Redesign "Variação de peças em Pedidos": versão pareada de
+  // filamentComboHexes/filamentComboShort -- 1 elemento por filamento do
+  // combo, na ordem do cadastro (ver VariantAttr.colors acima).
+  function filamentComboColors(rawKey: string): { hex: string | null; name: string }[] {
+    return rawKey.split(',').map((id) => {
+      const f = filamentById.get(id)
+      return { hex: f?.colorHex ?? null, name: f?.colorName ?? id }
+    })
+  }
+
   // Resolve UM par (choiceKey, rawKey) de colorChoices na sua fonte
   // estrutural -- ProductPart (peça), Product (componente) ou Accessory
   // (acessório com cor variável) -- usada tanto pra montar `label` (texto
@@ -572,9 +597,9 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
   // componente/acessório.
   function resolveChoiceAttr(choiceKey: string, rawKey: string): VariantAttr {
     const partName = partNameById.get(choiceKey)
-    if (partName) return { name: partName, value: filamentComboLabel(rawKey), tier: 'produto', colorHexes: filamentComboHexes(rawKey), ...filamentComboShort(rawKey) }
+    if (partName) return { name: partName, value: filamentComboLabel(rawKey), tier: 'produto', colorHexes: filamentComboHexes(rawKey), ...filamentComboShort(rawKey), colors: filamentComboColors(rawKey) }
     const componentName = componentProductNameById.get(choiceKey)
-    if (componentName) return { name: componentName, value: filamentComboLabel(rawKey), tier: 'complemento', colorHexes: filamentComboHexes(rawKey), ...filamentComboShort(rawKey) }
+    if (componentName) return { name: componentName, value: filamentComboLabel(rawKey), tier: 'complemento', colorHexes: filamentComboHexes(rawKey), ...filamentComboShort(rawKey), colors: filamentComboColors(rawKey) }
     const chosenAccessory = accessoryById.get(rawKey)
     if (chosenAccessory) {
       return {
@@ -586,9 +611,10 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
         // shortValue é a própria cor, já curta (sem marca).
         shortValue: chosenAccessory.colorName ?? '',
         material: null,
+        colors: chosenAccessory.colorName ? [{ hex: chosenAccessory.colorHex ?? null, name: chosenAccessory.colorName }] : [],
       }
     }
-    return { name: '', value: filamentComboLabel(rawKey), tier: 'complemento', colorHexes: filamentComboHexes(rawKey), ...filamentComboShort(rawKey) }
+    return { name: '', value: filamentComboLabel(rawKey), tier: 'complemento', colorHexes: filamentComboHexes(rawKey), ...filamentComboShort(rawKey), colors: filamentComboColors(rawKey) }
   }
 
   function attrToLegacyLabel(attr: VariantAttr): string {

@@ -3,8 +3,9 @@ import { prisma } from '@/lib/prisma'
 import { EditProductionRunForm } from './EditProductionRunForm'
 import { ProductionRunsExplorer, type ProductionRunRow } from './ProductionRunsExplorer'
 import { getProductionByProduct, getPlates } from '@/actions/productionRuns'
-import { getOrderDemandQueue } from '@/actions/orders'
+import { getOrderDemandQueue, getAccessoryDemandQueue } from '@/actions/orders'
 import { DemandQueuePanel } from './DemandQueuePanel'
+import { AccessoryDemandPanel } from './AccessoryDemandPanel'
 import type { ProductionCostSnapshot } from '@/lib/costing'
 import { calculatePrinterDepreciationCostPerHour } from '@/lib/costing'
 import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
@@ -47,7 +48,7 @@ export default async function ProductionPage({
     ...(status ? { status: status as ProductionStatus } : {}),
   }
 
-  const [runRecords, totalRuns, summaryRuns, products, printers, filamentRecords, editingRunRecord, byProduct, plates, demandQueue] = await Promise.all([
+  const [runRecords, totalRuns, summaryRuns, products, printers, filamentRecords, editingRunRecord, byProduct, plates, demandQueue, accessoryDemand] = await Promise.all([
     prisma.productionRun.findMany({
       where: runsWhere,
       orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
@@ -91,6 +92,7 @@ export default async function ProductionPage({
     getProductionByProduct(productId),
     getPlates(),
     getOrderDemandQueue(),
+    getAccessoryDemandQueue(),
   ])
 
   const totalPages = Math.max(1, Math.ceil(totalRuns / PAGE_SIZE))
@@ -260,6 +262,7 @@ export default async function ProductionPage({
       </div>
 
       <DemandQueuePanel rows={demandQueue.productionRows} printers={printerOptions} filaments={filaments} />
+      <AccessoryDemandPanel rows={accessoryDemand} />
 
       {/* Melhoria "Produção" §1: um filtro único (Produto + Impressora +
           Período), em vez de dois blocos separados disputando espaço com o

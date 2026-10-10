@@ -54,6 +54,13 @@ export interface AssemblyPartColorOption {
   // getProductVariantBreakdown em lib/reports.ts); combo multi-filamento
   // não tem uma bolinha única que o represente direito.
   colorHex: string | null
+  // Redesign "Variação de peças em Pedidos": mesmos campos aditivos de
+  // VariantAttr (lib/reports.ts) -- `colors` pareado (1 por filamento/
+  // acessório do combo) e `material` só quando o combo é 1 filamento só --
+  // permite ao CustomVariantPicker montar a prévia VariacaoPecas antes de
+  // qualquer ProductAssembly existir pra essa combinação.
+  colors: { hex: string | null; name: string }[]
+  material: string | null
 }
 
 export interface AssemblyPartStatus {
@@ -191,6 +198,11 @@ async function getComponentColorAvailability(componentProductId: string): Promis
     label: p.label,
     available: Math.max(0, p.quantity - (consumedByCombo.get(p.key) ?? 0)),
     colorHex: p.colorHex,
+    // Componente é outro Product (pode ter 1+ peças próprias) -- junta as
+    // cores de todos os attrs já resolvidos por getProductVariantBreakdown;
+    // material só quando esse componente resolve pra 1 único attr/cor.
+    colors: p.attrs.flatMap((a) => a.colors),
+    material: p.attrs.length === 1 ? p.attrs[0].material : null,
   }))
 }
 
@@ -315,6 +327,8 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
           label,
           available: Math.max(0, (producedByCombo.get(key)?.quantity ?? 0) - (consumedByCombo.get(key) ?? 0)),
           colorHex: filamentIds.length === 1 ? (filamentById.get(filamentIds[0])?.colorHex ?? null) : null,
+          colors: filamentIds.map((id) => { const f = filamentById.get(id); return { hex: f?.colorHex ?? null, name: f?.colorName ?? id } }),
+          material: filamentIds.length === 1 ? (filamentById.get(filamentIds[0])?.material ?? null) : null,
         }
       })
 
@@ -403,6 +417,8 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
         label: f ? filamentLabel(f) : filamentId,
         available: Math.max(0, (producedByCombo.get(filamentId) ?? 0) - (consumedByCombo.get(filamentId) ?? 0)),
         colorHex: f?.colorHex ?? null,
+        colors: [{ hex: f?.colorHex ?? null, name: f?.colorName ?? filamentId }],
+        material: f?.material ?? null,
       }
     })
 
@@ -467,6 +483,8 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
           label: s.colorName,
           available: Math.max(0, s.currentStock.toNumber()),
           colorHex: s.colorHex,
+          colors: s.colorName ? [{ hex: s.colorHex, name: s.colorName }] : [],
+          material: null,
         }))
       : null
     return {

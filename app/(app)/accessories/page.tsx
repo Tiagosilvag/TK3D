@@ -9,9 +9,9 @@ export const dynamic = 'force-dynamic'
 export default async function AccessoriesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ editId?: string }>
+  searchParams: Promise<{ editId?: string; restock?: string }>
 }) {
-  const { editId } = await searchParams
+  const { editId, restock } = await searchParams
 
   const [accessories, settings, accessoryTypes, editingAccessoryRecord] = await Promise.all([
     prisma.accessory.findMany({
@@ -55,6 +55,13 @@ export default async function AccessoriesPage({
     list.push(c)
     consumptionsByAccessory.set(c.resourceId, list)
   }
+
+  // Pedido do usuário "aviso de acessório insuficiente em Produção com link
+  // direto pra ajustar o estoque": resolve ?restock=<id> pro nome exibido
+  // no RestockForm "fantasma" (AccessoriesExplorer) -- cobre tanto acessório
+  // com estoque (tabela principal) quanto esgotado (seção separada abaixo).
+  const restockAccessory = restock ? accessories.find((a) => a.id === restock) : undefined
+  const restockTarget = restockAccessory ? { id: restockAccessory.id, name: restockAccessory.name } : undefined
 
   const typeLabel = (id: string) => accessoryTypes.find((t) => t.id === id)?.name ?? id
   const editingAccessory = editingAccessoryRecord
@@ -146,6 +153,7 @@ export default async function AccessoriesPage({
         accessoryTypes={accessoryTypeOptions}
         editingAccessory={editingAccessory}
         summary={{ totalValueInStock, countByStatus }}
+        restockTarget={restockTarget}
       />
 
       {esgotadosRows.length > 0 && (

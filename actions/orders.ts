@@ -35,6 +35,18 @@ export interface OrderablePartOption {
   fixed: boolean
   fixedLabel: string | null
   colorOptions: AssemblyPartColorOption[]
+  // Aviso "acessório sem estoque suficiente pro pedido": quantidade deste
+  // item consumida por UNIDADE do produto (AssemblyPartStatus/
+  // AssemblyResourceRequirement.quantityPerUnit) -- multiplicado pela
+  // quantidade do pedido, compara contra colorOptions[].available (estoque
+  // real, AGORA) pra avisar ANTES de confirmar, não só na hora da
+  // montagem.
+  quantityPerUnit: number
+  // Peça impressa (source='part') ficar sem estoque é esperado -- "vão pra
+  // produção" já avisa disso (ItemCard). Acessório (source='accessory') é
+  // item comprado, não impresso -- faltar é uma surpresa ruim só descoberta
+  // hoje na Montagem; CustomVariantPicker avisa só pra este tipo.
+  source: 'part' | 'accessory'
 }
 
 // Bug "pedido com acessório de cor variável nunca reconcilia, mesmo já
@@ -97,7 +109,7 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
 
     if (isFixedRecipe) {
       const label = part!.filamentComponents.map((c) => `${c.filament.manufacturer} ${c.filament.colorName} (${c.filament.material})`).join(' + ')
-      return { partId: partStatus.partId, partName: partStatus.name, fixed: true, fixedLabel: label, colorOptions: [] }
+      return { partId: partStatus.partId, partName: partStatus.name, fixed: true, fixedLabel: label, colorOptions: [], quantityPerUnit: partStatus.quantityPerUnit, source: 'part' }
     }
 
     // Bug "produção usou um Preto diferente do pedido": colorName+material
@@ -114,7 +126,15 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
       .filter((f) => (stockById.get(f.id) ?? 0) > 0)
       .map((f) => {
         const found = existing.get(f.id)
-        return found ?? { key: f.id, filamentIds: [f.id], label: `${f.manufacturer} ${f.colorName} (${f.material})`, available: 0, colorHex: f.colorHex }
+        return found ?? {
+          key: f.id,
+          filamentIds: [f.id],
+          label: `${f.manufacturer} ${f.colorName} (${f.material})`,
+          available: 0,
+          colorHex: f.colorHex,
+          colors: [{ hex: f.colorHex, name: f.colorName }],
+          material: f.material,
+        }
       })
     // Combo já produzido pra essa peça mas ainda não coberto acima (o
     // filamento correspondente esgotou depois, ou é um combo multi-
@@ -125,12 +145,12 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
       if (o.filamentIds.every((id) => (stockById.get(id) ?? 0) > 0)) merged.push(o)
     }
 
-    return { partId: partStatus.partId, partName: partStatus.name, fixed: false, fixedLabel: null, colorOptions: merged }
+    return { partId: partStatus.partId, partName: partStatus.name, fixed: false, fixedLabel: null, colorOptions: merged, quantityPerUnit: partStatus.quantityPerUnit, source: 'part' }
   })
 
   const accessoryOptions: OrderablePartOption[] = status.accessoryRequirements
     .filter((a) => a.colorOptions)
-    .map((a) => ({ partId: a.id, partName: a.name, fixed: false, fixedLabel: null, colorOptions: a.colorOptions! }))
+    .map((a) => ({ partId: a.id, partName: a.name, fixed: false, fixedLabel: null, colorOptions: a.colorOptions!, quantityPerUnit: a.quantityPerUnit, source: 'accessory' }))
 
   return [...partOptions, ...accessoryOptions]
 }
@@ -1110,6 +1130,86 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
   }
 
   return { productionRows, assemblyRows }
+}
+
+export interface AccessoryDemandRow {
+  accessoryId: string
+  accessoryName: string
+  colorName: string
+  colorHex: string | null
+  neededUnits: number
+  availableUnits: number
+  missingUnits: number
+  // Contexto de quais pedidos pendentes puxam esse acessório -- não
+  // exaustivo por item, só os pedidos distintos (mesmo texto curto do
+  // resto da fila de demanda).
+  orders: { orderNumber: string | null; buyerOrPlatform: string | null }[]
+}
+
+// Pedido do usuário "aviso de acessório insuficiente, como o de produção,
+// mas em Produção -- preciso saber ao criar o pedido pra me organizar":
+// peça impressa que falta já tem aviso (productionRows acima, "vão pra
+// produção") -- acessório (item comprado, nunca entra na fila de
+// impressão) não tinha NENHUM, só aparecia faltando na hora de confirmar a
+// Montagem. Soma, por acessório REALMENTE escolhido em cada pedido
+// pendente (mesma resolução de colorComboKey que confirmAssembly usa --
+// choices[u.accessoryId] é o id do acessório-irmão de cor escolhido, senão
+// cai no acessório-base da ficha técnica), quanto cada item ainda vai
+// consumir (shortfall × quantityPerUnit) -- comparado contra
+// Accessory.currentStock AGORA (estoque real, sem reconstruir histórico).
+// Só entra na lista quando falta de verdade (missingUnits > 0); link
+// "Repor estoque" abre direto o formulário de compra do acessório em
+// /accessories (?restock=, mesmo padrão de ?editId= já usado em todo
+// catálogo).
+export async function getAccessoryDemandQueue(): Promise<AccessoryDemandRow[]> {
+  const items = await prisma.orderItem.findMany({
+    where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } },
+    include: {
+      product: { include: { accessoryUsages: true } },
+      order: { select: { orderNumber: true, buyerOrPlatform: true } },
+    },
+  })
+  const pending = items.filter((i) => i.quantity > i.reservedQuantity && i.product.accessoryUsages.length > 0)
+  if (pending.length === 0) return []
+
+  const neededByAccessory = new Map<string, { neededUnits: number; orders: Map<string, { orderNumber: string | null; buyerOrPlatform: string | null }> }>()
+  for (const item of pending) {
+    const shortfall = item.quantity - item.reservedQuantity
+    const choices = item.colorComboKey ? deserializeColorChoices(item.colorComboKey) : null
+    for (const u of item.product.accessoryUsages) {
+      const resolvedAccessoryId = choices?.[u.accessoryId] ?? u.accessoryId
+      const neededUnits = shortfall * u.quantity.toNumber()
+      if (neededUnits <= 0) continue
+      const entry = neededByAccessory.get(resolvedAccessoryId) ?? { neededUnits: 0, orders: new Map() }
+      entry.neededUnits += neededUnits
+      entry.orders.set(item.orderId, { orderNumber: item.order.orderNumber, buyerOrPlatform: item.order.buyerOrPlatform })
+      neededByAccessory.set(resolvedAccessoryId, entry)
+    }
+  }
+  if (neededByAccessory.size === 0) return []
+
+  const accessories = await prisma.accessory.findMany({ where: { id: { in: [...neededByAccessory.keys()] } } })
+  const accessoryById = new Map(accessories.map((a) => [a.id, a]))
+
+  const rows: AccessoryDemandRow[] = []
+  for (const [accessoryId, { neededUnits, orders }] of neededByAccessory) {
+    const accessory = accessoryById.get(accessoryId)
+    if (!accessory) continue
+    const availableUnits = accessory.currentStock.toNumber()
+    const missingUnits = neededUnits - availableUnits
+    if (missingUnits <= 0) continue
+    rows.push({
+      accessoryId,
+      accessoryName: accessory.name,
+      colorName: accessory.colorName,
+      colorHex: accessory.colorHex,
+      neededUnits,
+      availableUnits,
+      missingUnits,
+      orders: [...orders.values()],
+    })
+  }
+  return rows.sort((a, b) => b.missingUnits - a.missingUnits)
 }
 
 // Redesign "Pedidos" -- "Novo pedido" §1 Cliente: chips dos nomes mais
