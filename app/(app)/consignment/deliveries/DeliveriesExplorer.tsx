@@ -146,7 +146,7 @@ export function DeliveriesExplorer({
       <dialog
         ref={dialogRef}
         onClose={() => setSelected(null)}
-        className="w-full [--tk-dialog-cap:32rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+        className="w-full [--tk-dialog-cap:28rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 sm:[--tk-dialog-cap:36rem]"
       >
         {selected && (
           <div className="grid grid-cols-1 gap-3 p-5">
@@ -158,27 +158,45 @@ export function DeliveriesExplorer({
               <button type="button" onClick={() => dialogRef.current?.close()} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
             </div>
 
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="tk-table-head-row">
-                  <th className="py-1">Produto</th>
-                  <th className="text-center">Qtd.</th>
-                  <th className="text-center">Preço unit.</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {selected.items.map((item) => (
-                  <tr key={item.id} className="tk-row">
-                    <td className="py-1">
-                      <span className="flex items-center gap-1.5">
-                        {item.colorHex && <span style={{ background: item.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                        {item.productName}{item.colorLabel && <span className="text-slate-500 dark:text-slate-400"> - {item.colorLabel}</span>}
+            {/* Bug "modal ilegível / produto composto com nome enorme": uma
+                tabela de 4 colunas (produto, qtd+Salvar, preço+Salvar,
+                Remover) nunca tinha espaço pra caber um produto composto
+                com rótulo de combo de cor longo (ex.: "MONSTER + COPINHO"
+                com 3+ peças, cada uma com seu próprio filamento) -- o nome
+                e os dois formulários de edição ficavam espremidos numa
+                coluna estreita, sem quebra de linha sã. Mesmo fix já usado
+                em RegisterSaleForm.tsx (Registrar venda): cada item vira um
+                cartão empilhado (nome quebra livre em cima, Qtd./Preço lado
+                a lado embaixo), nunca uma linha de tabela horizontal
+                apertada. */}
+            <div className="space-y-2">
+              {selected.items.map((item) => (
+                <div key={item.id} className="rounded-lg border border-slate-200 p-2.5 dark:border-slate-700">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="flex min-w-0 flex-1 items-start gap-1.5 break-words text-sm">
+                      {item.colorHex && <span style={{ background: item.colorHex }} className="mt-1 inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                      <span>
+                        {item.productName}
+                        {item.colorLabel && <span className="text-slate-500 dark:text-slate-400"> - {item.colorLabel}</span>}
                       </span>
-                    </td>
-                    <td className="text-center">
-                      <form action={(fd) => handleUpdateQuantity(item.id, fd)} className="flex items-center justify-center gap-1">
+                    </span>
+                    <ConfirmDeleteForm
+                      action={() => handleRemoveItem(item.id)}
+                      className="shrink-0 text-xs font-medium text-red-600 hover:underline dark:text-red-400"
+                      confirmMessage={
+                        item.saleReportsCount > 0
+                          ? `Remover esta entrega? Isso também apaga ${item.saleReportsCount} relatório(s) de venda já registrado(s) contra ela.`
+                          : 'Tem certeza?'
+                      }
+                    />
+                  </div>
+
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <div>
+                      <form action={(fd) => handleUpdateQuantity(item.id, fd)} className="flex items-center gap-1">
+                        <label className="sr-only" htmlFor={`qty-${item.id}`}>Quantidade</label>
                         <input
+                          id={`qty-${item.id}`}
                           type="number"
                           name="quantityDelivered"
                           step="1"
@@ -190,13 +208,15 @@ export function DeliveriesExplorer({
                           Salvar
                         </button>
                       </form>
-                      {item.quantitySold > 0 && (
-                        <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Vendido: {item.quantitySold}</p>
-                      )}
-                    </td>
-                    <td className="text-center">
-                      <form action={(fd) => handleUpdateUnitPrice(item.id, fd)} className="flex items-center justify-center gap-1">
+                      <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+                        Qtd. entregue{item.quantitySold > 0 && ` · vendido: ${item.quantitySold}`}
+                      </p>
+                    </div>
+                    <div>
+                      <form action={(fd) => handleUpdateUnitPrice(item.id, fd)} className="flex items-center gap-1">
+                        <label className="sr-only" htmlFor={`price-${item.id}`}>Preço unitário</label>
                         <input
+                          id={`price-${item.id}`}
                           type="number"
                           name="unitPrice"
                           step="0.01"
@@ -208,21 +228,12 @@ export function DeliveriesExplorer({
                           Salvar
                         </button>
                       </form>
-                    </td>
-                    <td>
-                      <ConfirmDeleteForm
-                        action={() => handleRemoveItem(item.id)}
-                        confirmMessage={
-                          item.saleReportsCount > 0
-                            ? `Remover esta entrega? Isso também apaga ${item.saleReportsCount} relatório(s) de venda já registrado(s) contra ela.`
-                            : 'Tem certeza?'
-                        }
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Preço unit. (R$)</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
 
             <div className="mt-1 flex justify-end">
               <button type="button" onClick={() => dialogRef.current?.close()} className="text-sm text-slate-500 hover:underline dark:text-slate-400">Fechar</button>
