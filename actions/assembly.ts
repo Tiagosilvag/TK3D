@@ -242,7 +242,18 @@ export async function getAssemblyStatus(productId: string): Promise<AssemblyStat
 
   let parts: AssemblyPartStatus[]
 
-  if (product.isComposite) {
+  // Bug "produzido mas Disponível/Prontas p/ montar mostram 0": produto
+  // marcado `isComposite=true` (ex.: toggle "Produto composto" ligado por
+  // engano) mas SEM nenhuma ProductPart cadastrada é um estado órfão --
+  // `partIds` ficava vazio, a query de produção abaixo (productPartId IN
+  // partIds) nunca batia com NADA (produção real registrada direto no
+  // produto, productPartId=null, não é "peça nenhuma" nem "peça com id
+  // X") e `parts` saía `[]`, zerando maxAssemblableUnits (nenhum limite =
+  // 0) mesmo com peças físicas já impressas esperando montagem. Composto
+  // de verdade sempre tem pelo menos 1 ProductPart -- sem nenhuma, trata
+  // como produto simples (ramo `else` abaixo, peça sintética), que já
+  // sabe contar produção direta corretamente.
+  if (product.isComposite && product.parts.length > 0) {
     const partIds = product.parts.map((p) => p.id)
     const producedByPart = await prisma.productionRun.groupBy({
       by: ['productPartId'],
