@@ -5,6 +5,8 @@ import { createConsignmentDeliveryBatch } from '@/actions/consignmentDeliveries'
 import { formatCurrency } from '@/lib/format'
 import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
+import { VariacaoPecas } from '@/components/VariacaoPecas'
+import type { VariantAttr } from '@/lib/reports'
 
 export interface PartnerOption {
   id: string
@@ -16,6 +18,12 @@ export interface ProductVariantOption {
   label: string
   colorHex: string | null
   available: number
+  // Pedido do usuário "aqui deve aparecer a cor também, melhor de
+  // localizar" (Entregas em consignação, mesmo problema já resolvido em
+  // Pedidos): getProductVariantStockOptions já devolve isso, page.tsx
+  // nunca descartava -- só faltava o componente usar em vez do texto
+  // corrido (v.label).
+  attrs: VariantAttr[]
 }
 
 export interface ProductOption {
@@ -245,12 +253,16 @@ export function DeliveryBatchForm({
                   // max-w-md. min-w-0 + break-words deixa o texto quebrar dentro
                   // da largura fixa da modal em vez de alargá-la.
                   <div key={v.key} className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
-                    <span className="flex min-w-0 items-start gap-2 text-sm">
-                      {v.colorHex && <span style={{ background: v.colorHex }} className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                      <span className="min-w-0">
-                        <span className="break-words font-medium text-slate-900 dark:text-slate-100">{v.label}</span>
-                        <span className="block text-xs text-slate-400 dark:text-slate-500">{v.available} em estoque</span>
-                      </span>
+                    <span className="min-w-0 flex-1 text-sm">
+                      {v.attrs.length > 0 ? (
+                        <VariacaoPecas attrs={v.attrs} />
+                      ) : (
+                        <span className="flex items-start gap-2">
+                          {v.colorHex && <span style={{ background: v.colorHex }} className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                          <span className="break-words font-medium text-slate-900 dark:text-slate-100">{v.label}</span>
+                        </span>
+                      )}
+                      <span className="mt-1 block text-xs text-slate-400 dark:text-slate-500">{v.available} em estoque</span>
                     </span>
                     <input
                       type="number"
