@@ -15,6 +15,7 @@ import {
   type ProductionCostSnapshot,
   type GiftProductCostBreakdown,
 } from '@/lib/costing'
+import { deserializeColorChoices, serializeColorChoices } from '@/lib/reports'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
@@ -995,4 +996,95 @@ export async function applyProductPrice(
   })
   revalidatePath('/products')
   return { success: true }
+}
+
+export interface VariantHistoryEntry {
+  kind: 'Produzido' | 'Montado' | 'Entregue' | 'Devolvido' | 'Vendido'
+  date: string
+  quantity: number
+  detail: string
+}
+
+// Pedido do usuário "4 produzidos de um azul, cadê os outros?": VariantsModal
+// (/stock) só mostrava os totais atuais por variante (Disponível/Prontas p/
+// montar/Consignado/Vendido), sem nenhum jeito de ver o HISTÓRICO por trás
+// desses números -- impossível rastrear "produzi 4, só 1 foi montado e
+// entregue, cadê os outros 3" sem abrir o banco. "Ver detalhes" (nova linha
+// de ação em VariantsModal.tsx) chama isto sob demanda (mesmo padrão lazy de
+// getOrderablePartOptions) e devolve uma linha do tempo com TODOS os eventos
+// que tocam esta combinação exata de cor -- produção (peça impressa),
+// montagem, entrega/devolução de consignação e venda direta -- ordenados por
+// data, pra reconciliar visualmente onde cada unidade foi parar.
+//
+// `needsAssembly=false` (produto simples sem componente nenhum): comboKey é
+// o filamentId puro direto (convenção de getProductVariantBreakdown) --
+// produção é a ÚNICA fonte (nunca passa por ProductAssembly). `true`:
+// comboKey é o colorChoices inteiro serializado -- quebra em produção POR
+// PEÇA (cada entrada de `choices` que é uma ProductPart real ou a "peça
+// sintética" do próprio produto, nunca um acessório/componente-produto, que
+// não é impresso) + montagens cujo colorChoices bate EXATAMENTE com este
+// combo (serializeColorChoices permite comparação direta, mesma chave).
+export async function getVariantHistory(productId: string, comboKey: string, needsAssembly: boolean): Promise<VariantHistoryEntry[]> {
+  const entries: VariantHistoryEntry[] = []
+
+  if (!needsAssembly) {
+    const runs = await prisma.productionRun.findMany({
+      where: { productId, productPartId: null, filamentId: comboKey, status: { not: 'CANCELADA' } },
+      orderBy: { date: 'asc' },
+      select: { date: true, quantitySuccess: true },
+    })
+    for (const r of runs) {
+      if (r.quantitySuccess > 0) entries.push({ kind: 'Produzido', date: r.date.toISOString(), quantity: r.quantitySuccess, detail: 'produção' })
+    }
+  } else {
+    const choices = deserializeColorChoices(comboKey)
+    const parts = await prisma.productPart.findMany({ where: { productId }, select: { id: true, name: true } })
+    const partNameById = new Map(parts.map((p) => [p.id, p.name]))
+
+    for (const [key, rawValue] of Object.entries(choices)) {
+      const isPart = partNameById.has(key)
+      const isSyntheticProduct = key === productId
+      // Nem peça nem "peça sintética" -- é um acessório ou produto-como-
+      // componente (chave do próprio id dele), nunca impresso por aqui,
+      // sem produção pra listar.
+      if (!isPart && !isSyntheticProduct) continue
+      const filamentIds = rawValue.split(',')
+      const runs = await prisma.productionRun.findMany({
+        where: {
+          status: { not: 'CANCELADA' },
+          filamentId: { in: filamentIds },
+          ...(isSyntheticProduct ? { productId, productPartId: null } : { productPartId: key }),
+        },
+        orderBy: { date: 'asc' },
+        select: { date: true, quantitySuccess: true },
+      })
+      const label = isSyntheticProduct ? 'produção' : `peça ${partNameById.get(key)}`
+      for (const r of runs) {
+        if (r.quantitySuccess > 0) entries.push({ kind: 'Produzido', date: r.date.toISOString(), quantity: r.quantitySuccess, detail: label })
+      }
+    }
+
+    const assemblies = await prisma.productAssembly.findMany({ where: { productId }, orderBy: { assembledAt: 'asc' } })
+    for (const a of assemblies) {
+      const aChoices = a.colorChoices as Record<string, string> | null
+      if (!aChoices) continue
+      if (serializeColorChoices(aChoices) === comboKey) {
+        entries.push({ kind: 'Montado', date: a.assembledAt.toISOString(), quantity: a.quantity, detail: 'montagem' })
+      }
+    }
+  }
+
+  const [deliveries, sales] = await Promise.all([
+    prisma.consignmentDelivery.findMany({ where: { productId, colorComboKey: comboKey }, include: { partner: { select: { name: true } } }, orderBy: { deliveryDate: 'asc' } }),
+    prisma.sale.findMany({ where: { productId, colorComboKey: comboKey }, orderBy: { saleDate: 'asc' } }),
+  ])
+  for (const d of deliveries) {
+    entries.push({ kind: 'Entregue', date: d.deliveryDate.toISOString(), quantity: d.quantityDelivered, detail: d.partner.name })
+    if (d.returnedQuantity > 0) entries.push({ kind: 'Devolvido', date: d.deliveryDate.toISOString(), quantity: d.returnedQuantity, detail: d.partner.name })
+  }
+  for (const s of sales) {
+    entries.push({ kind: 'Vendido', date: s.saleDate.toISOString(), quantity: s.quantity, detail: s.channel })
+  }
+
+  return entries.sort((a, b) => a.date.localeCompare(b.date))
 }
