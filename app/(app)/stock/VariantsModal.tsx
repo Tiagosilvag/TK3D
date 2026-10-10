@@ -12,6 +12,13 @@ const HISTORY_KIND_CLASS: Record<VariantHistoryEntry['kind'], string> = {
   Entregue: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
   Devolvido: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
   Vendido: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+  // Bug "aqui n aparece o que foi vendido consignado": badge própria (não
+  // reaproveita a de 'Vendido' direto) -- cor diferente de propósito, pra
+  // distinguir de cara uma venda DIRETA (Sale) de uma venda reportada por
+  // um PARCEIRO de consignação (ConsignmentSaleReport), já que o `detail`
+  // de cada uma mostra coisas diferentes (canal de venda vs. nome do
+  // parceiro).
+  'Vendido (consignado)': 'bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-300',
   // Pedido do usuário "cadê os outros 3?" -- resolvido: estavam reservados
   // pra um pedido em aberto, não sumidos. Laranja: nem "disponível"
   // (verde-ish em outras telas) nem "faltando" (âmbar de aviso) -- é

@@ -999,7 +999,7 @@ export async function applyProductPrice(
 }
 
 export interface VariantHistoryEntry {
-  kind: 'Produzido' | 'Montado' | 'Entregue' | 'Devolvido' | 'Vendido' | 'Reservado'
+  kind: 'Produzido' | 'Montado' | 'Entregue' | 'Devolvido' | 'Vendido' | 'Vendido (consignado)' | 'Reservado'
   date: string
   quantity: number
   detail: string
@@ -1074,9 +1074,23 @@ export async function getVariantHistory(productId: string, comboKey: string, nee
     }
   }
 
-  const [deliveries, sales, reservedItems] = await Promise.all([
+  const [deliveries, sales, consignmentSaleReports, reservedItems] = await Promise.all([
     prisma.consignmentDelivery.findMany({ where: { productId, colorComboKey: comboKey }, include: { partner: { select: { name: true } } }, orderBy: { deliveryDate: 'asc' } }),
     prisma.sale.findMany({ where: { productId, colorComboKey: comboKey }, orderBy: { saleDate: 'asc' } }),
+    // Bug "aqui n aparece o que foi vendido consignado": esta função já
+    // listava a entrega (Entregue/Devolvido) mas nunca o relatório de
+    // venda que o parceiro registra depois (ConsignmentSaleReport) -- só
+    // Sale (venda direta) virava evento "Vendido". O resultado "Consignado"
+    // no topo da tela já descontava isso (getConsignmentPartnerDetail soma
+    // os mesmos relatórios), mas a LINHA DO TEMPO nunca mostrava onde essa
+    // unidade tinha ido parar -- parecia só "entregue e esquecida".
+    // ConsignmentSaleReport não tem productId/colorComboKey própria (são
+    // da ConsignmentDelivery relacionada), filtra pela relação.
+    prisma.consignmentSaleReport.findMany({
+      where: { delivery: { productId, colorComboKey: comboKey } },
+      include: { delivery: { include: { partner: { select: { name: true } } } } },
+      orderBy: { reportDate: 'asc' },
+    }),
     // Pedido do usuário "cadê os outros 3?" (resolvido: estavam
     // reservados pra um pedido em aberto) -- reserva nunca foi um evento
     // gravado (OrderItem.reservedQuantity é recalculado do zero por
@@ -1097,6 +1111,9 @@ export async function getVariantHistory(productId: string, comboKey: string, nee
   }
   for (const s of sales) {
     entries.push({ kind: 'Vendido', date: s.saleDate.toISOString(), quantity: s.quantity, detail: s.channel })
+  }
+  for (const r of consignmentSaleReports) {
+    entries.push({ kind: 'Vendido (consignado)', date: r.reportDate.toISOString(), quantity: r.quantitySold, detail: r.delivery.partner.name })
   }
   for (const i of reservedItems) {
     const label = i.order.buyerOrPlatform ?? (i.order.orderNumber ? `#${i.order.orderNumber}` : 'pedido sem comprador informado')
