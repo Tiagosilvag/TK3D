@@ -1,8 +1,9 @@
 import { prisma } from '@/lib/prisma'
-import { formatUnitCost } from '@/lib/format'
+import { formatUnitCost, SUPPLY_UNIT_SUFFIX } from '@/lib/format'
 import { getStockStatusWithThresholds, calculateStockReferenceQuantity, calculateStockPercentRemaining } from '@/lib/costing'
 import { SuppliesExplorer, type SupplyRow } from './SuppliesExplorer'
 import { RestockForm } from './RestockForm'
+import { AdjustStockButton } from '@/components/AdjustStockButton'
 import type { SupplyUnit } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -152,16 +153,27 @@ export default async function SuppliesPage({
                 <th>Unidade</th>
                 <th>Custo por unidade</th>
                 <th>Repor estoque</th>
+                <th>Ajustar estoque</th>
               </tr>
             </thead>
             <tbody>
-              {esgotadosRows.map(({ supply: s, avgUnitCost }) => (
+              {esgotadosRows.map(({ supply: s, currentStock, avgUnitCost }) => (
                 <tr key={s.id} className="tk-row-inactive">
                   <td className="py-2">{s.name}</td>
                   <td>{SUPPLY_UNIT_LABELS[s.unit] ?? s.unit}</td>
                   <td>{formatUnitCost(s.unit, avgUnitCost)}</td>
                   <td>
                     <RestockForm supplyId={s.id} supplyName={s.name} />
+                  </td>
+                  <td>
+                    <AdjustStockButton
+                      resourceType="SUPPLY"
+                      resourceId={s.id}
+                      resourceName={s.name}
+                      currentQuantity={currentStock}
+                      unitLabel={s.unit === 'UN' ? '' : ` ${SUPPLY_UNIT_SUFFIX[s.unit]}`}
+                      className="text-xs text-violet-600 hover:underline dark:text-violet-400"
+                    />
                   </td>
                 </tr>
               ))}

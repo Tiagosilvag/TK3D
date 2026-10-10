@@ -3,6 +3,7 @@ import { calculateStockReferenceQuantity, calculateStockPercentRemaining } from 
 import { FilamentsExplorer, type FilamentRow } from './FilamentsExplorer'
 import { RestockForm } from './RestockForm'
 import { FilamentHistoryButton, type FilamentPurchaseEntry, type FilamentAdjustmentEntry, type FilamentConsumptionEntry } from './FilamentHistoryButton'
+import { AdjustStockButton } from '@/components/AdjustStockButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -175,6 +176,7 @@ export default async function FilamentsPage({
                 <th>R$/g</th>
                 <th></th>
                 <th></th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -196,6 +198,16 @@ export default async function FilamentsPage({
                       purchases={r.purchases}
                       adjustments={r.adjustments}
                       consumptionHistory={r.consumptionHistory}
+                      className="text-xs text-violet-600 hover:underline dark:text-violet-400"
+                    />
+                  </td>
+                  <td>
+                    <AdjustStockButton
+                      resourceType="FILAMENT"
+                      resourceId={r.filament.id}
+                      resourceName={`${r.filament.manufacturer} ${r.filament.colorName}`}
+                      currentQuantity={r.currentStockGrams}
+                      unitLabel="g"
                       className="text-xs text-violet-600 hover:underline dark:text-violet-400"
                     />
                   </td>

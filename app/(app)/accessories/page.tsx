@@ -3,6 +3,7 @@ import { formatCurrency } from '@/lib/format'
 import { getStockStatusWithThresholds, calculateStockReferenceQuantity, calculateStockPercentRemaining } from '@/lib/costing'
 import { AccessoriesExplorer, type AccessoryRow } from './AccessoriesExplorer'
 import { RestockForm } from './RestockForm'
+import { AdjustStockButton } from '@/components/AdjustStockButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -171,10 +172,11 @@ export default async function AccessoriesPage({
                 <th>Cor</th>
                 <th>Custo médio</th>
                 <th>Repor estoque</th>
+                <th>Ajustar estoque</th>
               </tr>
             </thead>
             <tbody>
-              {esgotadosRows.map(({ accessory: a, avgUnitCost }) => (
+              {esgotadosRows.map(({ accessory: a, currentStock, avgUnitCost }) => (
                 <tr key={a.id} className="tk-row-inactive">
                   <td className="py-2">
                     {a.colorHex && <span style={{ background: a.colorHex }} className="inline-block h-3 w-3 rounded-full" />}
@@ -185,6 +187,15 @@ export default async function AccessoriesPage({
                   <td>{formatCurrency(avgUnitCost)}</td>
                   <td>
                     <RestockForm accessoryId={a.id} accessoryName={a.name} />
+                  </td>
+                  <td>
+                    <AdjustStockButton
+                      resourceType="ACCESSORY"
+                      resourceId={a.id}
+                      resourceName={a.name}
+                      currentQuantity={currentStock}
+                      className="text-xs text-violet-600 hover:underline dark:text-violet-400"
+                    />
                   </td>
                 </tr>
               ))}
