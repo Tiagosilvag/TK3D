@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { formatCurrency } from '@/lib/format'
-import { deleteConsignmentDelivery, updateConsignmentDeliveryQuantity } from '@/actions/consignmentDeliveries'
+import { deleteConsignmentDelivery, updateConsignmentDeliveryQuantity, updateConsignmentDeliveryUnitPrice } from '@/actions/consignmentDeliveries'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { DeliveryBatchForm, type PartnerOption, type ProductOption } from './DeliveryBatchForm'
 
@@ -78,6 +78,15 @@ export function DeliveriesExplorer({
 
   async function handleUpdateQuantity(id: string, formData: FormData) {
     const result = await updateConsignmentDeliveryQuantity(id, formData)
+    if (!result.success) {
+      alert(result.error)
+      return
+    }
+    router.refresh()
+  }
+
+  async function handleUpdateUnitPrice(id: string, formData: FormData) {
+    const result = await updateConsignmentDeliveryUnitPrice(id, formData)
     if (!result.success) {
       alert(result.error)
       return
@@ -185,7 +194,21 @@ export function DeliveriesExplorer({
                         <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Vendido: {item.quantitySold}</p>
                       )}
                     </td>
-                    <td className="text-center">{formatCurrency(item.unitPrice)}</td>
+                    <td className="text-center">
+                      <form action={(fd) => handleUpdateUnitPrice(item.id, fd)} className="flex items-center justify-center gap-1">
+                        <input
+                          type="number"
+                          name="unitPrice"
+                          step="0.01"
+                          min="0.01"
+                          defaultValue={item.unitPrice}
+                          className="tk-input w-20 text-right"
+                        />
+                        <button type="submit" className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                          Salvar
+                        </button>
+                      </form>
+                    </td>
                     <td>
                       <ConfirmDeleteForm
                         action={() => handleRemoveItem(item.id)}

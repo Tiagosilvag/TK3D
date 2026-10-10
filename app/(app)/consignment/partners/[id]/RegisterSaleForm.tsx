@@ -11,6 +11,7 @@ interface SaleRow {
   deliveryIds: string[]
   productName: string
   colorLabel: string | null
+  colorHex: string | null
   remaining: number
   checked: boolean
   quantitySold: string
@@ -23,6 +24,7 @@ function buildRows(deliveries: ConsignmentSaleableDelivery[]): SaleRow[] {
     deliveryIds: d.deliveryIds,
     productName: d.productName,
     colorLabel: d.colorLabel,
+    colorHex: d.colorHex,
     remaining: d.remaining,
     checked: false,
     quantitySold: '',
@@ -258,7 +260,10 @@ export function RegisterSaleForm({
                     className="mt-0.5 shrink-0 rounded border"
                   />
                   <span className="min-w-0 flex-1 break-words">
-                    {row.productName}{row.colorLabel ? ` — ${row.colorLabel}` : ''}
+                    <span className="inline-flex items-center gap-1.5">
+                      {row.colorHex && <span style={{ background: row.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                      {row.productName}{row.colorLabel ? ` — ${row.colorLabel}` : ''}
+                    </span>
                     <span className="ml-1 text-xs font-normal text-slate-400 dark:text-slate-500">(saldo: {row.remaining})</span>
                   </span>
                 </label>

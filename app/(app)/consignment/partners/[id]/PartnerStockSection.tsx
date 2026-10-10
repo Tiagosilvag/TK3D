@@ -1,11 +1,22 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { formatCurrency } from '@/lib/format'
 import type { ConsignmentProductBreakdown, ConsignmentSaleableDelivery } from '@/lib/reports'
 import { deleteConsignmentDelivery, returnConsignmentDeliveryStock, undoConsignmentDeliveryReturn } from '@/actions/consignmentDeliveries'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { RegisterSaleForm } from './RegisterSaleForm'
+
+const STOCK_FILTERS = [
+  { key: 'todos', label: 'Todos' },
+  { key: 'vendeu', label: 'Já vendeu' },
+  { key: 'semvenda', label: 'Sem venda' },
+  { key: 'acabou', label: 'Acabou com ela' },
+] as const
+type StockFilterKey = (typeof STOCK_FILTERS)[number]['key']
+
+const TOP_PRODUCTS_LIMIT = 8
 
 // Melhoria "Parceiros de consignação" §5: uma linha por PRODUTO (totais
 // somados de todas as cores) -- clicar abre um modal com um bloco por cor,
@@ -17,10 +28,12 @@ export function PartnerStockSection({
   products,
   saleableDeliveries,
   defaultCommissionPercent,
+  partnerName,
 }: {
   products: ConsignmentProductBreakdown[]
   saleableDeliveries: ConsignmentSaleableDelivery[]
   defaultCommissionPercent: number
+  partnerName: string
 }) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -30,6 +43,41 @@ export function PartnerStockSection({
   // referência direta ao <input> daquela entrega pra escrever nele -- um Map
   // por deliveryId em vez de 1 ref por linha, já que a lista é dinâmica.
   const quantityInputRefs = useRef<Map<string, HTMLInputElement>>(new Map())
+  const [filter, setFilter] = useState<StockFilterKey>('todos')
+  const [showAll, setShowAll] = useState(false)
+
+  // Melhoria "Tabela mais enxuta": ordenada por lucro já realizado (quem
+  // mais rendeu até agora, não projeção do que está parado) -- mostra só os
+  // 8 primeiros por padrão, com "Ver todos os N produtos" pra expandir.
+  // Filtro em chips reaplica a cada mudança (nunca junto com "Ver todos" --
+  // trocar de filtro volta a mostrar só o top 8 daquele filtro).
+  const sortedProducts = useMemo(() => [...products].sort((a, b) => b.soldProfit - a.soldProfit), [products])
+  const filteredProducts = useMemo(() => {
+    switch (filter) {
+      case 'vendeu': return sortedProducts.filter((p) => p.sold > 0)
+      case 'semvenda': return sortedProducts.filter((p) => p.sold === 0)
+      case 'acabou': return sortedProducts.filter((p) => p.remaining === 0 && p.delivered > 0)
+      default: return sortedProducts
+    }
+  }, [sortedProducts, filter])
+  const visibleProducts = showAll ? filteredProducts : filteredProducts.slice(0, TOP_PRODUCTS_LIMIT)
+
+  function handleFilterChange(key: StockFilterKey) {
+    setFilter(key)
+    setShowAll(false)
+  }
+
+  const totals = useMemo(() => filteredProducts.reduce(
+    (acc, p) => ({
+      sold: acc.sold + p.sold,
+      delivered: acc.delivered + p.delivered,
+      remaining: acc.remaining + p.remaining,
+      soldValue: acc.soldValue + p.soldValue,
+      soldProfit: acc.soldProfit + p.soldProfit,
+      remainingValue: acc.remainingValue + p.remainingValue,
+    }),
+    { sold: 0, delivered: 0, remaining: 0, soldValue: 0, soldProfit: 0, remainingValue: 0 },
+  ), [filteredProducts])
 
   function openDetail(product: ConsignmentProductBreakdown) {
     setSelected(product)
@@ -95,38 +143,90 @@ export function PartnerStockSection({
       <div className="flex items-center justify-between gap-2">
         <div>
           <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Estoque com o parceiro</h2>
-          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Clique em um produto pra ver o detalhe por cor.</p>
+          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Ordenado por quem mais rendeu. Clique em um produto pra ver como o lucro é calculado e o detalhe por cor.</p>
         </div>
         <RegisterSaleForm deliveries={saleableDeliveries} defaultCommissionPercent={defaultCommissionPercent} />
       </div>
-      <table className="mt-3 w-full text-sm">
-        <thead>
-          <tr className="tk-table-head-row">
-            <th className="py-2">Produto</th>
-            <th className="text-center">Entregue</th>
-            <th className="text-center">Vendido</th>
-            <th className="text-center">Com ela</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {products.map((p) => {
-            const colorCount = p.variants.filter((v) => v.key).length
-            return (
-              <tr key={p.productId} onClick={() => openDetail(p)} className="tk-row cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60">
-                <td className="py-2 font-medium text-slate-900 dark:text-slate-100">
-                  {p.productName}
-                  {colorCount > 1 && <span className="ml-1.5 text-xs font-normal text-slate-400 dark:text-slate-500">({colorCount} cores)</span>}
-                </td>
-                <td className="text-center">{p.delivered}</td>
-                <td className="text-center">{p.sold}</td>
-                <td className="text-center">{p.remaining}</td>
-                <td className="text-right text-slate-400" aria-hidden>›</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {STOCK_FILTERS.map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            onClick={() => handleFilterChange(f.key)}
+            className={`rounded-full px-3 py-1 text-xs font-medium ${
+              filter === f.key
+                ? 'bg-violet-600 text-white'
+                : 'border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
+            }`}
+          >
+            {f.label}{f.key === 'todos' ? ` ${products.length}` : ` ${sortedProducts.filter((p) => (f.key === 'vendeu' ? p.sold > 0 : f.key === 'semvenda' ? p.sold === 0 : p.remaining === 0 && p.delivered > 0)).length}`}
+          </button>
+        ))}
+      </div>
+
+      {filteredProducts.length === 0 ? (
+        <p className="mt-4 py-4 text-center text-sm text-slate-400 dark:text-slate-500">Nenhum produto nesse filtro.</p>
+      ) : (
+        <table className="mt-3 w-full text-sm">
+          <thead>
+            <tr className="tk-table-head-row">
+              <th className="py-2">Produto</th>
+              <th>Vendidas</th>
+              <th className="text-center">Com ela</th>
+              <th className="text-right">Preço un.</th>
+              <th className="text-right">Vendido</th>
+              <th className="text-right">Meu lucro</th>
+              <th className="text-right">Parado</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleProducts.map((p) => {
+              const colorCount = p.variants.filter((v) => v.key).length
+              const soldShare = p.delivered > 0 ? Math.min(100, (p.sold / p.delivered) * 100) : 0
+              return (
+                <tr key={p.productId} onClick={() => openDetail(p)} className="tk-row cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                  <td className="py-2 font-medium text-slate-900 dark:text-slate-100">
+                    {p.productName}
+                    {colorCount > 1 && <span className="ml-1.5 text-xs font-normal text-slate-400 dark:text-slate-500">({colorCount} cores)</span>}
+                  </td>
+                  <td className="min-w-[7rem]">
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                      <div className="h-full bg-emerald-500" style={{ width: `${soldShare}%` }} />
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{p.sold} de {p.delivered} entregues</p>
+                  </td>
+                  <td className={`text-center tabular-nums ${p.remaining === 0 && p.delivered > 0 ? 'font-semibold text-amber-600 dark:text-amber-400' : ''}`}>{p.remaining}</td>
+                  <td className="text-right tabular-nums">{formatCurrency(p.unitPrice)}</td>
+                  <td className="text-right tabular-nums">{formatCurrency(p.soldValue)}</td>
+                  <td className="text-right tabular-nums font-medium text-emerald-600 dark:text-emerald-400">{formatCurrency(p.soldProfit)}</td>
+                  <td className="text-right tabular-nums">{formatCurrency(p.remainingValue)}</td>
+                  <td className="pl-1 text-right text-slate-400" aria-hidden>›</td>
+                </tr>
+              )
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-slate-200 text-xs font-medium text-slate-500 dark:border-slate-700 dark:text-slate-400">
+              <td className="py-2">Total · {filteredProducts.length} produtos</td>
+              <td>{totals.sold} de {totals.delivered}</td>
+              <td className="text-center tabular-nums">{totals.remaining}</td>
+              <td></td>
+              <td className="text-right tabular-nums">{formatCurrency(totals.soldValue)}</td>
+              <td className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">{formatCurrency(totals.soldProfit)}</td>
+              <td className="text-right tabular-nums">{formatCurrency(totals.remainingValue)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      )}
+
+      {!showAll && filteredProducts.length > TOP_PRODUCTS_LIMIT && (
+        <button type="button" onClick={() => setShowAll(true)} className="mt-2 w-full text-center text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+          Ver todos os {filteredProducts.length} produtos ▾
+        </button>
+      )}
 
       <dialog
         ref={dialogRef}
@@ -140,6 +240,45 @@ export function PartnerStockSection({
               <button type="button" onClick={() => dialogRef.current?.close()} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
                 ✕
               </button>
+            </div>
+
+            {/* Melhoria "Como o lucro é calculado — por peça": usa o preço da
+                entrega mais RECENTE deste produto (selected.unitPrice) e a
+                comissão padrão do parceiro -- é uma explicação "ao preço de
+                hoje", não a soma exata do que cada venda passada rendeu de
+                fato (selected.soldProfit, mostrado na tabela/rodapé, usa o
+                preço/comissão REAIS de cada venda already registrada --
+                pode divergir um pouco daqui se o preço mudou entre entregas,
+                mesma lógica da frase-resumo abaixo). */}
+            <div className="rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-700">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Como o lucro é calculado — por peça</p>
+              <div className="mt-2 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 dark:text-slate-400">Preço de venda</span>
+                  <span className="tabular-nums">{formatCurrency(selected.unitPrice)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 dark:text-slate-400">− Comissão da {partnerName} ({(defaultCommissionPercent * 100).toFixed(0)}%)</span>
+                  <span className="tabular-nums">{formatCurrency(selected.commissionPerUnit)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 dark:text-slate-400">− Custo de produção</span>
+                  <span className="tabular-nums">{formatCurrency(selected.unitCost)}</span>
+                </div>
+                <div className="flex items-center justify-between border-t border-slate-100 pt-1 font-medium dark:border-slate-800">
+                  <span>= Lucro por peça</span>
+                  <span className="tabular-nums text-emerald-600 dark:text-emerald-400">
+                    {formatCurrency(selected.profitPerUnit)} · {selected.unitPrice > 0 ? ((selected.profitPerUnit / selected.unitPrice) * 100).toFixed(1) : '0'}%
+                  </span>
+                </div>
+              </div>
+              {(selected.sold > 0 || selected.remaining > 0) && (
+                <p className="mt-2 rounded-md bg-emerald-50 px-2 py-1.5 text-xs text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+                  {selected.sold > 0 && <>{selected.sold} vendidas × {formatCurrency(selected.profitPerUnit)} = {formatCurrency(selected.sold * selected.profitPerUnit)} já ganhos</>}
+                  {selected.sold > 0 && selected.remaining > 0 && ' · '}
+                  {selected.remaining > 0 && <>mais {selected.remaining} paradas podem render {formatCurrency(selected.remainingProfitPotential)}</>}
+                </p>
+              )}
             </div>
 
             <div className="space-y-3">
