@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma'
-import { getProductVariantStockOptions } from '@/lib/reports'
-import { resolveOrderItemColorLabel, getRecentOrderBuyers } from '@/actions/orders'
+import { getProductVariantStockOptions, type VariantAttr } from '@/lib/reports'
+import { resolveOrderItemColorLabel, getRecentOrderBuyers, getOrderDemandQueue } from '@/actions/orders'
 import { summarizeOrderEditChanges } from '@/lib/format'
 import { OrdersExplorer, type OrderRow } from './OrdersExplorer'
 import { MarketplaceInboxSection } from './MarketplaceInboxSection'
@@ -9,7 +9,7 @@ import type { MarketplaceOrderInboxItem } from '@/lib/mercadoLivre/orders'
 export const dynamic = 'force-dynamic'
 
 export default async function OrdersPage() {
-  const [orders, variantProducts, filaments, pendingInbox, partners, recentBuyers] = await Promise.all([
+  const [orders, variantProducts, filaments, pendingInbox, partners, recentBuyers, demandQueue] = await Promise.all([
     prisma.order.findMany({
       orderBy: { deliveryDate: 'asc' },
       include: {
@@ -42,15 +42,33 @@ export default async function OrdersPage() {
     prisma.consignmentPartner.findMany({ where: { active: true }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     // Redesign "Pedidos" §3 Cliente: chips de clientes recentes.
     getRecentOrderBuyers(),
+    // Redesign "Variação de peças em Pedidos" §4: mesma fila de demanda já
+    // usada em Produção/Montagem (getOrderDemandQueue, função reaproveitada
+    // sem mudança) -- reaproveitada aqui só pra extrair, por item de
+    // pedido, quais peças ESPECÍFICAS ainda faltam produzir (ver
+    // pendingPartNamesByItemId abaixo).
+    getOrderDemandQueue(),
   ])
   const filamentStockById = new Map(filaments.map((f) => [f.id, f.currentStockGrams.toNumber()]))
+
+  // Redesign "Variação de peças em Pedidos" §4: só productionRows tem
+  // partName (peça REALMENTE faltando imprimir) -- assemblyRows cobre o
+  // item inteiro via peça solta já pronta esperando montagem, não uma peça
+  // específica em falta, então nunca gera tag.
+  const pendingPartNamesByItemId = new Map<string, Set<string>>()
+  for (const row of demandQueue.productionRows) {
+    if (!row.partName) continue
+    const set = pendingPartNamesByItemId.get(row.orderItemId) ?? new Set<string>()
+    set.add(row.partName)
+    pendingPartNamesByItemId.set(row.orderItemId, set)
+  }
 
   // Mesmo dado (variantes por produto) alimenta o seletor do OrderForm E
   // a resolução de label/cor de cada item já registrado na tabela -- um
   // único fetch, dois usos.
-  const variantByKey = new Map<string, { label: string; colorHex: string | null }>()
+  const variantByKey = new Map<string, { label: string; colorHex: string | null; attrs: VariantAttr[] }>()
   for (const p of variantProducts) {
-    for (const v of p.variants) variantByKey.set(`${p.productId}::${v.key}`, { label: v.label, colorHex: v.colorHex })
+    for (const v of p.variants) variantByKey.set(`${p.productId}::${v.key}`, { label: v.label, colorHex: v.colorHex, attrs: v.attrs })
   }
 
   const products = variantProducts.map((p) => ({
@@ -59,7 +77,7 @@ export default async function OrdersPage() {
     needsAssembly: p.needsAssembly,
     variants: p.variants
       .filter((v) => v.filamentIds === null || v.filamentIds.every((id) => (filamentStockById.get(id) ?? 0) > 0))
-      .map((v) => ({ key: v.key, label: v.label, colorHex: v.colorHex, available: v.available })),
+      .map((v) => ({ key: v.key, label: v.label, colorHex: v.colorHex, available: v.available, attrs: v.attrs })),
   }))
 
   // Bug "não mostra a cor da variação criada": variantByKey só cobre combo
@@ -101,6 +119,8 @@ export default async function OrdersPage() {
         colorLabel: variant?.label ?? null,
         colorComboKey: item.colorComboKey,
         colorHex: variant?.colorHex ?? null,
+        attrs: variant?.attrs ?? [],
+        pendingPartNames: [...(pendingPartNamesByItemId.get(item.id) ?? [])],
         quantity: item.quantity,
         reservedQuantity: item.reservedQuantity,
         unitPrice: item.unitPrice.toNumber(),

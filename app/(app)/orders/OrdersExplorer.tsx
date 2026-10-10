@@ -10,6 +10,7 @@ import { OrderForm, type OrderProductOption } from './OrderForm'
 import { OrderDetailDrawer } from './OrderDetailDrawer'
 import { deleteOrder, cancelOrder, updateOrderItemStatus, undoOrderItemDelivery } from '@/actions/orders'
 import type { OrderChannel, OrderStatus } from '@prisma/client'
+import type { VariantAttr } from '@/lib/reports'
 
 export interface OrderReallocationTag {
   quantity: number
@@ -23,6 +24,15 @@ export interface OrderItemRow {
   colorLabel: string | null
   colorComboKey: string | null
   colorHex: string | null
+  // Redesign "Variação de peças em Pedidos": dado estruturado (peça por
+  // peça, cores pareadas com hex) que alimenta VariacaoPecas no drawer --
+  // vazio quando o produto não tem variante conhecida (colorLabel também
+  // null nesse caso), nunca formatado à mão aqui.
+  attrs: VariantAttr[]
+  // Peças desta variação especificamente faltando produção AGORA (§4) --
+  // vazio quando o item já está coberto ou quando a cobertura vem de peça
+  // solta já pronta (sem peça específica pra apontar).
+  pendingPartNames: string[]
   quantity: number
   reservedQuantity: number
   unitPrice: number
@@ -108,6 +118,20 @@ function whatRemainsLabel(items: OrderItemRow[]): string | null {
   return `Falta: ${names.join(', ')}`
 }
 
+// Redesign "Variação de peças em Pedidos" §3: a SegmentedBar (cores por
+// status) nunca teve legenda em lugar nenhum do app -- texto curto
+// ("N de M prontos") em vez de uma legenda de 4 cores repetida em CADA
+// card da lista (plano permite as duas opções; texto curto é bem mais
+// discreto numa lista longa). "Pronto" conta tanto PRONTO_RESERVADO
+// quanto ENTREGUE (os 2 status onde a peça física já existe).
+function readyCountLabel(items: OrderItemRow[]): string {
+  const ready = items.filter((i) => {
+    const label = getOrderItemDisplayStatus(i.status).label
+    return label === 'Pronto' || label === 'Entregue'
+  }).length
+  return `${ready} de ${items.length} pronto${items.length === 1 ? '' : 's'}`
+}
+
 type CardFilter = 'ATRASADOS' | 'HOJE' | 'FALTA_PRODUZIR' | 'PRONTOS' | null
 
 function AttentionCard({ label, value, unit, tone, active, onClick }: { label: string; value: number; unit: string; tone: 'red' | 'amber' | 'violet' | 'sky'; active: boolean; onClick: () => void }) {
@@ -176,6 +200,7 @@ function OrderRowCard({
           )}
           <div className="mt-2 max-w-sm">
             <SegmentedBar items={row.items} />
+            <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{readyCountLabel(row.items)}</p>
           </div>
           {remains && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{remains}</p>}
         </div>

@@ -6,6 +6,7 @@ import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { Drawer } from '@/components/Drawer'
 import { Stepper } from '@/components/Stepper'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
+import { VariacaoPecas } from '@/components/VariacaoPecas'
 import { updateOrderDraft, updateOrderItemStatus, updateDeliveredItemPrice, getOrderEditHistory } from '@/actions/orders'
 import type { OrderRow } from './OrdersExplorer'
 
@@ -86,6 +87,19 @@ export function OrderDetailDrawer({
   // edição do pedido em aberto.
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null)
   const [priceInput, setPriceInput] = useState('')
+  // Redesign "Variação de peças em Pedidos" §3: resumo fechado por padrão,
+  // "Ver peças" expande -- estado por ITEM (não por pedido inteiro), senão
+  // um pedido com vários itens vira parede de texto.
+  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set())
+
+  function toggleExpanded(itemId: string) {
+    setExpandedItemIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(itemId)) next.delete(itemId)
+      else next.add(itemId)
+      return next
+    })
+  }
 
   // Reseta o rascunho sempre que um pedido DIFERENTE é aberto (ou o
   // drawer fecha) -- nunca carrega draft de um pedido pro outro.
@@ -185,7 +199,7 @@ export function OrderDetailDrawer({
   if (!order) return null
 
   return (
-    <Drawer open={open} onClose={onClose}>
+    <Drawer open={open} onClose={onClose} widthClassName="max-w-xl">
       <div className="flex items-center justify-between border-b border-slate-200 p-4 dark:border-slate-800">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -245,8 +259,33 @@ export function OrderDetailDrawer({
                           badge de status ao lado -- combinação longa (produto +
                           peça + cor) cortava a cor no meio ("ARGOLA — ..."),
                           sem jeito de ver o resto. Cor ganha linha própria, que
-                          QUEBRA em vez de cortar (nunca escondida). */}
-                      {item.colorLabel && (
+                          QUEBRA em vez de cortar (nunca escondida).
+                          Redesign "Variação de peças em Pedidos" §3: quando
+                          `attrs` existe (variante conhecida), vira resumo
+                          "N peças · M cores" + "Ver peças" que expande pra
+                          VariacaoPecas (peça por peça, bolinha por cor, tag
+                          amarela só na peça que falta produzir de verdade --
+                          `item.pendingPartNames`, calculado em page.tsx a
+                          partir da mesma fila de demanda que já alimenta
+                          Produção). Sem attrs (fallback raro, combo não
+                          resolvido), mantém o chip de texto único de antes. */}
+                      {item.attrs.length > 0 ? (
+                        <div className="mt-1">
+                          <button
+                            type="button"
+                            onClick={() => toggleExpanded(item.id)}
+                            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-violet-600 dark:text-slate-400 dark:hover:text-violet-400"
+                          >
+                            <span>{item.attrs.length} peça{item.attrs.length === 1 ? '' : 's'} · {new Set(item.attrs.flatMap((a) => a.colors.map((c) => c.hex ?? c.name))).size} cor{new Set(item.attrs.flatMap((a) => a.colors.map((c) => c.hex ?? c.name))).size === 1 ? '' : 'es'}</span>
+                            <span className="font-medium text-violet-600 dark:text-violet-400">{expandedItemIds.has(item.id) ? 'Ocultar peças' : 'Ver peças'}</span>
+                          </button>
+                          {expandedItemIds.has(item.id) && (
+                            <div className="mt-1.5 rounded-lg bg-slate-50 p-2 dark:bg-slate-800/40">
+                              <VariacaoPecas attrs={item.attrs} pendingPartNames={new Set(item.pendingPartNames)} />
+                            </div>
+                          )}
+                        </div>
+                      ) : item.colorLabel && (
                         <p className="mt-0.5 flex items-start gap-1.5 text-xs text-slate-500 dark:text-slate-400">
                           {item.colorHex && <span style={{ background: item.colorHex }} className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full" />}
                           <span className="break-words">{item.colorLabel}</span>
@@ -298,7 +337,10 @@ export function OrderDetailDrawer({
                       {shrinking && (
                         <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">⚠ já está em produção — a sobra vai pro estoque disponível</p>
                       )}
-                      <div className="mt-2 flex items-center gap-3 text-xs">
+                      {/* Pedido "Remover e Marcar entregue bem afastados, pra
+                          evitar clique errado": justify-between em vez de
+                          gap-3 lado a lado. */}
+                      <div className="mt-2 flex items-center justify-between text-xs">
                         {item.status === 'PRONTO_RESERVADO' && (
                           <button type="button" onClick={() => markDelivered(item.id)} disabled={isPending} className="font-medium text-emerald-600 hover:underline dark:text-emerald-400">
                             ✓ Marcar entregue

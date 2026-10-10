@@ -11,7 +11,7 @@ import { resolveSalePlatformFee } from '@/actions/marketplacePlatforms'
 import { buildSaleCostSnapshot } from '@/lib/costing'
 import { productNeedsAssembly } from '@/lib/products'
 import { getAssemblyStatus, type AssemblyPartColorOption } from '@/actions/assembly'
-import { serializeColorChoices, deserializeColorChoices } from '@/lib/reports'
+import { serializeColorChoices, deserializeColorChoices, type VariantAttr } from '@/lib/reports'
 import { reconcileOrderReservations, reconcileAllPendingOrders, type OrderReallocationEvent } from '@/lib/orderReservations'
 import { areAllItemsTerminal, resolveNotificationsForResource } from '@/lib/notifications'
 import { revalidatePath } from 'next/cache'
@@ -166,30 +166,65 @@ export async function getOrderablePartOptions(productId: string): Promise<Ordera
 // que o próprio seletor usa), cobrindo produto simples (peça sintética,
 // key=productId, colorComboKey = filamentId puro) e composto
 // (colorComboKey serializado, 1+ peças).
-export async function resolveOrderItemColorLabel(productId: string, colorComboKey: string): Promise<{ label: string; colorHex: string | null } | null> {
+export async function resolveOrderItemColorLabel(productId: string, colorComboKey: string): Promise<{ label: string; colorHex: string | null; attrs: VariantAttr[] } | null> {
   const options = await getOrderablePartOptions(productId)
 
+  // Redesign "Variação de peças em Pedidos": mesmo cálculo de label/colorHex
+  // de sempre, mas agora também monta `attrs` (VariacaoPecas) -- usa
+  // `colors`/`material` que AssemblyPartColorOption já carrega (§0),
+  // `option.source` decide a hierarquia (peça impressa = 'produto',
+  // acessório = 'acessorio'; getOrderablePartOptions nunca mescla
+  // produto-como-componente hoje, então 'complemento' não ocorre aqui).
   if (options.length === 1 && options[0].partId === productId && !options[0].fixed) {
     const opt = options[0].colorOptions.find((o) => o.key === colorComboKey)
-    return opt ? { label: opt.label, colorHex: opt.colorHex } : null
+    if (!opt) return null
+    return {
+      label: opt.label,
+      colorHex: opt.colorHex,
+      attrs: [{
+        name: 'Cor',
+        value: opt.label,
+        tier: 'produto',
+        colorHexes: opt.colorHex ? [opt.colorHex] : [],
+        shortValue: opt.colors.map((c) => c.name).join(' + ') || opt.label,
+        material: opt.material,
+        colors: opt.colors,
+      }],
+    }
   }
 
   const choices = deserializeColorChoices(colorComboKey)
   const labels: string[] = []
+  const attrs: VariantAttr[] = []
   let firstHex: string | null = null
   for (const option of options) {
     const chosen = choices[option.partId]
     if (chosen === undefined) continue
     if (option.fixed) {
       labels.push(`${option.partName}: ${option.fixedLabel}`)
+      // Receita fixa: fixedLabel vem como string já concatenada (sem
+      // `colors` estruturado disponível aqui) -- linha aparece sem
+      // bolinha, só o texto completo no tooltip/value (degradação
+      // documentada, caso raro: receita fixa só aparece aqui quando o
+      // combo nunca foi produzido, então nem passa pela produção normal).
+      attrs.push({ name: option.partName, value: option.fixedLabel ?? '', tier: option.source === 'accessory' ? 'acessorio' : 'produto', colorHexes: [], shortValue: option.fixedLabel ?? '', material: null, colors: [] })
       continue
     }
     const opt = option.colorOptions.find((o) => o.key === chosen)
     if (!opt) continue
     labels.push(`${option.partName}: ${opt.label}`)
     if (firstHex === null) firstHex = opt.colorHex
+    attrs.push({
+      name: option.partName,
+      value: opt.label,
+      tier: option.source === 'accessory' ? 'acessorio' : 'produto',
+      colorHexes: opt.colorHex ? [opt.colorHex] : [],
+      shortValue: opt.colors.map((c) => c.name).join(' + ') || opt.label,
+      material: opt.material,
+      colors: opt.colors,
+    })
   }
-  return labels.length > 0 ? { label: labels.join(' · '), colorHex: firstHex } : null
+  return labels.length > 0 ? { label: labels.join(' · '), colorHex: firstHex, attrs } : null
 }
 
 // Encomenda com variação personalizada: valida um colorChoicesJson

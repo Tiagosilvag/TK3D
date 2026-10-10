@@ -7,8 +7,11 @@ import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { chipClass } from '@/components/Chip'
 import { Stepper } from '@/components/Stepper'
 import { SubmitButton } from '@/components/SubmitButton'
-import { CustomVariantPicker, type CustomVariantChoice } from './CustomVariantPicker'
+import type { CustomVariantChoice } from './CustomVariantPicker'
 import type { OrderReallocationEvent } from '@/lib/orderReservations'
+import type { VariantAttr } from '@/lib/reports'
+import { VariantCardPicker } from './VariantCardPicker'
+import { VariacaoPecas } from '@/components/VariacaoPecas'
 
 const CHANNELS = Object.entries(ORDER_CHANNEL_LABELS) as [keyof typeof ORDER_CHANNEL_LABELS, string][]
 
@@ -35,6 +38,11 @@ export interface OrderProductVariantOption {
   label: string
   colorHex: string | null
   available: number
+  // Redesign "Variação de peças em Pedidos": mesmo dado estruturado que
+  // getProductVariantStockOptions já produz (lib/reports.ts) -- alimenta
+  // VariantCardPicker/VariacaoPecas, substituindo o texto corrido único
+  // (label) como exibição padrão.
+  attrs: VariantAttr[]
 }
 
 export interface OrderProductOption {
@@ -86,6 +94,12 @@ function ItemCard({
   const variant = draft.colorComboKey ? product.variants.find((v) => v.key === draft.colorComboKey) : undefined
   const available = draft.colorChoices ? 0 : (variant?.available ?? 0)
   const toProduce = Math.max(0, draft.quantity - available)
+  // Redesign "Variação de peças em Pedidos" §2: picker de cards aberto por
+  // padrão só enquanto nenhuma variação foi escolhida ainda -- depois de
+  // escolhida, colapsa pra um resumo (VariacaoPecas quando a variante é
+  // conhecida, com `attrs`; chip de texto só pra variação personalizada
+  // recém-criada, que ainda não tem `attrs` estruturado no client).
+  const [pickerOpen, setPickerOpen] = useState(!draft.colorComboKey && !draft.colorChoices)
 
   return (
     <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
@@ -99,29 +113,30 @@ function ItemCard({
 
       {needsColor && (
         <div className="mt-2">
-          <p className="mb-1 text-xs text-slate-500 dark:text-slate-400">Variação</p>
-          <div className="flex flex-wrap gap-1.5">
-            {draft.colorChoices ? (
-              <span className={chipClass(true)}>{draft.colorLabel}</span>
-            ) : (
-              product.variants.map((v) => (
-                <button
-                  key={v.key}
-                  type="button"
-                  onClick={() => onChange({ colorComboKey: v.key, colorChoices: null, colorLabel: v.label, colorHex: v.colorHex })}
-                  className={chipClass(draft.colorComboKey === v.key)}
-                >
-                  {v.label} · {v.available} disp.
-                </button>
-              ))
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <p className="text-xs text-slate-500 dark:text-slate-400">Variação</p>
+            {!pickerOpen && (draft.colorComboKey || draft.colorChoices) && (
+              <button type="button" onClick={() => setPickerOpen(true)} className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                Trocar variação
+              </button>
             )}
-            <CustomVariantPicker
-              key={product.productId}
-              productId={product.productId}
-              onConfirm={(choice: CustomVariantChoice) => onChange({ colorComboKey: null, colorChoices: choice.choices, colorLabel: choice.label, colorHex: null })}
-              trigger={<button type="button" className={chipClass(false)}>✦ Personalizar cores</button>}
-            />
           </div>
+
+          {!pickerOpen && (draft.colorComboKey || draft.colorChoices) ? (
+            variant ? (
+              <VariacaoPecas attrs={variant.attrs} />
+            ) : (
+              <span className={chipClass(true)}>{draft.colorLabel}</span>
+            )
+          ) : (
+            <VariantCardPicker
+              productId={product.productId}
+              variants={product.variants}
+              selectedKey={draft.colorComboKey}
+              onSelect={(v) => { onChange({ colorComboKey: v.key, colorChoices: null, colorLabel: v.label, colorHex: v.colorHex }); setPickerOpen(false) }}
+              onConfirmCustom={(choice: CustomVariantChoice) => { onChange({ colorComboKey: null, colorChoices: choice.choices, colorLabel: choice.label, colorHex: null }); setPickerOpen(false) }}
+            />
+          )}
         </div>
       )}
 

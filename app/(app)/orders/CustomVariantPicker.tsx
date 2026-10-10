@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { getOrderablePartOptions, type OrderablePartOption } from '@/actions/orders'
 import { ComboSelect } from '../assembly/ComboSelect'
+import { VariacaoPecas } from '@/components/VariacaoPecas'
+import type { VariantAttr } from '@/lib/reports'
 
 export interface CustomVariantChoice {
   choices: Record<string, string>
@@ -100,6 +102,31 @@ export function CustomVariantPicker({
     close()
   }
 
+  // Redesign "Variação de peças em Pedidos" §5: prévia ao vivo, montada
+  // direto das `selections` atuais -- mesmo componente VariacaoPecas usado
+  // em todo lugar que mostra variação, sem duplicar formatação. Peça de
+  // cor variável ainda não escolhida fica de fora da prévia (some/reaparece
+  // conforme a pessoa escolhe cada peça); peça de receita fixa sempre
+  // entra (fixedLabel já é a combinação travada, só sem `colors`
+  // estruturado -- mesma degradação documentada em
+  // actions/orders.ts#resolveOrderItemColorLabel).
+  const preview: VariantAttr[] = (options ?? []).flatMap((o): VariantAttr[] => {
+    if (o.fixed) {
+      return [{ name: o.partName, value: o.fixedLabel ?? '', tier: 'produto', colorHexes: [], shortValue: o.fixedLabel ?? '', material: null, colors: [] }]
+    }
+    const selected = o.colorOptions.find((c) => c.key === selections[o.partId])
+    if (!selected) return []
+    return [{
+      name: o.partName,
+      value: selected.label,
+      tier: o.source === 'accessory' ? 'acessorio' : 'produto',
+      colorHexes: selected.colorHex ? [selected.colorHex] : [],
+      shortValue: selected.colors.map((c) => c.name).join(' + ') || selected.label,
+      material: selected.material,
+      colors: selected.colors,
+    }]
+  })
+
   return (
     <>
       <span ref={triggerRef} onClick={openPanel}>{trigger}</span>
@@ -142,6 +169,13 @@ export function CustomVariantPicker({
                   )}
                 </label>
               ))}
+
+              {preview.length > 0 && (
+                <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-2.5 dark:border-violet-900/50 dark:bg-violet-500/5">
+                  <p className="mb-1.5 text-xs font-medium text-violet-700 dark:text-violet-300">Prévia</p>
+                  <VariacaoPecas attrs={preview} />
+                </div>
+              )}
 
               {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
 
