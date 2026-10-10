@@ -8,6 +8,17 @@ interface EditableChoice {
   currentValue: string
   label: string
   options: AssemblyPartColorOption[]
+  // Bug "n deixa eu editar a q esta disponivel": só chave de ACESSÓRIO tem
+  // estoque físico separado por cor de verdade (updateAssemblyColorChoices,
+  // actions/assembly.ts, só move estoque pra essas) -- peça/componente-
+  // produto é reescrita de rótulo pura, sem checagem de estoque nenhuma do
+  // lado do servidor. `available` de uma opção de peça/componente aqui
+  // reflete "produzido ainda não montado" (igual Montagem), que normalmente
+  // já é 0 pra toda cor assim que a produção vira estoque -- desabilitar
+  // essas opções por "0 disponível" deixava o <select> sem NENHUMA
+  // alternativa escolhível além da já selecionada, impossível de corrigir
+  // uma cor errada já montada. Só acessório mantém a trava de estoque.
+  kind: 'part' | 'component' | 'accessory'
 }
 
 // Bug/pedido "n tem como corrigir a cor gravada errada": ProductAssembly.
@@ -55,12 +66,13 @@ export function EditVariantColorsForm({
         })
         const rows: EditableChoice[] = []
         for (const [key, rawKey] of pairs) {
-          const source =
-            status.parts.find((p) => p.partId === key) ??
-            status.components.find((c) => c.componentProductId === key) ??
-            status.accessoryRequirements.find((a) => a.id === key)
+          const part = status.parts.find((p) => p.partId === key)
+          const component = part ? undefined : status.components.find((c) => c.componentProductId === key)
+          const accessory = part || component ? undefined : status.accessoryRequirements.find((a) => a.id === key)
+          const source = part ?? component ?? accessory
           if (!source || !source.colorOptions || source.colorOptions.length === 0) continue
-          rows.push({ key, currentValue: rawKey, label: source.name, options: source.colorOptions })
+          const kind: EditableChoice['kind'] = part ? 'part' : component ? 'component' : 'accessory'
+          rows.push({ key, currentValue: rawKey, label: source.name, options: source.colorOptions, kind })
         }
         if (cancelled) return
         setEditable(rows)
@@ -111,8 +123,13 @@ export function EditVariantColorsForm({
             className="tk-input-full mt-1"
           >
             {row.options.map((o) => (
-              <option key={o.key} value={o.key} disabled={o.available <= 0 && o.key !== row.currentValue}>
-                {o.label} ({o.available} {o.available === 1 ? 'disponível' : 'disponíveis'})
+              <option
+                key={o.key}
+                value={o.key}
+                disabled={row.kind === 'accessory' && o.available <= 0 && o.key !== row.currentValue}
+              >
+                {o.label}
+                {row.kind === 'accessory' && ` (${o.available} ${o.available === 1 ? 'disponível' : 'disponíveis'})`}
               </option>
             ))}
           </select>
