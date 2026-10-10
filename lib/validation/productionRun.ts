@@ -110,6 +110,36 @@ export const productionRunPlateItemSchema = z.object({
   path: ['quantitySuccess'],
 })
 
+// Pedido do usuário: "quero conseguir registrar produção de todos os
+// pendentes, quero selecionar todos ou alguns" (painel "Peças pendentes de
+// encomenda", Produção) -- cada linha selecionada pode ser de um PRODUTO
+// DIFERENTE (ao contrário de productionRunBatchSchema, que assume todo
+// item do mesmo lote pertence ao MESMO produto), então productId entra por
+// item aqui, igual productionRunPlateItemSchema -- só que, ao contrário de
+// uma Plate (mesma impressão física, impressora/data únicas pro grupo
+// inteiro), cada linha da fila pode ter sido impressa em impressoras/dias
+// diferentes, então printerId/date voltam a ser por item (mesma convenção
+// de productionRunBatchItemSchema).
+export const productionRunDemandBatchItemSchema = z.object({
+  productId: z.string().min(1),
+  productPartId: z.string().optional().nullable(),
+  printerId: z.string().min(1),
+  date: z.coerce.date(),
+  quantityPlanned: z.coerce.number().int('Quantidade planejada deve ser um número inteiro').positive('Quantidade planejada deve ser maior que zero'),
+  quantitySuccess: z.coerce.number().int('Quantidade de sucesso deve ser um número inteiro').nonnegative('Quantidade de sucesso não pode ser negativa'),
+  filaments: z.array(productionRunBatchItemFilamentSchema).min(1, 'Selecione ao menos um filamento'),
+  timeWastedHours: z.coerce.number().nonnegative('Tempo desperdiçado não pode ser negativo').default(0),
+  wasteReason: wasteReasonEnum.nullable().optional(),
+  notes: z.string().optional().nullable(),
+}).refine((item) => item.quantitySuccess <= item.quantityPlanned, {
+  message: 'Sucesso não pode ser maior que o planejado',
+  path: ['quantitySuccess'],
+})
+
+export const productionRunDemandBatchSchema = z.object({
+  items: z.array(productionRunDemandBatchItemSchema).min(1, 'Selecione ao menos uma peça pendente'),
+})
+
 export const createPlateSchema = z.object({
   date: z.coerce.date(),
   printerId: z.string().min(1),

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { getProductionStatusBadge, WASTE_REASON_LABELS } from '@/lib/format'
-import type { ProductionStatus, WasteReason } from '@prisma/client'
+import { getProductionStatusBadge, WASTE_REASON_LABELS, getOrderItemDisplayStatus, summarizeOrderEditChanges, getMarginBadge, formatDayHeader } from '@/lib/format'
+import type { ProductionStatus, WasteReason, OrderStatus } from '@prisma/client'
 
 // Task 8 (spec §5.4/§6, task-8 brief): history table renders a colored
 // badge per ProductionStatus. One label+className pair per enum value,
@@ -51,5 +51,100 @@ describe('WASTE_REASON_LABELS', () => {
       expect(WASTE_REASON_LABELS[key]).toEqual(expect.any(String))
       expect(WASTE_REASON_LABELS[key].length).toBeGreaterThan(0)
     }
+  })
+})
+
+// Redesign "Pedidos": decisão confirmada com o usuário -- "Em produção"
+// (roxo) é só um rótulo novo pro status PARCIAL_AGUARDANDO_PRODUCAO já
+// existente, sem schema novo. Os 4 buckets de cor usados pela
+// lista/drawer novos (barra segmentada) cobrem os 11 valores do enum,
+// legados inclusos (nunca mais escritos, mas ainda podem existir em
+// linha antiga).
+describe('getOrderItemDisplayStatus', () => {
+  const cases: [OrderStatus, string][] = [
+    ['AGUARDANDO_PRODUCAO', 'Aguardando produção'],
+    ['AGUARDANDO_MONTAGEM', 'Aguardando produção'],
+    ['PARCIAL_AGUARDANDO_PRODUCAO', 'Em produção'],
+    ['PRONTO_RESERVADO', 'Pronto'],
+    ['ENTREGUE', 'Entregue'],
+    ['CANCELADO', 'Cancelado'],
+    ['RECEBIDO', 'Aguardando produção'],
+    ['EM_PRODUCAO', 'Em produção'],
+    ['PRONTO', 'Pronto'],
+    ['DESPACHADO', 'Pronto'],
+    ['CONCLUIDO', 'Entregue'],
+  ]
+
+  it.each(cases)('%s -> label %s', (status, label) => {
+    const display = getOrderItemDisplayStatus(status)
+    expect(display.label).toBe(label)
+    expect(display.badgeClassName.length).toBeGreaterThan(0)
+    expect(display.barClassName.length).toBeGreaterThan(0)
+  })
+})
+
+describe('summarizeOrderEditChanges', () => {
+  it('returns empty string for no changes', () => {
+    expect(summarizeOrderEditChanges([])).toBe('')
+  })
+
+  it('joins up to 2 changes without a +N suffix', () => {
+    const summary = summarizeOrderEditChanges([
+      { label: 'Monster Moletom: quantidade', from: '1', to: '2' },
+      { label: 'Monster Moletom: valor', from: 'R$ 49,90', to: 'R$ 59,90' },
+    ])
+    expect(summary).toBe('Monster Moletom: quantidade 1 → 2 · Monster Moletom: valor R$ 49,90 → R$ 59,90')
+  })
+
+  it('shows only the first 2 changes plus a +N suffix when there are more', () => {
+    const summary = summarizeOrderEditChanges([
+      { label: 'A', from: '1', to: '2' },
+      { label: 'B', from: '1', to: '2' },
+      { label: 'C', from: '1', to: '2' },
+    ])
+    expect(summary).toBe('A 1 → 2 · B 1 → 2 · +1')
+  })
+})
+
+// Redesign "Vendas" §4: pílula de margem (Lucro ÷ Recebido) -- 3 faixas
+// de cor + bucket neutro pra margem sem base de cálculo (Recebido = 0).
+describe('getMarginBadge', () => {
+  it('verde para margem >= 40%', () => {
+    expect(getMarginBadge(0.4).className).toContain('emerald')
+    expect(getMarginBadge(0.52).className).toContain('emerald')
+  })
+
+  it('amarelo para margem entre 20% e 40%', () => {
+    expect(getMarginBadge(0.2).className).toContain('amber')
+    expect(getMarginBadge(0.39).className).toContain('amber')
+  })
+
+  it('vermelho para margem abaixo de 20%, incluindo negativa', () => {
+    expect(getMarginBadge(0.19).className).toContain('red')
+    expect(getMarginBadge(0).className).toContain('red')
+    expect(getMarginBadge(-0.1).className).toContain('red')
+  })
+
+  it('neutro quando não há margem calculável (null)', () => {
+    const badge = getMarginBadge(null)
+    expect(badge.className).not.toContain('emerald')
+    expect(badge.className).not.toContain('amber')
+    expect(badge.className).not.toContain('red')
+  })
+})
+
+// Redesign "Vendas" §1: cabeçalho de grupo-por-dia -- dia da semana
+// abreviado e capitalizado + data pt-BR, formatado em UTC (mesma
+// convenção de todo DateTime data-only do app -- nunca o fuso do
+// processo, pra não descolar do dia gravado perto da virada).
+describe('formatDayHeader', () => {
+  it('formata dia da semana abreviado capitalizado + data pt-BR', () => {
+    // 2026-10-07 é uma quarta-feira.
+    expect(formatDayHeader(new Date('2026-10-07T00:00:00Z'))).toBe('Qua 07/10/2026')
+  })
+
+  it('capitaliza corretamente outro dia da semana', () => {
+    // 2026-10-04 é um domingo.
+    expect(formatDayHeader(new Date('2026-10-04T00:00:00Z'))).toBe('Dom 04/10/2026')
   })
 })

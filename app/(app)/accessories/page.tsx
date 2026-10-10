@@ -3,15 +3,16 @@ import { formatCurrency } from '@/lib/format'
 import { getStockStatusWithThresholds, calculateStockReferenceQuantity, calculateStockPercentRemaining } from '@/lib/costing'
 import { AccessoriesExplorer, type AccessoryRow } from './AccessoriesExplorer'
 import { RestockForm } from './RestockForm'
+import { AdjustStockButton } from '@/components/AdjustStockButton'
 
 export const dynamic = 'force-dynamic'
 
 export default async function AccessoriesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ editId?: string }>
+  searchParams: Promise<{ editId?: string; restock?: string }>
 }) {
-  const { editId } = await searchParams
+  const { editId, restock } = await searchParams
 
   const [accessories, settings, accessoryTypes, editingAccessoryRecord] = await Promise.all([
     prisma.accessory.findMany({
@@ -55,6 +56,13 @@ export default async function AccessoriesPage({
     list.push(c)
     consumptionsByAccessory.set(c.resourceId, list)
   }
+
+  // Pedido do usuário "aviso de acessório insuficiente em Produção com link
+  // direto pra ajustar o estoque": resolve ?restock=<id> pro nome exibido
+  // no RestockForm "fantasma" (AccessoriesExplorer) -- cobre tanto acessório
+  // com estoque (tabela principal) quanto esgotado (seção separada abaixo).
+  const restockAccessory = restock ? accessories.find((a) => a.id === restock) : undefined
+  const restockTarget = restockAccessory ? { id: restockAccessory.id, name: restockAccessory.name } : undefined
 
   const typeLabel = (id: string) => accessoryTypes.find((t) => t.id === id)?.name ?? id
   const editingAccessory = editingAccessoryRecord
@@ -146,6 +154,7 @@ export default async function AccessoriesPage({
         accessoryTypes={accessoryTypeOptions}
         editingAccessory={editingAccessory}
         summary={{ totalValueInStock, countByStatus }}
+        restockTarget={restockTarget}
       />
 
       {esgotadosRows.length > 0 && (
@@ -163,10 +172,11 @@ export default async function AccessoriesPage({
                 <th>Cor</th>
                 <th>Custo médio</th>
                 <th>Repor estoque</th>
+                <th>Ajustar estoque</th>
               </tr>
             </thead>
             <tbody>
-              {esgotadosRows.map(({ accessory: a, avgUnitCost }) => (
+              {esgotadosRows.map(({ accessory: a, currentStock, avgUnitCost }) => (
                 <tr key={a.id} className="tk-row-inactive">
                   <td className="py-2">
                     {a.colorHex && <span style={{ background: a.colorHex }} className="inline-block h-3 w-3 rounded-full" />}
@@ -177,6 +187,15 @@ export default async function AccessoriesPage({
                   <td>{formatCurrency(avgUnitCost)}</td>
                   <td>
                     <RestockForm accessoryId={a.id} accessoryName={a.name} />
+                  </td>
+                  <td>
+                    <AdjustStockButton
+                      resourceType="ACCESSORY"
+                      resourceId={a.id}
+                      resourceName={a.name}
+                      currentQuantity={currentStock}
+                      className="text-xs text-violet-600 hover:underline dark:text-violet-400"
+                    />
                   </td>
                 </tr>
               ))}

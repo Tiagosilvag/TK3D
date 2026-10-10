@@ -60,11 +60,19 @@ export function AccessoriesExplorer({
   accessoryTypes,
   editingAccessory,
   summary,
+  restockTarget,
 }: {
   rows: AccessoryRow[]
   accessoryTypes: AccessoryTypeOption[]
   editingAccessory?: EditingAccessory
   summary: AccessoriesSummary
+  // Pedido do usuário "aviso de acessório insuficiente em Produção com link
+  // direto pra ajustar o estoque": ?restock=<id> (AccessoryDemandPanel, em
+  // Produção) resolve pra este alvo em page.tsx -- RestockForm "fantasma"
+  // abaixo (sem fazer parte de nenhuma linha/ActionsMenu, que só montam
+  // quando o menu está aberto) abre o dialog direto, não importa se o
+  // acessório está na tabela principal ou na seção "Esgotados".
+  restockTarget?: { id: string; name: string }
 }) {
   const router = useRouter()
   const [search, setSearch] = useState('')
@@ -107,6 +115,10 @@ export function AccessoriesExplorer({
 
   return (
     <div>
+      {restockTarget && (
+        <RestockForm accessoryId={restockTarget.id} accessoryName={restockTarget.name} autoOpen className="hidden" />
+      )}
+
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="tk-page-title mb-0">Acessórios</h1>
         <button type="button" onClick={openNew} className="tk-btn-primary px-4">

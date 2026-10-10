@@ -18,12 +18,21 @@ export function AdjustStockButton({
   resourceName,
   currentQuantity,
   unitLabel = '',
+  // Pedido do usuário "ajustar estoque quando esgotar também, pode ter
+  // erro de conta": a seção "Esgotados" (Acessórios/Filamentos/Insumos)
+  // só tinha "Repor estoque" (só serve pra registrar compra nova) -- sem
+  // jeito de corrigir a quantidade quando o problema é contagem errada,
+  // não falta de reposição. Mesmo botão de sempre, mas fora de um
+  // ActionsMenu precisa de outro estilo (link simples, não item de menu) --
+  // className opcional preserva 100% o visual de todo call site existente.
+  className = 'tk-menu-item',
 }: {
   resourceType: 'FILAMENT' | 'ACCESSORY' | 'SUPPLY' | 'PRODUCT' | 'PACKAGING'
   resourceId: string
   resourceName: string
   currentQuantity: number
   unitLabel?: string
+  className?: string
 }) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -42,7 +51,7 @@ export function AdjustStockButton({
 
   return (
     <>
-      <button type="button" onClick={() => dialogRef.current?.showModal()} className="tk-menu-item">
+      <button type="button" onClick={() => dialogRef.current?.showModal()} className={className}>
         Ajustar estoque
       </button>
       <dialog

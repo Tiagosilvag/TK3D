@@ -1,29 +1,15 @@
-import Link from 'next/link'
-import { Fragment } from 'react'
 import { prisma } from '@/lib/prisma'
-import { formatCurrency, getSaleChannelBadge } from '@/lib/format'
-import { SaleForm } from './SaleForm'
-import { deleteSale, getSaleProfit, removeSaleGiftUsage, removeSaleFreight } from '@/actions/sales'
+import { formatCurrency, formatDayHeader } from '@/lib/format'
+import { getSaleProfit, getSaleBatchCountsByChannel } from '@/actions/sales'
 import { getProductCostBreakdown, getGiftProductOptions } from '@/actions/products'
 import { getProductVariantStockOptions } from '@/lib/reports'
 import type { PlatformFeeTier } from '@/lib/costing'
-import { VariantChip } from '@/components/VariantChip'
-import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { DateRangeFilter } from '@/components/DateRangeFilter'
-import { StatusBadge } from '@/components/StatusBadge'
-import { ActionsMenu } from '@/components/ActionsMenu'
 import { resolveDateRange } from '@/lib/dateRange'
+import { SalesExplorer, type SaleDayGroup, type SaleBatchRow, type SaleItemRow } from './SalesExplorer'
 import type { SaleChannel } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
-
-const CHANNEL_FILTERS: { value: SaleChannel | undefined; label: string }[] = [
-  { value: undefined, label: 'Todas' },
-  { value: 'DIRETA', label: 'Direta' },
-  { value: 'SHOPEE', label: 'Shopee' },
-  { value: 'MERCADO_LIVRE', label: 'Mercado Livre' },
-  { value: 'MARKETPLACE', label: 'Marketplace (antigo)' },
-]
 
 export default async function SalesPage({
   searchParams,
@@ -36,15 +22,14 @@ export default async function SalesPage({
     : undefined
   const range = resolveDateRange({ from, to })
 
-  const [sales, productOptions, editingSaleRecord, platformRows, giftProducts] = await Promise.all([
+  const [sales, productOptions, editingSaleRecord, platformRows, giftProducts, channelCounts] = await Promise.all([
     prisma.sale.findMany({
       where: { ...(activeChannel ? { channel: activeChannel } : {}), saleDate: { gte: range.gte, lte: range.lte } },
       orderBy: { saleDate: 'desc' },
       include: { product: true },
     }),
-    // Melhoria "Vendas por variante": cada produto ativo já vem com suas
-    // variantes de cor em estoque (getProductVariantStockOptions) -- o
-    // formulário só pede a cor quando o produto tem mais de uma.
+    // Brinde nunca é vendido sozinho -- excluído do seletor (já filtrado
+    // dentro de getProductVariantStockOptions).
     getProductVariantStockOptions(),
     editId ? prisma.sale.findUnique({ where: { id: editId } }) : null,
     // Melhoria "Redesign Vendas": taxas cadastradas de cada plataforma,
@@ -54,6 +39,10 @@ export default async function SalesPage({
     prisma.marketplacePlatform.findMany({ orderBy: { platform: 'asc' } }),
     // Brinde: opções pro seletor "Qual brinde" do formulário.
     getGiftProductOptions(),
+    // Redesign "Vendas" §6: contagem de vendas (batchId) por canal no
+    // mesmo período filtrado, independente do canal ativo -- pras abas
+    // mostrarem a contagem de TODOS os canais ao mesmo tempo.
+    getSaleBatchCountsByChannel({ gte: range.gte, lte: range.lte }),
   ])
 
   // Brinde: anexo por LOTE (não por linha de Sale) -- busca depois de
@@ -113,43 +102,19 @@ export default async function SalesPage({
   // profit is frozen and displays exactly as before.
   const profits = await Promise.all(sales.map((s) => getSaleProfit(s.id)))
 
-  // Melhoria "Vendas por variante": rótulo/cor de cada venda com
-  // colorComboKey -- reaproveita o label já computado em productOptions
-  // (getProductVariantStockOptions) em vez de uma segunda fórmula. Venda
+  // Melhoria "Vendas por variante": rótulo/cor/attrs de cada venda com
+  // colorComboKey -- reaproveita o que já foi computado em
+  // getProductVariantStockOptions em vez de uma segunda fórmula. Venda
   // sem colorComboKey (produto sem variante, ou anterior a este ajuste)
-  // simplesmente não mostra nada, nunca inventa uma cor. `attrs` (melhoria
-  // "Redesign Vendas" §7) alimenta os chips por peça/cor -- fallback pro
-  // par label/colorHex plano quando vazio (venda sem variante rastreada).
-  const colorLabelByProductAndKey = new Map<string, { label: string; colorHex: string | null; attrs: (typeof productOptions)[number]['variants'][number]['attrs'] }>()
+  // simplesmente não mostra nada, nunca inventa uma cor.
+  const colorInfoByProductAndKey = new Map<string, { label: string; colorHex: string | null; attrs: (typeof productOptions)[number]['variants'][number]['attrs'] }>()
   for (const opt of productOptions) {
-    for (const v of opt.variants) colorLabelByProductAndKey.set(`${opt.productId}::${v.key}`, { label: v.label, colorHex: v.colorHex, attrs: v.attrs })
+    for (const v of opt.variants) colorInfoByProductAndKey.set(`${opt.productId}::${v.key}`, { label: v.label, colorHex: v.colorHex, attrs: v.attrs })
   }
-
-  // Melhoria "Redesign Vendas" §5/§6: cards de resumo + rodapé de totais,
-  // ambos derivados de `profits`/`sales` já carregados (filtro de
-  // canal/data já aplicado na query acima), sem nenhuma query nova.
-  // Brinde: soma do custo de todos os brindes anexados nos lotes visíveis
-  // (giftUsages já vem filtrado pelos mesmos batchIds de `sales`) --
-  // entra no custo total/desconta do lucro, nunca no valor vendido.
-  const totalGiftCost = giftUsages.reduce((sum, g) => sum + g.unitCost.toNumber() * g.quantity, 0)
-  // Melhoria "Frete em Vendas": mesmo raciocínio de totalGiftCost acima --
-  // soma de todo frete registrado nos lotes visíveis (freights já vem
-  // filtrado pelos mesmos batchIds de `sales`).
-  const totalFreightCost = freights.reduce((sum, f) => sum + f.amount.toNumber(), 0)
-
-  const totalSaleAmount = profits.reduce((sum, p) => sum + p.saleTotal, 0)
-  const totalFees = profits.reduce((sum, p) => sum + p.platformFeeAmount, 0)
-  const totalCost = profits.reduce((sum, p) => sum + p.costTotal, 0) + totalGiftCost
-  const totalProfit = profits.reduce((sum, p) => sum + p.profit, 0) - totalGiftCost - totalFreightCost
 
   // Melhoria "Vendas: múltiplos produtos numa venda": agrupa as linhas de
   // Sale por batchId (mesmo padrão Map-por-batchId de
-  // app/(app)/consignment/deliveries/page.tsx) -- venda de 1 produto só
-  // continua sendo um "lote" de 1 linha, sem mudança visual nenhuma; venda
-  // de 2+ produtos mostra cada linha dentro do mesmo bloco, com uma
-  // sub-linha de totais no final. `sales` já vem ordenado por saleDate
-  // desc, e Map preserva a ordem de primeira inserção -- os lotes já saem
-  // na ordem certa.
+  // app/(app)/consignment/deliveries/page.tsx).
   const batchesMap = new Map<string, { batchId: string; saleDate: Date; channel: SaleChannel; buyerOrPlatform: string | null; gift: (typeof giftUsages)[number] | null; freight: (typeof freights)[number] | null; lines: { sale: (typeof sales)[number]; profit: (typeof profits)[number] }[] }>()
   for (let i = 0; i < sales.length; i++) {
     const s = sales[i]
@@ -159,52 +124,162 @@ export default async function SalesPage({
   }
   const batches = [...batchesMap.values()]
 
-  // "Ticket médio" é por VENDA (lote), não por linha de produto -- uma
-  // venda de 2 produtos ainda é 1 ticket só. Só muda o resultado quando
-  // existir alguma venda multi-produto; o caso de hoje (1 linha = 1 venda)
-  // continua idêntico.
+  // Redesign "Vendas" §5/§6: cards de resumo + rodapé de totais, ambos
+  // derivados de `profits`/`sales` já carregados (filtro de canal/data já
+  // aplicado na query acima), sem nenhuma query nova. Brinde: soma do
+  // custo de todos os brindes anexados nos lotes visíveis (giftUsages já
+  // vem filtrado pelos mesmos batchIds de `sales`) -- entra no custo
+  // total/desconta do lucro, nunca no valor vendido.
+  const totalGiftCost = giftUsages.reduce((sum, g) => sum + g.unitCost.toNumber() * g.quantity, 0)
+  const totalFreightCost = freights.reduce((sum, f) => sum + f.amount.toNumber(), 0)
+
+  const totalSaleAmount = profits.reduce((sum, p) => sum + p.saleTotal, 0)
+  const totalFees = profits.reduce((sum, p) => sum + p.platformFeeAmount, 0)
+  const totalProfit = profits.reduce((sum, p) => sum + p.profit, 0) - totalGiftCost - totalFreightCost
+  const totalReceived = totalSaleAmount - totalFees - totalFreightCost
+
   const avgTicket = batches.length > 0 ? totalSaleAmount / batches.length : 0
+
+  // Redesign "Vendas": monta o shape plano (JSON-safe) consumido pelo
+  // client component -- cada batch sempre ganha um `totals` calculado com
+  // a MESMA fórmula que a sub-linha "Total desta venda" já usava pra lote
+  // de 2+ produtos (gift/freight entram 1x por lote, nunca por linha),
+  // agora aplicada uniformemente também pro lote de 1 produto só (produz
+  // exatamente o mesmo número que a linha única já mostrava).
+  const saleBatchRows: SaleBatchRow[] = batches.map((batch) => {
+    const batchGiftCost = batch.gift ? batch.gift.unitCost.toNumber() * batch.gift.quantity : 0
+    const batchFreightCost = batch.freight ? batch.freight.amount.toNumber() : 0
+
+    const items: SaleItemRow[] = batch.lines.map(({ sale: s, profit: p }) => {
+      const colorInfo = s.colorComboKey ? colorInfoByProductAndKey.get(`${s.productId}::${s.colorComboKey}`) : undefined
+      return {
+        id: s.id,
+        productName: s.product.name,
+        quantity: s.quantity,
+        unitPrice: s.unitPrice.toNumber(),
+        saleTotal: p.saleTotal,
+        costTotal: p.costTotal,
+        platformFeeAmount: p.platformFeeAmount,
+        platformFeeBreakdown: p.platformFeeBreakdown,
+        profit: p.profit,
+        estimated: p.estimated,
+        colorAttrs: colorInfo?.attrs ?? [],
+        colorLabel: colorInfo?.label ?? null,
+        colorHex: colorInfo?.colorHex ?? null,
+      }
+    })
+
+    const totals = batch.lines.reduce(
+      (acc, { profit: p }) => ({
+        saleTotal: acc.saleTotal + p.saleTotal,
+        platformFeeAmount: acc.platformFeeAmount + p.platformFeeAmount,
+        costTotal: acc.costTotal + p.costTotal,
+        profit: acc.profit + p.profit,
+      }),
+      { saleTotal: 0, platformFeeAmount: 0, costTotal: 0, profit: 0 },
+    )
+    const quantity = batch.lines.reduce((sum, { sale: s }) => sum + s.quantity, 0)
+    const costTotal = totals.costTotal + batchGiftCost
+    const profit = totals.profit - batchGiftCost - batchFreightCost
+    const received = totals.saleTotal - totals.platformFeeAmount - batchFreightCost
+
+    // Tira de bolinhas: cores únicas (dedupe por hex) de todos os itens --
+    // usa attrs quando existir (pode ter mais de 1 cor por item, peça
+    // multi-filamento), senão o colorHex plano de fallback.
+    const dotsByHex = new Map<string, string>()
+    for (const item of items) {
+      if (item.colorAttrs.length > 0) {
+        for (const attr of item.colorAttrs) {
+          for (const hex of attr.colorHexes) if (!dotsByHex.has(hex)) dotsByHex.set(hex, attr.value || attr.shortValue)
+        }
+      } else if (item.colorHex) {
+        if (!dotsByHex.has(item.colorHex)) dotsByHex.set(item.colorHex, item.colorLabel ?? '')
+      }
+    }
+
+    return {
+      batchId: batch.batchId,
+      channel: batch.channel,
+      buyerOrPlatform: batch.buyerOrPlatform,
+      items,
+      colorDots: [...dotsByHex.entries()].map(([hex, label]) => ({ hex, label })),
+      gift: batch.gift ? { id: batch.gift.id, productName: batch.gift.product.name, cost: batchGiftCost } : null,
+      freight: batch.freight ? { id: batch.freight.id, cost: batchFreightCost } : null,
+      totals: { quantity, saleTotal: totals.saleTotal, platformFeeAmount: totals.platformFeeAmount, received, costTotal, profit, margin: received > 0 ? profit / received : null },
+    }
+  })
+
+  // Redesign "Vendas" §1: agrupa os batches (já ordenados desc por
+  // saleDate, herdado de `sales`) por dia em Brasília -- Map preserva a
+  // ordem de 1ª inserção, então os dias já saem do mais recente pro mais
+  // antigo sem precisar reordenar.
+  const dayGroupsMap = new Map<string, { date: Date; batches: SaleBatchRow[] }>()
+  for (let i = 0; i < batches.length; i++) {
+    const dateKey = batches[i].saleDate.toISOString().slice(0, 10)
+    const entry = dayGroupsMap.get(dateKey) ?? { date: batches[i].saleDate, batches: [] }
+    entry.batches.push(saleBatchRows[i])
+    dayGroupsMap.set(dateKey, entry)
+  }
+  const dayGroups: SaleDayGroup[] = [...dayGroupsMap.entries()].map(([dateKey, { date, batches: dayBatches }]) => ({
+    dateKey,
+    dateLabel: formatDayHeader(date),
+    batches: dayBatches,
+    count: dayBatches.length,
+    received: dayBatches.reduce((sum, b) => sum + b.totals.received, 0),
+    profit: dayBatches.reduce((sum, b) => sum + b.totals.profit, 0),
+  }))
+
+  // Redesign "Vendas" §7: subtexto de apoio embaixo de cada card de KPI --
+  // "últimos 30 dias" só quando o usuário não escolheu um período
+  // explícito na URL (resolveDateRange cai no padrão de 30 dias nesse
+  // caso); com from/to na URL, mostra o período de fato aplicado.
+  const periodLabel = !from && !to ? 'últimos 30 dias' : `${new Date(`${range.from}T00:00:00`).toLocaleDateString('pt-BR')} – ${new Date(`${range.to}T00:00:00`).toLocaleDateString('pt-BR')}`
+  const feesPercentOfSold = totalSaleAmount > 0 ? (totalFees / totalSaleAmount) * 100 : 0
+  const freightPercentOfSold = totalSaleAmount > 0 ? (totalFreightCost / totalSaleAmount) * 100 : 0
+  const netMarginOnReceived = totalReceived > 0 ? (totalProfit / totalReceived) * 100 : null
 
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Vendas</h1>
 
-      {/* Melhoria "Redesign Vendas" §5: mesmo padrão visual dos cards de
-          resumo de /stock (StockExplorer.tsx) -- refletem o filtro de
-          canal/data ativo automaticamente, já que vêm de `profits`/`sales`
-          filtrados acima. */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <div className="tk-panel p-3">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Total vendido</p>
           <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(totalSaleAmount)}</p>
+          <p className="text-xs text-slate-400 dark:text-slate-500">{periodLabel}</p>
         </div>
         <div className="tk-panel p-3">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Total em taxas</p>
           <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(totalFees)}</p>
+          <p className="text-xs text-slate-400 dark:text-slate-500">{feesPercentOfSold.toFixed(1)}% do vendido</p>
         </div>
-        {/* Melhoria "Frete em Vendas": só aparece quando existe frete
-            registrado no período filtrado -- sem virar um card R$0 vazio
-            pra quem nunca usa o campo (venda Direta, ou marketplace sem
-            frete informado). */}
         {totalFreightCost > 0 && (
           <div className="tk-panel p-3">
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Total em frete</p>
             <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(totalFreightCost)}</p>
+            <p className="text-xs text-slate-400 dark:text-slate-500">{freightPercentOfSold.toFixed(1)}% do vendido</p>
           </div>
         )}
         <div className="tk-panel p-3">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Lucro líquido</p>
           <p className={`mt-1 text-lg font-semibold tabular-nums ${totalProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatCurrency(totalProfit)}</p>
+          <p className="text-xs text-slate-400 dark:text-slate-500">{netMarginOnReceived !== null ? `${netMarginOnReceived.toFixed(0)}% de margem` : '—'}</p>
         </div>
         <div className="tk-panel p-3">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Ticket médio</p>
           <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(avgTicket)}</p>
+          <p className="text-xs text-slate-400 dark:text-slate-500">por venda</p>
         </div>
       </div>
 
-      <div className="mt-4">
-        <SaleForm
-          key={editingSale?.id ?? 'new'}
+      <DateRangeFilter action="/sales" from={range.from} to={range.to} hiddenParams={{ channel: activeChannel }} />
+
+      <div className="mt-2">
+        <SalesExplorer
+          dayGroups={dayGroups}
+          channelCounts={channelCounts}
+          activeChannel={activeChannel}
+          range={{ from: range.from, to: range.to }}
           products={productOptionsWithCost}
           platforms={platforms}
           giftProducts={giftProducts}
@@ -213,284 +288,8 @@ export default async function SalesPage({
         />
       </div>
 
-      <DateRangeFilter action="/sales" from={range.from} to={range.to} hiddenParams={{ channel: activeChannel }} />
-
-      <div className="mb-3 mt-6 flex flex-wrap gap-1">
-        {CHANNEL_FILTERS.map((f) => {
-          const qs = new URLSearchParams()
-          if (f.value) qs.set('channel', f.value)
-          qs.set('from', range.from)
-          qs.set('to', range.to)
-          const href = `/sales?${qs.toString()}`
-          const isActive = activeChannel === f.value
-          return (
-            <Link
-              key={f.label}
-              href={href}
-              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                isActive
-                  ? 'bg-gradient-to-r from-violet-600 to-blue-600 text-white dark:from-violet-500 dark:to-blue-500 dark:text-slate-950'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
-              }`}
-            >
-              {f.label}
-            </Link>
-          )
-        })}
-      </div>
-
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="tk-table-head-row">
-            <th className="py-2">Data</th>
-            <th>Plataforma</th>
-            <th>Produto</th>
-            <th className="text-center">Qtd.</th>
-            <th className="text-center">Valor unit.</th>
-            <th>Comprador</th>
-            <th className="text-center">Custo</th>
-            <th className="text-center">Taxa</th>
-            <th className="text-center">Recebido</th>
-            <th className="text-center">Lucro</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {batches.map((batch) => {
-            const isMulti = batch.lines.length > 1
-            // Melhoria "Vendas: múltiplos produtos numa venda": sub-linha de
-            // totais só aparece pra venda com 2+ produtos -- venda de 1
-            // produto só já mostra Custo/Taxa/Lucro na própria linha, sem
-            // duplicar.
-            // Brinde: custo do brinde entra no subtotal do lote (nunca em
-            // cada linha individual -- não pertence a nenhum produto
-            // específico do lote).
-            const batchGiftCost = batch.gift ? batch.gift.unitCost.toNumber() * batch.gift.quantity : 0
-            // Melhoria "Frete em Vendas": mesmo raciocínio do Brinde acima --
-            // por LOTE, nunca somado por linha (batch.freight já é o valor
-            // inteiro da venda, não algo que se acumula item a item).
-            const batchFreightCost = batch.freight ? batch.freight.amount.toNumber() : 0
-            const batchTotals = isMulti
-              ? batch.lines.reduce((acc, l) => ({
-                  cost: acc.cost + l.profit.costTotal,
-                  fee: acc.fee + l.profit.platformFeeAmount,
-                  saleTotal: acc.saleTotal + l.profit.saleTotal,
-                  profit: acc.profit + l.profit.profit,
-                }), { cost: batchGiftCost, fee: 0, saleTotal: 0, profit: -batchGiftCost - batchFreightCost })
-              : null
-
-            return (
-              <Fragment key={batch.batchId}>
-                {batch.lines.map(({ sale: s, profit: p }, idx) => {
-                  const { profit, estimated, saleTotal, costTotal, platformFeeAmount, platformFeeBreakdown } = p
-                  const colorInfo = s.colorComboKey ? colorLabelByProductAndKey.get(`${s.productId}::${s.colorComboKey}`) : undefined
-                  return (
-                    <tr key={s.id} className="tk-row align-top">
-                      {idx === 0 && (
-                        <>
-                          <td className="py-2" rowSpan={batch.lines.length}>{batch.saleDate.toLocaleDateString('pt-BR')}</td>
-                          <td rowSpan={batch.lines.length}>
-                            <StatusBadge badge={getSaleChannelBadge(batch.channel)} />
-                          </td>
-                        </>
-                      )}
-                      <td>
-                        {s.product.name}
-                        {colorInfo && colorInfo.attrs.length > 0 && (
-                          <div className="mt-1 flex flex-wrap items-center gap-1">
-                            {colorInfo.attrs.map((attr, j) => <VariantChip key={j} attr={attr} />)}
-                          </div>
-                        )}
-                        {colorInfo && colorInfo.attrs.length === 0 && (
-                          <span className="flex items-center gap-1.5 text-xs font-normal text-slate-500 dark:text-slate-400">
-                            {colorInfo.colorHex && <span style={{ background: colorInfo.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                            {colorInfo.label}
-                          </span>
-                        )}
-                        {/* Brinde: tag na 1ª linha do lote (não é dono de
-                            nenhuma linha específica) + remoção pontual. */}
-                        {idx === 0 && batch.gift && (
-                          <div className="mt-1 flex items-center gap-1.5">
-                            <span className="inline-flex items-center gap-1 rounded-full bg-pink-100 px-2 py-0.5 text-xs font-medium text-pink-700 dark:bg-pink-900/40 dark:text-pink-300">
-                              🎁 + {batch.gift.product.name}
-                            </span>
-                            <ConfirmDeleteForm
-                              action={async () => { 'use server'; return await removeSaleGiftUsage(batch.gift!.id) }}
-                              confirmMessage="Remover o brinde desta venda?"
-                            />
-                          </div>
-                        )}
-                        {/* Frete em Vendas: mesma tag/remoção pontual do
-                            Brinde acima -- também por lote, não por
-                            produto. */}
-                        {idx === 0 && batch.freight && (
-                          <div className="mt-1 flex items-center gap-1.5">
-                            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                              📦 Frete {formatCurrency(batchFreightCost)}
-                            </span>
-                            <ConfirmDeleteForm
-                              action={async () => { 'use server'; return await removeSaleFreight(batch.freight!.id) }}
-                              confirmMessage="Remover o frete desta venda?"
-                            />
-                          </div>
-                        )}
-                      </td>
-                      <td className="text-center">{s.quantity}</td>
-                      <td className="text-center">{formatCurrency(s.unitPrice.toNumber())}</td>
-                      {idx === 0 && (
-                        <td className="text-slate-500 dark:text-slate-400" rowSpan={batch.lines.length}>{batch.buyerOrPlatform ?? '-'}</td>
-                      )}
-                      <td className="text-center">
-                        {/* Brinde: só o lote de 1 produto mostra o custo já
-                            combinado aqui (é a única linha que representa o
-                            lote inteiro) -- lote com 2+ produtos mostra o
-                            brinde na linha de subtotal abaixo, não aqui
-                            (evita contar 2x ou escolher uma linha "dona"). */}
-                        {!isMulti && batchGiftCost > 0 ? (
-                          <>
-                            {formatCurrency(costTotal + batchGiftCost)}
-                            <span className="block text-xs font-normal text-slate-400 dark:text-slate-500">
-                              produção {formatCurrency(costTotal)} + brinde {formatCurrency(batchGiftCost)}
-                            </span>
-                          </>
-                        ) : (
-                          formatCurrency(costTotal)
-                        )}
-                      </td>
-                      <td className="text-center">
-                        {formatCurrency(platformFeeAmount)}
-                        {platformFeeBreakdown && (
-                          <span className="block text-xs font-normal text-slate-400 dark:text-slate-500">
-                            {(platformFeeBreakdown.feePercent * 100).toFixed(0)}% + {formatCurrency(platformFeeBreakdown.feeFixed)}
-                          </span>
-                        )}
-                      </td>
-                      <td className="text-center">
-                        {(() => {
-                          // Frete em Vendas: só o lote de 1 produto desconta
-                          // o frete do "Recebido" exibido AQUI -- mesmo
-                          // raciocínio do Brinde na célula Custo acima (lote
-                          // com 2+ produtos mostra só no subtotal).
-                          const rowFreightCost = !isMulti ? batchFreightCost : 0
-                          const received = saleTotal - platformFeeAmount - rowFreightCost
-                          return rowFreightCost > 0 ? (
-                            <>
-                              {formatCurrency(received)}
-                              <span className="block text-xs font-normal text-slate-400 dark:text-slate-500">frete {formatCurrency(rowFreightCost)}</span>
-                            </>
-                          ) : (
-                            formatCurrency(received)
-                          )
-                        })()}
-                      </td>
-                      <td className="text-center">
-                        {(() => {
-                          // Brinde/Frete: só o lote de 1 produto desconta o
-                          // custo do brinde/frete do lucro exibido AQUI --
-                          // mesmo raciocínio da célula Custo acima.
-                          const rowGiftCost = !isMulti ? batchGiftCost : 0
-                          const rowFreightCost = !isMulti ? batchFreightCost : 0
-                          const displayProfit = profit - rowGiftCost - rowFreightCost
-                          return (
-                            <details>
-                              <summary
-                                className={`cursor-pointer list-none font-medium ${displayProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}
-                                title="Ver detalhamento do lucro"
-                              >
-                                {formatCurrency(displayProfit)}
-                                {estimated && (
-                                  <span title="Venda anterior a este recurso: custo estimado retroativamente, pode variar se preços mudarem" className="ml-1 text-slate-400 dark:text-slate-500">*</span>
-                                )}
-                              </summary>
-                              <dl className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
-                                <div className="flex justify-between gap-3">
-                                  <dt>Valor da venda</dt>
-                                  <dd>{formatCurrency(saleTotal)}</dd>
-                                </div>
-                                <div className="flex justify-between gap-3">
-                                  <dt>Custo de produção</dt>
-                                  <dd>− {formatCurrency(costTotal)}</dd>
-                                </div>
-                                {rowGiftCost > 0 && (
-                                  <div className="flex justify-between gap-3">
-                                    <dt>Brinde</dt>
-                                    <dd>− {formatCurrency(rowGiftCost)}</dd>
-                                  </div>
-                                )}
-                                {rowFreightCost > 0 && (
-                                  <div className="flex justify-between gap-3">
-                                    <dt>Frete</dt>
-                                    <dd>− {formatCurrency(rowFreightCost)}</dd>
-                                  </div>
-                                )}
-                                {platformFeeAmount > 0 && (
-                                  <div className="flex justify-between gap-3">
-                                    <dt>Taxa da plataforma</dt>
-                                    <dd>− {formatCurrency(platformFeeAmount)}</dd>
-                                  </div>
-                                )}
-                                <div className="flex justify-between gap-3 font-medium text-slate-700 dark:text-slate-200">
-                                  <dt>Lucro</dt>
-                                  <dd>{formatCurrency(displayProfit)}</dd>
-                                </div>
-                              </dl>
-                            </details>
-                          )
-                        })()}
-                      </td>
-                      <td>
-                        <ActionsMenu>
-                          <Link href={`/sales?editId=${s.id}`} className="tk-menu-item">
-                            Editar
-                          </Link>
-                          <ConfirmDeleteForm action={async () => { 'use server'; return await deleteSale(s.id) }} className="tk-menu-item-danger" />
-                        </ActionsMenu>
-                      </td>
-                    </tr>
-                  )
-                })}
-                {isMulti && batchTotals && (
-                  <tr className="bg-slate-50 text-xs font-medium text-slate-600 dark:bg-slate-800/40 dark:text-slate-300">
-                    <td colSpan={6} className="py-1.5 pl-2">Total desta venda ({batch.lines.length} produtos)</td>
-                    <td className="py-1.5 text-center">
-                      {formatCurrency(batchTotals.cost)}
-                      {batchGiftCost > 0 && (
-                        <span className="block font-normal text-slate-400 dark:text-slate-500">inclui brinde {formatCurrency(batchGiftCost)}</span>
-                      )}
-                    </td>
-                    <td className="py-1.5 text-center">{formatCurrency(batchTotals.fee)}</td>
-                    <td className="py-1.5 text-center">
-                      {formatCurrency(batchTotals.saleTotal - batchTotals.fee - batchFreightCost)}
-                      {batchFreightCost > 0 && (
-                        <span className="block font-normal text-slate-400 dark:text-slate-500">frete {formatCurrency(batchFreightCost)}</span>
-                      )}
-                    </td>
-                    <td className={`py-1.5 text-center ${batchTotals.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatCurrency(batchTotals.profit)}</td>
-                    <td></td>
-                  </tr>
-                )}
-              </Fragment>
-            )
-          })}
-        </tbody>
-        {sales.length > 0 && (
-          // Melhoria "Redesign Vendas" §6: soma Custo/Taxa/Lucro do período
-          // filtrado (mesmos `profits` já usados linha a linha acima).
-          <tfoot>
-            <tr className="border-t border-slate-200 font-medium text-slate-700 dark:border-slate-700 dark:text-slate-200">
-              <td className="py-2" colSpan={6}>Total ({batches.length} {batches.length === 1 ? 'venda' : 'vendas'})</td>
-              <td className="text-center">{formatCurrency(totalCost)}</td>
-              <td className="text-center">{formatCurrency(totalFees)}</td>
-              <td className="text-center">{formatCurrency(totalSaleAmount - totalFees - totalFreightCost)}</td>
-              <td className={`text-center ${totalProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatCurrency(totalProfit)}</td>
-              <td></td>
-            </tr>
-          </tfoot>
-        )}
-      </table>
-
-      {sales.length === 0 && (
-        <div className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400 dark:border-slate-700 dark:text-slate-500">
+      {sales.length === 0 && dayGroups.length === 0 && (
+        <div className="mt-6 rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400 dark:border-slate-700 dark:text-slate-500">
           Nenhuma venda registrada{activeChannel ? ' neste canal' : ''}.
         </div>
       )}

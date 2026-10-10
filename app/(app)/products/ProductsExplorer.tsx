@@ -1,8 +1,10 @@
 'use client'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { formatCurrency } from '@/lib/format'
+import { ActionsMenu } from '@/components/ActionsMenu'
+import { duplicateProduct } from '@/actions/products'
 import { ProductForm } from './ProductForm'
 
 export interface ProductPlatformPriceInfo {
@@ -57,6 +59,23 @@ export function ProductsExplorer({
   const [modalOpen, setModalOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
+  const [isDuplicating, startDuplicate] = useTransition()
+
+  // Pedido do usuário "copiar um anúncio" (produto): clona a ficha técnica
+  // inteira (duplicateProduct) e já leva pra tela de edição do clone --
+  // é lá que o usuário troca nome/foto/preço, igual editaria um produto
+  // recém-criado manualmente.
+  function handleDuplicate(id: string) {
+    startDuplicate(async () => {
+      const result = await duplicateProduct(id)
+      if (!result.success) {
+        alert(result.error)
+        return
+      }
+      router.refresh()
+      if (result.productId) router.push(`/products/${result.productId}`)
+    })
+  }
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -108,11 +127,23 @@ export function ProductsExplorer({
       ) : (
         <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {visibleProducts.map((p) => (
-            <Link
-              key={p.id}
-              href={`/products/${p.id}`}
-              className={`tk-panel flex gap-3 p-3 hover:border-violet-400 dark:hover:border-violet-500 ${p.isGift ? 'border-pink-200 dark:border-pink-900' : ''}`}
-            >
+            <div key={p.id} className="relative">
+              {/* ActionsMenu precisa ficar FORA do <Link> (não aninhado) --
+                  sendo um irmão posicionado por cima, o clique no botão "⋯"
+                  nunca acaba navegando pro /products/[id] por baixo (sem
+                  precisar de stopPropagation: o botão ocupa aqueles pixels
+                  antes do link, que é só visual atrás dele). */}
+              <div className="absolute right-2 top-2 z-10">
+                <ActionsMenu>
+                  <button type="button" disabled={isDuplicating} onClick={() => handleDuplicate(p.id)} className="tk-menu-item">
+                    {isDuplicating ? 'Duplicando…' : 'Duplicar'}
+                  </button>
+                </ActionsMenu>
+              </div>
+              <Link
+                href={`/products/${p.id}`}
+                className={`tk-panel flex gap-3 p-3 hover:border-violet-400 dark:hover:border-violet-500 ${p.isGift ? 'border-pink-200 dark:border-pink-900' : ''}`}
+              >
               <div className="h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800">
                 {p.coverPhotoId ? (
                   // eslint-disable-next-line @next/next/no-img-element -- served from our own DB-backed route, not a static/optimizable asset
@@ -170,7 +201,8 @@ export function ProductsExplorer({
                   </div>
                 )}
               </div>
-            </Link>
+              </Link>
+            </div>
           ))}
         </div>
       )}

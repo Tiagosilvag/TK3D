@@ -241,6 +241,24 @@ export async function deleteSale(id: string): Promise<ActionResult> {
   return { success: true }
 }
 
+// Redesign "Vendas" §6: contagem de vendas (batchId distintos, não linhas)
+// por canal dentro do período filtrado -- pras abas mostrarem "Direta 3 /
+// Shopee 0 / ..." mesmo com uma aba diferente ativa (a query principal de
+// page.tsx já filtra por canal, então sozinha não dá pra saber a contagem
+// dos OUTROS canais ao mesmo tempo). Conta por batchId (não por linha de
+// Sale) pra bater com a mesma granularidade "1 venda = 1 batch" usada em
+// todo o resto da tela.
+export async function getSaleBatchCountsByChannel(range: { gte: Date; lte: Date }): Promise<Record<SaleChannel, number>> {
+  const rows = await prisma.sale.findMany({
+    where: { saleDate: { gte: range.gte, lte: range.lte } },
+    select: { channel: true, batchId: true },
+    distinct: ['batchId'],
+  })
+  const counts: Record<string, number> = {}
+  for (const r of rows) counts[r.channel] = (counts[r.channel] ?? 0) + 1
+  return counts as Record<SaleChannel, number>
+}
+
 export interface SaleProfit {
   profit: number
   // Valor da venda (quantity * unitPrice) e custo de produção (frozen

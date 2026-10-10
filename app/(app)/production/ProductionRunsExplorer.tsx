@@ -38,6 +38,15 @@ export interface ProductionRunRow {
   status: ProductionStatus
   cost: number | null
   cancelReason: string | null
+  // Pedido do usuário "modal pra ver a cor em Produção": a Lista nunca
+  // mostrava a cor usada em cada run -- filamentLabel/colorHex são do
+  // campo escalar (1º componente/compatibilidade, ver CLAUDE.md);
+  // colorBreakdown só vem preenchido quando a peça é multi-filamento
+  // (ProductionRunFilamentUsage), com cada componente real usado nesse
+  // lote -- nesse caso o modal mostra o breakdown em vez do escalar só.
+  filamentLabel: string
+  colorHex: string | null
+  colorBreakdown: { label: string; colorHex: string | null; gramsUsed: number }[]
 }
 
 export function ProductionRunsExplorer({
@@ -72,9 +81,19 @@ export function ProductionRunsExplorer({
 }) {
   const router = useRouter()
   const plateDialogRef = useRef<HTMLDialogElement>(null)
+  const colorDialogRef = useRef<HTMLDialogElement>(null)
   const [newRunOpen, setNewRunOpen] = useState(false)
   const [tab, setTab] = useState<'lista' | 'produto' | 'plates'>('lista')
   const [plateDetail, setPlateDetail] = useState<PlateDetail | null>(null)
+  // Pedido do usuário "modal pra ver a cor em Produção": dado já vem
+  // pronto do server junto com `runs` (sem fetch sob demanda, diferente
+  // do Plate -- é só o filamento desta linha, já carregado).
+  const [colorRun, setColorRun] = useState<ProductionRunRow | null>(null)
+
+  function openColorDetail(run: ProductionRunRow) {
+    setColorRun(run)
+    colorDialogRef.current?.showModal()
+  }
 
   // Melhoria "Pedidos com reserva de estoque" §3 (fix): o botão "Registrar
   // produção" do painel "Peças pendentes de encomenda" (DemandQueuePanel)
@@ -147,6 +166,7 @@ export function ProductionRunsExplorer({
                 <th className="py-2">Data</th>
                 <th>Produto</th>
                 <th>Peça</th>
+                <th>Cor</th>
                 <th>Plate</th>
                 <th className="text-center">Sucesso/Falhas</th>
                 <th className="text-center">Custo</th>
@@ -162,6 +182,21 @@ export function ProductionRunsExplorer({
                     <td className="py-2">{new Date(run.date).toLocaleDateString('pt-BR')}</td>
                     <td className="font-medium text-slate-900 dark:text-slate-100">{run.productName}</td>
                     <td className="text-slate-500 dark:text-slate-400">{run.partName ?? '—'}</td>
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() => openColorDetail(run)}
+                        title="Ver cor"
+                        className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-violet-600 dark:text-slate-400 dark:hover:text-violet-400"
+                      >
+                        {run.colorHex ? (
+                          <span style={{ background: run.colorHex }} className="inline-block h-3 w-3 shrink-0 rounded-full border border-black/10 dark:border-white/10" />
+                        ) : (
+                          <span className="inline-block h-3 w-3 shrink-0 rounded-full border border-dashed border-slate-300 dark:border-slate-600" />
+                        )}
+                        Ver cor
+                      </button>
+                    </td>
                     <td>
                       {run.plateId ? (
                         <button type="button" onClick={() => void openPlateDetail(run.plateId!)} className="text-violet-600 hover:underline dark:text-violet-400">
@@ -355,6 +390,57 @@ export function ProductionRunsExplorer({
 
             <div className="mt-1 flex justify-end">
               <button type="button" onClick={() => plateDialogRef.current?.close()} className="text-sm text-slate-500 hover:underline dark:text-slate-400">Fechar</button>
+            </div>
+          </div>
+        )}
+      </dialog>
+
+      {/* Pedido do usuário "modal pra ver a cor em Produção": mesmo padrão
+          zero-lib de <dialog> nativo já usado no resto do app (ex.
+          AdjustStockButton) -- sem fetch, `colorRun` já veio pronto do
+          server junto com `runs`. */}
+      <dialog
+        ref={colorDialogRef}
+        onClose={() => setColorRun(null)}
+        className="w-full [--tk-dialog-cap:24rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      >
+        {colorRun && (
+          <div className="grid grid-cols-1 gap-3 p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-display text-base font-semibold">Cor usada — {colorRun.productName}</h3>
+                {colorRun.partName && <p className="text-xs text-slate-400 dark:text-slate-500">{colorRun.partName}</p>}
+              </div>
+              <button type="button" onClick={() => colorDialogRef.current?.close()} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
+            </div>
+
+            <div className="space-y-1.5">
+              {colorRun.colorBreakdown.length > 0 ? (
+                colorRun.colorBreakdown.map((c, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm">
+                    {c.colorHex ? (
+                      <span style={{ background: c.colorHex }} className="inline-block h-3.5 w-3.5 shrink-0 rounded-full border border-black/10 dark:border-white/10" />
+                    ) : (
+                      <span className="inline-block h-3.5 w-3.5 shrink-0 rounded-full border border-dashed border-slate-300 dark:border-slate-600" />
+                    )}
+                    <span className="text-slate-700 dark:text-slate-200">{c.label}</span>
+                    <span className="text-xs text-slate-400 dark:text-slate-500">{c.gramsUsed}g</span>
+                  </div>
+                ))
+              ) : (
+                <div className="flex items-center gap-2 text-sm">
+                  {colorRun.colorHex ? (
+                    <span style={{ background: colorRun.colorHex }} className="inline-block h-3.5 w-3.5 shrink-0 rounded-full border border-black/10 dark:border-white/10" />
+                  ) : (
+                    <span className="inline-block h-3.5 w-3.5 shrink-0 rounded-full border border-dashed border-slate-300 dark:border-slate-600" />
+                  )}
+                  <span className="text-slate-700 dark:text-slate-200">{colorRun.filamentLabel}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-1 flex justify-end">
+              <button type="button" onClick={() => colorDialogRef.current?.close()} className="text-sm text-slate-500 hover:underline dark:text-slate-400">Fechar</button>
             </div>
           </div>
         )}

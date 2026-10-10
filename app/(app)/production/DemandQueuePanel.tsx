@@ -1,7 +1,13 @@
+'use client'
+import { useState } from 'react'
 import Link from 'next/link'
 import { getDeadlineBadge, ORDER_CHANNEL_LABELS } from '@/lib/format'
 import type { OrderDemandRow } from '@/actions/orders'
 import { SyncOrdersButton } from './SyncOrdersButton'
+import { DemandBatchRegisterForm, type DemandSelection } from './DemandBatchRegisterForm'
+
+type PrinterOption = { id: string; name: string; costPerHour: number }
+type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
 
 // Melhoria "Pedidos com reserva de estoque" §3: painel "Peças pendentes
 // de encomenda" no topo de Produção -- só peça que ainda NÃO existe
@@ -11,8 +17,50 @@ import { SyncOrdersButton } from './SyncOrdersButton'
 // reconcileOrderReservations usa pra reserva de verdade). Só renderiza
 // quando há alguma linha -- sem estado vazio, é um painel de "trabalho
 // pendente", não uma listagem permanente.
-export function DemandQueuePanel({ rows }: { rows: OrderDemandRow[] }) {
+//
+// Pedido do usuário "registrar produção de todos os pendentes, selecionar
+// todos ou alguns": virou Client Component (checkbox por linha + "Marcar
+// todas"/"Desmarcar todas") -- o botão "Registrar produção" de cada linha
+// continua existindo pro fluxo de 1 peça só (navega pra abrir o modal de
+// sempre, ProductionRunsExplorer), checkbox + "Registrar selecionadas"
+// abrem um modal PRÓPRIO (DemandBatchRegisterForm) que registra N peças
+// (possivelmente de produtos diferentes) numa submissão só.
+export function DemandQueuePanel({ rows, printers, filaments }: { rows: OrderDemandRow[]; printers: PrinterOption[]; filaments: FilamentOption[] }) {
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [batchOpen, setBatchOpen] = useState(false)
+
   if (rows.length === 0) return null
+
+  function toggle(i: number) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(i)) next.delete(i)
+      else next.add(i)
+      return next
+    })
+  }
+
+  function selectAll() {
+    setSelected(new Set(rows.map((_, i) => i)))
+  }
+
+  function selectNone() {
+    setSelected(new Set())
+  }
+
+  const selection: DemandSelection[] = rows
+    .map((row, i) => ({ row, i }))
+    .filter(({ i }) => selected.has(i))
+    .map(({ row, i }) => ({
+      key: String(i),
+      productId: row.productId,
+      productName: row.productName,
+      partId: row.partId,
+      partName: row.partName,
+      comboLabel: row.comboLabel,
+      filamentIds: row.filamentIds,
+      neededUnits: row.neededUnits,
+    }))
 
   return (
     <div className="tk-panel mt-4 p-4">
@@ -24,30 +72,51 @@ export function DemandQueuePanel({ rows }: { rows: OrderDemandRow[] }) {
         <SyncOrdersButton />
       </div>
       <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Ordenado pelo prazo de entrega mais próximo -- não pela ordem em que o pedido foi criado.</p>
-      <div className="mt-3 space-y-2">
+
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex gap-3 text-xs font-medium">
+          <button type="button" onClick={selectAll} className="text-violet-600 hover:underline dark:text-violet-400">Marcar todas</button>
+          <button type="button" onClick={selectNone} className="text-violet-600 hover:underline dark:text-violet-400">Desmarcar todas</button>
+        </div>
+        {selected.size > 0 && (
+          <button type="button" onClick={() => setBatchOpen(true)} className="tk-btn-primary px-3 py-1.5 text-xs">
+            Registrar produção selecionadas ({selected.size})
+          </button>
+        )}
+      </div>
+
+      <div className="mt-2 space-y-2">
         {rows.map((row, i) => {
           const deadline = getDeadlineBadge(new Date(row.deliveryDate), row.status)
           const isPartial = row.reservedQuantity > 0
           return (
             <div key={i} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
-                  {row.productName}{row.partName && <span className="text-slate-500 dark:text-slate-400"> — Peça: {row.partName}</span>}
-                  {row.comboLabel && <span className="text-violet-600 dark:text-violet-400"> — {row.comboLabel}</span>}
-                </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Pedido {ORDER_CHANNEL_LABELS[row.channel]}
-                  {row.buyerOrPlatform ? ` · ${row.buyerOrPlatform}` : row.orderNumber ? ` · #${row.orderNumber}` : ' · sem comprador informado'}
-                </p>
-                {isPartial && (
-                  <div className="mt-1 flex items-center gap-2">
-                    <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-                      <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, (row.reservedQuantity / row.quantity) * 100)}%` }} />
+              <label className="flex min-w-0 flex-1 items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={selected.has(i)}
+                  onChange={() => toggle(i)}
+                  className="mt-1 shrink-0 rounded border"
+                />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                    {row.productName}{row.partName && <span className="text-slate-500 dark:text-slate-400"> — Peça: {row.partName}</span>}
+                    {row.comboLabel && <span className="text-violet-600 dark:text-violet-400"> — {row.comboLabel}</span>}
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Pedido {ORDER_CHANNEL_LABELS[row.channel]}
+                    {row.buyerOrPlatform ? ` · ${row.buyerOrPlatform}` : row.orderNumber ? ` · #${row.orderNumber}` : ' · sem comprador informado'}
+                  </p>
+                  {isPartial && (
+                    <div className="mt-1 flex items-center gap-2">
+                      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                        <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, (row.reservedQuantity / row.quantity) * 100)}%` }} />
+                      </div>
+                      <span className="text-xs text-slate-400 dark:text-slate-500">{row.reservedQuantity} de {row.quantity} reservado</span>
                     </div>
-                    <span className="text-xs text-slate-400 dark:text-slate-500">{row.reservedQuantity} de {row.quantity} reservado</span>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              </label>
               <div className="flex shrink-0 items-center gap-3">
                 <div className="text-right">
                   <p className="text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">{row.neededUnits} <span className="text-xs font-normal text-slate-400">falta produzir</span></p>
@@ -69,6 +138,14 @@ export function DemandQueuePanel({ rows }: { rows: OrderDemandRow[] }) {
           )
         })}
       </div>
+
+      <DemandBatchRegisterForm
+        open={batchOpen}
+        onOpenChange={(open) => { setBatchOpen(open); if (!open) selectNone() }}
+        selection={selection}
+        printers={printers}
+        filaments={filaments}
+      />
     </div>
   )
 }

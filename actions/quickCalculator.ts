@@ -133,11 +133,17 @@ async function getOrCreateAveragePrinter(): Promise<{ id: string } | null> {
   return { id: created.id }
 }
 
-// "Cadastrar como produto": persiste um Product simples de verdade a partir
-// do que a calculadora rápida já tem calculado -- mesmas tabelas que
-// createProduct (actions/products.ts) grava pra um produto simples, só que
-// a partir de um input já achatado (sem FormData/multi-peça), já que a
-// calculadora nunca lida com produto composto.
+// "Cadastrar como produto": persiste um Product de verdade a partir do que a
+// calculadora rápida já tem calculado -- mesmas tabelas que createProduct
+// (actions/products.ts) grava, só que a partir de um input já achatado (sem
+// FormData). Com 1 filamento só vira um Product simples, como sempre; com
+// 2+ componentes (impressão multi-material, ex.: corpo preto 15g + detalhe
+// verde 8g na mesma peça) vira um Product composto com uma ÚNICA ProductPart
+// multi-filamento (quantityPerUnit=1) -- mesmo caso degenerado que
+// lib/products.ts#productAutoAssembles já reconhece (peça que já sai pronta
+// da impressora, sem nada físico pra montar): sem insumo/acessório anexado,
+// actions/productionRuns.ts confirma a montagem sozinha a cada produção,
+// sem exigir clique manual em /assembly.
 export async function createProductFromQuickCalc(input: unknown): Promise<ActionResult & { productId?: string }> {
   const parsed = quickCalcProductSchema.safeParse(input)
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
@@ -150,18 +156,37 @@ export async function createProductFromQuickCalc(input: unknown): Promise<Action
     printerId = avgPrinter.id
   }
 
+  const isMultiFilament = data.filamentComponents.length > 1
+  const totalWeightGrams = data.filamentComponents.reduce((sum, c) => sum + c.weightGrams, 0)
+
   const product = await prisma.$transaction(async (tx) => {
     const created = await tx.product.create({
       data: {
         name: data.name,
         category: data.category,
+        isComposite: isMultiFilament,
         printerId: printerId!,
-        filamentId: data.filamentId,
-        weightGrams: data.weightGrams,
+        // Resumo derivado (CLAUDE.md "2.1 Produto composto") -- 1º
+        // componente/peso total, mesma convenção de deriveCompositeAggregate
+        // em actions/products.ts.
+        filamentId: data.filamentComponents[0].filamentId,
+        weightGrams: totalWeightGrams,
         printTimeHours: data.printTimeHours,
         laborTimeHours: data.laborTimeHours,
       },
     })
+    if (isMultiFilament) {
+      await tx.productPart.create({
+        data: {
+          productId: created.id,
+          name: data.name,
+          printerId: printerId!,
+          printTimeHours: data.printTimeHours,
+          quantityPerUnit: 1,
+          filamentComponents: { create: data.filamentComponents.map((f) => ({ filamentId: f.filamentId, weightGrams: f.weightGrams })) },
+        },
+      })
+    }
     for (const usage of data.supplyUsages) {
       await tx.productSupplyUsage.create({ data: { productId: created.id, supplyId: usage.id, quantity: usage.quantity } })
     }

@@ -15,6 +15,7 @@ import {
   type ProductionCostSnapshot,
   type GiftProductCostBreakdown,
 } from '@/lib/costing'
+import { deserializeColorChoices, serializeColorChoices } from '@/lib/reports'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
@@ -180,6 +181,7 @@ export async function createProduct(formData: FormData): Promise<ActionResult> {
             printerId: p.printerId,
             printTimeHours: p.printTimeHours,
             quantityPerUnit: p.quantityPerUnit,
+            fixedRecipe: p.fixedRecipe,
             filamentComponents: { create: p.filaments.map((f) => ({ filamentId: f.filamentId, weightGrams: f.weightGrams })) },
           },
         })
@@ -258,6 +260,7 @@ export async function updateProduct(id: string, formData: FormData): Promise<Act
             printerId: part.printerId,
             printTimeHours: part.printTimeHours,
             quantityPerUnit: part.quantityPerUnit,
+            fixedRecipe: part.fixedRecipe,
           }
           const filamentComponents = part.filaments.map((f) => ({ filamentId: f.filamentId, weightGrams: f.weightGrams }))
           if (part.id) {
@@ -324,6 +327,98 @@ export async function deleteProduct(id: string): Promise<ActionResult> {
   revalidatePath('/assembly')
   revalidatePath('/stock')
   return { success: true }
+}
+
+// Pedido do usuário: "copiar um anúncio" (produto na tela Produtos) --
+// clona a ficha técnica inteira (peças/componentes de filamento, insumos,
+// acessórios, acessório-por-cor, embalagens, produto-como-componente, e
+// Brinde quando isGift) num Product novo, pra cadastrar rápido algo quase
+// igual a um já existente (ex.: mesma caneca, estampa diferente) sem
+// preencher tudo nos formulários de novo. Nunca clona histórico
+// transacional (ProductionRun/ProductAssembly/Sale/fotos/Anúncios) --
+// aquilo pertence à produção/venda REAL de cada produto, não à ficha
+// técnica. suggestedPrice/marketplacePrice também ficam de fora (de
+// propósito, mesma regra do schema: só gravados por "Aplicar preço
+// calculado" explícito do usuário, nunca copiados/inventados).
+export async function duplicateProduct(id: string): Promise<ActionResult & { productId?: string }> {
+  const source = await prisma.product.findUnique({
+    where: { id },
+    include: {
+      parts: { include: { filamentComponents: true } },
+      supplyUsages: true,
+      accessoryUsages: true,
+      accessoryColorUsages: true,
+      packagingUsages: true,
+      componentUsages: true,
+      giftMaterials: true,
+      giftEquipment: true,
+    },
+  })
+  if (!source) return { success: false, error: 'Produto não encontrado.' }
+
+  const created = await prisma.$transaction(async (tx) => {
+    const clone = await tx.product.create({
+      data: {
+        name: `${source.name} (cópia)`,
+        category: source.category,
+        isComposite: source.isComposite,
+        printerId: source.printerId,
+        filamentId: source.filamentId,
+        weightGrams: source.weightGrams,
+        printTimeHours: source.printTimeHours,
+        laborTimeHours: source.laborTimeHours,
+        finishingType: source.finishingType,
+        usesGlue: source.usesGlue,
+        notes: source.notes,
+        isGift: source.isGift,
+        giftEnergyCostPerKwh: source.giftEnergyCostPerKwh,
+      },
+    })
+
+    for (const part of source.parts) {
+      await tx.productPart.create({
+        data: {
+          productId: clone.id,
+          name: part.name,
+          printerId: part.printerId,
+          printTimeHours: part.printTimeHours,
+          quantityPerUnit: part.quantityPerUnit,
+          fixedRecipe: part.fixedRecipe,
+          filamentComponents: { create: part.filamentComponents.map((f) => ({ filamentId: f.filamentId, weightGrams: f.weightGrams })) },
+        },
+      })
+    }
+    if (source.supplyUsages.length > 0) {
+      await tx.productSupplyUsage.createMany({ data: source.supplyUsages.map((u) => ({ productId: clone.id, supplyId: u.supplyId, quantity: u.quantity })) })
+    }
+    if (source.accessoryUsages.length > 0) {
+      await tx.productAccessoryUsage.createMany({ data: source.accessoryUsages.map((u) => ({ productId: clone.id, accessoryId: u.accessoryId, quantity: u.quantity })) })
+    }
+    if (source.accessoryColorUsages.length > 0) {
+      await tx.productAccessoryColorUsage.createMany({ data: source.accessoryColorUsages.map((u) => ({ productId: clone.id, colorComboKey: u.colorComboKey, accessoryId: u.accessoryId, quantity: u.quantity })) })
+    }
+    if (source.packagingUsages.length > 0) {
+      await tx.productPackagingUsage.createMany({ data: source.packagingUsages.map((u) => ({ productId: clone.id, packagingItemId: u.packagingItemId, quantity: u.quantity })) })
+    }
+    if (source.componentUsages.length > 0) {
+      await tx.productComponentUsage.createMany({ data: source.componentUsages.map((u) => ({ productId: clone.id, componentProductId: u.componentProductId, quantity: u.quantity })) })
+    }
+    if (source.giftMaterials.length > 0) {
+      await tx.productGiftMaterial.createMany({ data: source.giftMaterials.map((m) => ({ productId: clone.id, description: m.description, unitCost: m.unitCost })) })
+    }
+    if (source.giftEquipment.length > 0) {
+      await tx.productGiftEquipmentUsage.createMany({
+        data: source.giftEquipment.map((e) => ({ productId: clone.id, name: e.name, purchasePrice: e.purchasePrice, usefulLifeUses: e.usefulLifeUses, powerWatts: e.powerWatts, minutesPerUnit: e.minutesPerUnit })),
+      })
+    }
+
+    return clone
+  })
+
+  revalidatePath('/products')
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
+  return { success: true, productId: created.id }
 }
 
 // Melhoria "Produto-como-componente": custo médio de produção de UM
@@ -901,4 +996,112 @@ export async function applyProductPrice(
   })
   revalidatePath('/products')
   return { success: true }
+}
+
+export interface VariantHistoryEntry {
+  kind: 'Produzido' | 'Montado' | 'Entregue' | 'Devolvido' | 'Vendido' | 'Reservado'
+  date: string
+  quantity: number
+  detail: string
+}
+
+// Pedido do usuário "4 produzidos de um azul, cadê os outros?": VariantsModal
+// (/stock) só mostrava os totais atuais por variante (Disponível/Prontas p/
+// montar/Consignado/Vendido), sem nenhum jeito de ver o HISTÓRICO por trás
+// desses números -- impossível rastrear "produzi 4, só 1 foi montado e
+// entregue, cadê os outros 3" sem abrir o banco. "Ver detalhes" (nova linha
+// de ação em VariantsModal.tsx) chama isto sob demanda (mesmo padrão lazy de
+// getOrderablePartOptions) e devolve uma linha do tempo com TODOS os eventos
+// que tocam esta combinação exata de cor -- produção (peça impressa),
+// montagem, entrega/devolução de consignação e venda direta -- ordenados por
+// data, pra reconciliar visualmente onde cada unidade foi parar.
+//
+// `needsAssembly=false` (produto simples sem componente nenhum): comboKey é
+// o filamentId puro direto (convenção de getProductVariantBreakdown) --
+// produção é a ÚNICA fonte (nunca passa por ProductAssembly). `true`:
+// comboKey é o colorChoices inteiro serializado -- quebra em produção POR
+// PEÇA (cada entrada de `choices` que é uma ProductPart real ou a "peça
+// sintética" do próprio produto, nunca um acessório/componente-produto, que
+// não é impresso) + montagens cujo colorChoices bate EXATAMENTE com este
+// combo (serializeColorChoices permite comparação direta, mesma chave).
+export async function getVariantHistory(productId: string, comboKey: string, needsAssembly: boolean): Promise<VariantHistoryEntry[]> {
+  const entries: VariantHistoryEntry[] = []
+
+  if (!needsAssembly) {
+    const runs = await prisma.productionRun.findMany({
+      where: { productId, productPartId: null, filamentId: comboKey, status: { not: 'CANCELADA' } },
+      orderBy: { date: 'asc' },
+      select: { date: true, quantitySuccess: true },
+    })
+    for (const r of runs) {
+      if (r.quantitySuccess > 0) entries.push({ kind: 'Produzido', date: r.date.toISOString(), quantity: r.quantitySuccess, detail: 'produção' })
+    }
+  } else {
+    const choices = deserializeColorChoices(comboKey)
+    const parts = await prisma.productPart.findMany({ where: { productId }, select: { id: true, name: true } })
+    const partNameById = new Map(parts.map((p) => [p.id, p.name]))
+
+    for (const [key, rawValue] of Object.entries(choices)) {
+      const isPart = partNameById.has(key)
+      const isSyntheticProduct = key === productId
+      // Nem peça nem "peça sintética" -- é um acessório ou produto-como-
+      // componente (chave do próprio id dele), nunca impresso por aqui,
+      // sem produção pra listar.
+      if (!isPart && !isSyntheticProduct) continue
+      const filamentIds = rawValue.split(',')
+      const runs = await prisma.productionRun.findMany({
+        where: {
+          status: { not: 'CANCELADA' },
+          filamentId: { in: filamentIds },
+          ...(isSyntheticProduct ? { productId, productPartId: null } : { productPartId: key }),
+        },
+        orderBy: { date: 'asc' },
+        select: { date: true, quantitySuccess: true },
+      })
+      const label = isSyntheticProduct ? 'produção' : `peça ${partNameById.get(key)}`
+      for (const r of runs) {
+        if (r.quantitySuccess > 0) entries.push({ kind: 'Produzido', date: r.date.toISOString(), quantity: r.quantitySuccess, detail: label })
+      }
+    }
+
+    const assemblies = await prisma.productAssembly.findMany({ where: { productId }, orderBy: { assembledAt: 'asc' } })
+    for (const a of assemblies) {
+      const aChoices = a.colorChoices as Record<string, string> | null
+      if (!aChoices) continue
+      if (serializeColorChoices(aChoices) === comboKey) {
+        entries.push({ kind: 'Montado', date: a.assembledAt.toISOString(), quantity: a.quantity, detail: 'montagem' })
+      }
+    }
+  }
+
+  const [deliveries, sales, reservedItems] = await Promise.all([
+    prisma.consignmentDelivery.findMany({ where: { productId, colorComboKey: comboKey }, include: { partner: { select: { name: true } } }, orderBy: { deliveryDate: 'asc' } }),
+    prisma.sale.findMany({ where: { productId, colorComboKey: comboKey }, orderBy: { saleDate: 'asc' } }),
+    // Pedido do usuário "cadê os outros 3?" (resolvido: estavam
+    // reservados pra um pedido em aberto) -- reserva nunca foi um evento
+    // gravado (OrderItem.reservedQuantity é recalculado do zero por
+    // reconcileOrderReservations toda vez que o estoque muda, nunca uma
+    // linha de histórico própria), então sem isso aqui o "Disponível"
+    // podia cair pra 0 sem NENHUMA linha do histórico explicando por quê.
+    // `updatedAt` é a melhor aproximação de "quando essa reserva foi
+    // confirmada" (não existe uma data própria de reserva).
+    prisma.orderItem.findMany({
+      where: { productId, colorComboKey: comboKey, reservedQuantity: { gt: 0 }, status: { notIn: ['ENTREGUE', 'CANCELADO'] } },
+      include: { order: { select: { orderNumber: true, buyerOrPlatform: true } } },
+      orderBy: { updatedAt: 'asc' },
+    }),
+  ])
+  for (const d of deliveries) {
+    entries.push({ kind: 'Entregue', date: d.deliveryDate.toISOString(), quantity: d.quantityDelivered, detail: d.partner.name })
+    if (d.returnedQuantity > 0) entries.push({ kind: 'Devolvido', date: d.deliveryDate.toISOString(), quantity: d.returnedQuantity, detail: d.partner.name })
+  }
+  for (const s of sales) {
+    entries.push({ kind: 'Vendido', date: s.saleDate.toISOString(), quantity: s.quantity, detail: s.channel })
+  }
+  for (const i of reservedItems) {
+    const label = i.order.buyerOrPlatform ?? (i.order.orderNumber ? `#${i.order.orderNumber}` : 'pedido sem comprador informado')
+    entries.push({ kind: 'Reservado', date: i.updatedAt.toISOString(), quantity: i.reservedQuantity, detail: label })
+  }
+
+  return entries.sort((a, b) => a.date.localeCompare(b.date))
 }

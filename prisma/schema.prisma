@@ -520,6 +520,19 @@ model ProductPart {
   printTimeHours  Decimal               @db.Decimal(10, 3)
   // Quantidade dessa peça necessária pra montar 1 unidade do produto final.
   quantityPerUnit Int                   @default(1)
+  // Pedido do usuário "receita fixa em qualquer peça": até aqui, "receita
+  // fixa" (cor não escolhível em "Montar variação personalizada",
+  // actions/orders.ts#getOrderablePartOptions) era 100% derivado de
+  // `filamentComponents.length >= 2` -- peça de 1 filamento só sempre
+  // virava "cor variável". Este flag deixa FIXAR a cor de uma peça de 1
+  // filamento também (ex.: peça estruturalmente sempre preta, mesmo não
+  // sendo multi-material); getOrderablePartOptions passa a tratar como
+  // fixa quando `fixedRecipe || filamentComponents.length >= 2` -- peça
+  // de 2+ componentes continua SEMPRE fixa independente deste valor (não
+  // dá pra "destravar" isso, é estrutural). Não afeta a escolha de
+  // filamento NA PRODUÇÃO (FilamentEditor já é sempre livre, ver
+  // ProductionRunBatchForm.tsx) -- só o fluxo de encomenda.
+  fixedRecipe     Boolean               @default(false)
   createdAt       DateTime              @default(now())
   updatedAt       DateTime              @updatedAt
   productionRuns  ProductionRun[]
@@ -1157,6 +1170,13 @@ enum OrderChannel {
   DIRETA
   SHOPEE
   MERCADO_LIVRE
+  // Pedido do usuário "criar pedidos de encomendas de consignados
+  // também": ao chegar em ENTREGUE, updateOrderItemStatus cria uma
+  // ConsignmentDelivery em vez de uma Sale (ver OrderItem.consignmentDeliveryId
+  // abaixo) -- o motor de reserva/fila de demanda (lib/orderReservations.ts,
+  // getOrderDemandQueue) já opera só por (productId, colorComboKey), nunca
+  // por canal, então nenhuma mudança foi necessária ali.
+  CONSIGNADO
 }
 
 // Melhoria "Pedidos com reserva de estoque": RECEBIDO/EM_PRODUCAO/PRONTO/
@@ -1207,10 +1227,37 @@ model Order {
   buyerOrPlatform String?
   orderNumber     String?
   notes           String?
+  // Pedido do usuário "criar pedidos de encomendas de consignados
+  // também": obrigatório só quando channel=CONSIGNADO (checado no Zod,
+  // não aqui -- nulo pra todo pedido Direta/Shopee/Mercado Livre).
+  consignmentPartnerId String?
+  consignmentPartner   ConsignmentPartner? @relation(fields: [consignmentPartnerId], references: [id])
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   items           OrderItem[]
   inboxEntries    MarketplaceOrderInbox[]
+  // Redesign "Pedidos": 1 linha por sessão de edição salva (não 1 por
+  // campo mudado) -- ver OrderEditLog.
+  editLogs        OrderEditLog[]
+}
+
+// Redesign "Pedidos" §"selo Editado + histórico de alterações": cada
+// clique em "Salvar alterações" no drawer de detalhe grava 1 linha aqui,
+// mesmo que a sessão tenha mudado vários campos/itens de uma vez --
+// nunca 1 linha por campo (exatamente o modelo que o próprio pedido do
+// usuário sugeriu: "historico { quando, usuario, descricao } // 1
+// entrada por 'Salvar alterações'"). `changes` é um array já formatado
+// pro "o que mudou" (usado tanto no "↳" da lista quanto na timeline do
+// drawer) -- mesmo espírito de Json congelado que costSnapshot já usa
+// em ProductionRun/Sale, nunca recalculado depois de gravado.
+model OrderEditLog {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  changes   Json     // Array<{ label: string, from: string, to: string }>
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
 }
 
 // 1 produto+cor+quantidade+preço pedido, com seu próprio ciclo de vida
@@ -1242,6 +1289,12 @@ model OrderItem {
   status          OrderStatus  @default(AGUARDANDO_PRODUCAO)
   saleId          String?      @unique
   sale            Sale?        @relation(fields: [saleId], references: [id])
+  // Mesmo papel de saleId/sale acima, pro pedido canal CONSIGNADO --
+  // ao chegar em ENTREGUE, updateOrderItemStatus cria a entrega aqui em
+  // vez da Sale (os dois são mutuamente exclusivos: um item nunca tem os
+  // dois preenchidos, decidido pelo Order.channel do pedido).
+  consignmentDeliveryId String?             @unique
+  consignmentDelivery   ConsignmentDelivery? @relation(fields: [consignmentDeliveryId], references: [id])
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   // Toda vez que este item PERDEU peça reservada pra outro mais urgente
@@ -1289,6 +1342,9 @@ model ConsignmentPartner {
   active                   Boolean               @default(true)
   createdAt                DateTime              @default(now())
   deliveries               ConsignmentDelivery[]
+  // Pedido do usuário "criar pedidos de encomendas de consignados
+  // também" -- ver Order.consignmentPartnerId.
+  orders                   Order[]
 }
 
 model ConsignmentDelivery {
@@ -1342,6 +1398,12 @@ model ConsignmentDelivery {
   // só some da tela quando já está devolvida).
   returnedQuantity  Int                     @default(0)
   saleReports       ConsignmentSaleReport[]
+  // Pedido do usuário "criar pedidos de encomendas de consignados
+  // também" -- lado oposto de OrderItem.consignmentDeliveryId (1:1,
+  // preenchido só quando esta entrega foi criada automaticamente por
+  // updateOrderItemStatus ao chegar em ENTREGUE, nunca por uma entrega
+  // registrada manualmente em Consignação > Entregas).
+  orderItem         OrderItem?
 }
 
 model ConsignmentSaleReport {

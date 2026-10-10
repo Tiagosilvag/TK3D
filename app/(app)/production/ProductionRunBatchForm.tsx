@@ -8,6 +8,7 @@ import { buildPlateAutofill } from '@/lib/bambu/autofill'
 import { allocatePlatePrintTime } from '@/lib/costing'
 import { WASTE_REASON_LABELS } from '@/lib/format'
 import { todayInBrasiliaString as today } from '@/lib/timezone'
+import { failedFor, plannedChangePatch, successChangePatch, failedChangePatch, type FilamentComponentRow } from '@/lib/productionRunRow'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
 import { FilamentSelect } from '@/components/FilamentSelect'
@@ -32,12 +33,6 @@ type PrinterOption = { id: string; name: string; costPerHour: number }
 // FilamentSelect.tsx) já usado em ProductForm.tsx -- <select> nativo não
 // tem como mostrar a bolinha de cor dentro de <option>.
 type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
-
-interface FilamentComponentRow {
-  filamentId: string
-  weightGramsPerUnit: string
-  gramsWasted: string
-}
 
 // Melhoria "Produção" §3: uma "linha" do modal -- uma peça marcável do
 // produto composto, ou a única linha implícita de um produto simples (sem
@@ -115,60 +110,12 @@ function buildRowsFromParts(parts: ProductProductionPartDefault[], globalQty: st
   }))
 }
 
-function failedFor(row: { quantityPlanned: string; quantitySuccess: string }): number {
-  const planned = parseInt(row.quantityPlanned, 10) || 0
-  const success = parseInt(row.quantitySuccess, 10) || 0
-  return Math.max(0, planned - success)
-}
-
-function clampInt(v: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, v))
-}
-
-// Melhoria "Registrar produção": Planejada/Sucesso/Falhas totalmente
-// interligados -- os 3 helpers abaixo são a única fonte de verdade pra
-// recalcular os outros dois campos quando um muda, reaproveitados tanto
-// pelas linhas do modo Individual (RunRow) quanto pelos itens da Plate
-// (PlateItemRow, mesmo shape de quantityPlanned/quantitySuccess/filaments).
-// Falhas nunca vira um campo armazenado à parte -- continua sendo só uma
-// VIEW alternativa de quantitySuccess (mesmo princípio que failedFor() já
-// usava), só que agora editável.
-function suggestWaste<T extends { filaments: FilamentComponentRow[] }>(row: T, failed: number): Partial<T> {
-  if (row.filaments.length !== 1) return {}
-  const weightPerUnit = parseFloat(row.filaments[0].weightGramsPerUnit) || 0
-  return { filaments: [{ ...row.filaments[0], gramsWasted: String(+(failed * weightPerUnit).toFixed(2)) }] } as Partial<T>
-}
-
-function plannedChangePatch<T extends { quantityPlanned: string; quantitySuccess: string; filaments: FilamentComponentRow[] }>(
-  row: T,
-  newPlannedRaw: string,
-): Partial<T> {
-  const newPlanned = Math.max(0, parseInt(newPlannedRaw, 10) || 0)
-  const failed = Math.min(failedFor(row), newPlanned)
-  const success = newPlanned - failed
-  return { quantityPlanned: String(newPlanned), quantitySuccess: String(success), ...suggestWaste(row, failed) } as Partial<T>
-}
-
-function successChangePatch<T extends { quantityPlanned: string; filaments: FilamentComponentRow[] }>(row: T, newSuccessRaw: string): Partial<T> {
-  const planned = parseInt(row.quantityPlanned, 10) || 0
-  const success = clampInt(parseInt(newSuccessRaw, 10) || 0, 0, planned)
-  const failed = planned - success
-  return { quantitySuccess: String(success), ...suggestWaste(row, failed) } as Partial<T>
-}
-
-function failedChangePatch<T extends { quantityPlanned: string; filaments: FilamentComponentRow[] }>(row: T, newFailedRaw: string): Partial<T> {
-  const planned = parseInt(row.quantityPlanned, 10) || 0
-  const failed = clampInt(parseInt(newFailedRaw, 10) || 0, 0, planned)
-  const success = planned - failed
-  return { quantitySuccess: String(success), ...suggestWaste(row, failed) } as Partial<T>
-}
-
 // Melhoria "Produção" (reformulação Plate) §3: editor de filamento(s) de
 // uma peça, compartilhado entre linha individual e item de Plate --
 // mostra R$/g e Custo por cor (gramas × R$/g), além do peso já existente.
 // Peça de 1 componente usa campos inline (mesma UX de antes, só com as
 // duas colunas novas); peça multi-filamento vira uma tabela de verdade.
-function FilamentEditor({
+export function FilamentEditor({
   filaments,
   filamentOptions,
   onChange,

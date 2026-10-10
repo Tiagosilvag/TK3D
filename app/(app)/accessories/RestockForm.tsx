@@ -1,5 +1,5 @@
 'use client'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { registerAccessoryPurchase } from '@/actions/accessories'
 import { formatCurrency } from '@/lib/format'
@@ -11,16 +11,42 @@ import { SubmitButton } from '@/components/SubmitButton'
 // linha da tabela -- a tabela ficava larga demais com 3 campos + botão por
 // item. Continua registrando uma nova AccessoryPurchase, recalculando
 // avgUnitCost como média ponderada server-side (registerAccessoryPurchase).
-export function RestockForm({ accessoryId, accessoryName, className = 'text-xs text-violet-600 hover:underline dark:text-violet-400' }: { accessoryId: string; accessoryName: string; className?: string }) {
+export function RestockForm({
+  accessoryId,
+  accessoryName,
+  className = 'text-xs text-violet-600 hover:underline dark:text-violet-400',
+  autoOpen = false,
+}: {
+  accessoryId: string
+  accessoryName: string
+  className?: string
+  // Pedido do usuário "aviso de acessório insuficiente em Produção com link
+  // direto pra ajustar o estoque": AccessoriesExplorer/page.tsx abrem este
+  // dialog sozinhos quando a URL chega com ?restock=<id> (mesmo padrão de
+  // ?editId= já usado em todo catálogo, mas pra um dialog em vez do form de
+  // edição) -- sem isso, o link só levaria até a tela, sem abrir "Repor
+  // estoque" (teria que achar a linha e clicar de novo).
+  autoOpen?: boolean
+}) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [quantity, setQuantity] = useState('')
   const [totalCost, setTotalCost] = useState('')
 
+  useEffect(() => {
+    if (autoOpen) dialogRef.current?.showModal()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só na montagem inicial, autoOpen nunca muda depois (componente "fantasma" remonta via key quando o id muda)
+  }, [])
+
+  function closeAutoOpened() {
+    dialogRef.current?.close()
+    if (autoOpen) router.push('/accessories')
+  }
+
   async function action(formData: FormData) {
     const result = await registerAccessoryPurchase(formData)
     if (result.success) {
-      dialogRef.current?.close()
+      closeAutoOpened()
       setQuantity('')
       setTotalCost('')
       router.refresh()
@@ -82,7 +108,7 @@ export function RestockForm({ accessoryId, accessoryName, className = 'text-xs t
             <p className="text-xs text-slate-500 dark:text-slate-400">Custo por unidade: {formatCurrency(unitCost)}</p>
           )}
           <div className="mt-2 flex items-center justify-end gap-3">
-            <button type="button" onClick={() => dialogRef.current?.close()} className="text-sm text-slate-500 hover:underline dark:text-slate-400">
+            <button type="button" onClick={closeAutoOpened} className="text-sm text-slate-500 hover:underline dark:text-slate-400">
               Cancelar
             </button>
             <SubmitButton pendingLabel="Salvando…">Repor</SubmitButton>

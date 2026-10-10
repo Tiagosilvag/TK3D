@@ -3,8 +3,9 @@ import { prisma } from '@/lib/prisma'
 import { EditProductionRunForm } from './EditProductionRunForm'
 import { ProductionRunsExplorer, type ProductionRunRow } from './ProductionRunsExplorer'
 import { getProductionByProduct, getPlates } from '@/actions/productionRuns'
-import { getOrderDemandQueue } from '@/actions/orders'
+import { getOrderDemandQueue, getAccessoryDemandQueue } from '@/actions/orders'
 import { DemandQueuePanel } from './DemandQueuePanel'
+import { AccessoryDemandPanel } from './AccessoryDemandPanel'
 import type { ProductionCostSnapshot } from '@/lib/costing'
 import { calculatePrinterDepreciationCostPerHour } from '@/lib/costing'
 import { formatCurrency, getProductionStatusBadge } from '@/lib/format'
@@ -47,11 +48,15 @@ export default async function ProductionPage({
     ...(status ? { status: status as ProductionStatus } : {}),
   }
 
-  const [runRecords, totalRuns, summaryRuns, products, printers, filamentRecords, editingRunRecord, byProduct, plates, demandQueue] = await Promise.all([
+  const [runRecords, totalRuns, summaryRuns, products, printers, filamentRecords, editingRunRecord, byProduct, plates, demandQueue, accessoryDemand] = await Promise.all([
     prisma.productionRun.findMany({
       where: runsWhere,
       orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
-      include: { product: true, productPart: true },
+      // Pedido do usuário "modal pra ver a cor em Produção": a lista (Lista
+      // tab) nunca mostrava a cor usada em cada run -- só "Por produto"
+      // tinha isso. filament/filamentUsages aqui alimentam o modal "Ver
+      // cor" por linha (ProductionRunsExplorer.tsx).
+      include: { product: true, productPart: true, filament: true, filamentUsages: { include: { filament: true } } },
       skip: (currentPage - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
     }),
@@ -91,6 +96,7 @@ export default async function ProductionPage({
     getProductionByProduct(productId),
     getPlates(),
     getOrderDemandQueue(),
+    getAccessoryDemandQueue(),
   ])
 
   const totalPages = Math.max(1, Math.ceil(totalRuns / PAGE_SIZE))
@@ -209,6 +215,18 @@ export default async function ProductionPage({
   // real, exibida como link "Ver Plate" na explorer.
   const runs: ProductionRunRow[] = runRecords.map((run) => {
     const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+    // Pedido do usuário "modal pra ver a cor em Produção": peça de
+    // multi-filamento usa filamentUsages (cada componente real, ver
+    // CLAUDE.md -- os campos escalares filamentId/gramsUsed são só o 1º
+    // componente, mantidos por compatibilidade); 1 filamento só usa o
+    // campo escalar direto. Mesma convenção de label que getProductionByProduct
+    // já usa ("Marca Cor (Material)", marca inclusa pra não confundir
+    // duas cores com mesmo nome de fabricantes diferentes).
+    const colorBreakdown = run.filamentUsages.map((u) => ({
+      label: `${u.filament.manufacturer} ${u.filament.colorName} (${u.filament.material})`,
+      colorHex: u.filament.colorHex,
+      gramsUsed: u.gramsUsed.toNumber(),
+    }))
     return {
       id: run.id,
       date: run.date.toISOString(),
@@ -220,6 +238,9 @@ export default async function ProductionPage({
       status: run.status,
       cost: snapshot ? snapshot.total : null,
       cancelReason: run.cancelReason,
+      filamentLabel: `${run.filament.manufacturer} ${run.filament.colorName} (${run.filament.material})`,
+      colorHex: run.filament.colorHex,
+      colorBreakdown,
     }
   })
 
@@ -229,6 +250,16 @@ export default async function ProductionPage({
     pricePerGram: f.avgUnitCostPerGram.toNumber(),
     colorHex: f.colorHex,
   }))
+
+  const printerOptions = printers.map((p) => {
+    const purchasePrice = p.purchasePrice.toNumber()
+    const depreciationHours = p.depreciationHours.toNumber()
+    const costPerHour =
+      calculatePrinterDepreciationCostPerHour({ purchasePrice, depreciationHours }) +
+      p.maintenanceCostPerHour.toNumber() +
+      p.avgPowerConsumptionKwh.toNumber() * p.energyCostPerKwh.toNumber()
+    return { id: p.id, name: p.name, costPerHour }
+  })
 
   return (
     <div className="tk-page">
@@ -249,7 +280,8 @@ export default async function ProductionPage({
         </div>
       </div>
 
-      <DemandQueuePanel rows={demandQueue.productionRows} />
+      <DemandQueuePanel rows={demandQueue.productionRows} printers={printerOptions} filaments={filaments} />
+      <AccessoryDemandPanel rows={accessoryDemand} />
 
       {/* Melhoria "Produção" §1: um filtro único (Produto + Impressora +
           Período), em vez de dois blocos separados disputando espaço com o
@@ -324,15 +356,7 @@ export default async function ProductionPage({
         newRunQty={newRunQty ? parseInt(newRunQty, 10) || undefined : undefined}
         newRunFilamentId={newRunFilamentId}
         products={products.map((p) => ({ id: p.id, name: p.name, category: p.category }))}
-        printers={printers.map((p) => {
-          const purchasePrice = p.purchasePrice.toNumber()
-          const depreciationHours = p.depreciationHours.toNumber()
-          const costPerHour =
-            calculatePrinterDepreciationCostPerHour({ purchasePrice, depreciationHours }) +
-            p.maintenanceCostPerHour.toNumber() +
-            p.avgPowerConsumptionKwh.toNumber() * p.energyCostPerKwh.toNumber()
-          return { id: p.id, name: p.name, costPerHour }
-        })}
+        printers={printerOptions}
         filaments={filaments}
       />
 

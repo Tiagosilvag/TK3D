@@ -4,6 +4,59 @@ import { isOutsideDialogClick } from '@/lib/dialog'
 import { ChipDots } from '@/components/VariantChip'
 import type { StockRow, StockVariantRow } from './StockExplorer'
 import { EditVariantColorsForm } from './EditVariantColorsForm'
+import { getVariantHistory, type VariantHistoryEntry } from '@/actions/products'
+
+const HISTORY_KIND_CLASS: Record<VariantHistoryEntry['kind'], string> = {
+  Produzido: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300',
+  Montado: 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300',
+  Entregue: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+  Devolvido: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+  Vendido: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+  // Pedido do usuário "cadê os outros 3?" -- resolvido: estavam reservados
+  // pra um pedido em aberto, não sumidos. Laranja: nem "disponível"
+  // (verde-ish em outras telas) nem "faltando" (âmbar de aviso) -- é
+  // estoque físico que já tem dono, categoria própria.
+  Reservado: 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300',
+}
+
+// Pedido do usuário "produzi 4 de um azul, cadê os outros 3?": os totais
+// (Disponível/Prontas p/ montar/Consignado/Vendido) nunca mostravam o
+// CAMINHO que cada unidade percorreu -- só dava pra reconciliar abrindo o
+// banco. Busca sob demanda (mesmo padrão lazy de CustomVariantPicker) a
+// linha do tempo completa desta combinação exata de cor (getVariantHistory)
+// e lista cada evento -- produção, montagem, entrega/devolução,
+// venda -- em ordem cronológica, pra responder "onde foi parar" sem
+// precisar de acesso a banco nenhum.
+function VariantHistoryPanel({ productId, comboKey, needsAssembly }: { productId: string; comboKey: string; needsAssembly: boolean }) {
+  const [entries, setEntries] = useState<VariantHistoryEntry[] | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    getVariantHistory(productId, comboKey, needsAssembly).then((result) => {
+      if (!cancelled) { setEntries(result); setLoading(false) }
+    })
+    return () => { cancelled = true }
+  }, [productId, comboKey, needsAssembly])
+
+  if (loading) return <p className="px-2 py-3 text-xs text-slate-400 dark:text-slate-500">Carregando histórico…</p>
+  if (!entries || entries.length === 0) {
+    return <p className="px-2 py-3 text-xs text-slate-400 dark:text-slate-500">Nenhum evento registrado pra esta combinação de cor ainda.</p>
+  }
+  return (
+    <div className="space-y-1 px-2 py-3">
+      {entries.map((e, i) => (
+        <div key={i} className="flex items-center gap-2 text-xs">
+          <span className="w-20 shrink-0 text-slate-400 dark:text-slate-500">{new Date(e.date).toLocaleDateString('pt-BR')}</span>
+          <span className={`shrink-0 rounded-full px-2 py-0.5 font-medium ${HISTORY_KIND_CLASS[e.kind]}`}>{e.kind}</span>
+          <span className="font-medium tabular-nums text-slate-900 dark:text-slate-100">{e.quantity}</span>
+          <span className="truncate text-slate-500 dark:text-slate-400">{e.detail}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 // Melhoria "Modal de variações -- matriz por peça": produto composto virou
 // uma tabela com 1 coluna fixa por peça (Base/Tampa/Mosquetão/Corrente...)
@@ -102,6 +155,11 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
   // <dialog> aninhado dentro deste (mesmo cuidado já tomado em
   // ComponentCategoryCard, ver seu comentário sobre o bug de stacking).
   const [editingKey, setEditingKey] = useState<string | null>(null)
+  // Pedido do usuário "cadê os outros produzidos": qual variante tem o
+  // histórico (VariantHistoryPanel) aberto agora -- igual editingKey, mas
+  // os dois são independentes (nunca os dois abertos na mesma linha ao
+  // mesmo tempo, só por clareza visual, não por limitação técnica).
+  const [historyKey, setHistoryKey] = useState<string | null>(null)
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -115,6 +173,7 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
 
   useEffect(() => {
     setEditingKey(null)
+    setHistoryKey(null)
   }, [product])
 
   // Melhoria "Modal de variações -- matriz por peça": 1 coluna por nome de
@@ -191,13 +250,20 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
                       <td className={`text-center tabular-nums ${NUMERIC_DIVIDER} ${zeroableClass(v.readyToAssemble, 'text-blue-600 dark:text-blue-400')}`}>{v.readyToAssemble ?? '—'}</td>
                       <td className={`text-center tabular-nums ${NUMERIC_DIVIDER} ${zeroableClass(v.consignado, 'text-violet-600 dark:text-violet-400')}`}>{v.consignado}</td>
                       <td className={`text-center tabular-nums ${NUMERIC_DIVIDER} ${zeroableClass(v.sold, 'text-slate-500 dark:text-slate-400')}`}>{v.sold}</td>
-                      <td className="text-right">
+                      <td className="whitespace-nowrap text-right">
                         <button
                           type="button"
-                          onClick={() => setEditingKey(editingKey === v.key ? null : v.key)}
+                          onClick={() => { setHistoryKey(null); setEditingKey(editingKey === v.key ? null : v.key) }}
                           className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400"
                         >
                           Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setEditingKey(null); setHistoryKey(historyKey === v.key ? null : v.key) }}
+                          className="ml-3 text-xs font-medium text-violet-600 hover:underline dark:text-violet-400"
+                        >
+                          Ver detalhes
                         </button>
                       </td>
                     </tr>
@@ -217,6 +283,13 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
                             // dado fresco na próxima vez.
                             onSaved={onClose}
                           />
+                        </td>
+                      </tr>
+                    )}
+                    {historyKey === v.key && (
+                      <tr className="bg-slate-50 dark:bg-slate-800/40">
+                        <td colSpan={totalColumns} className="px-2">
+                          <VariantHistoryPanel productId={product.productId} comboKey={v.key} needsAssembly={product.needsAssembly} />
                         </td>
                       </tr>
                     )}

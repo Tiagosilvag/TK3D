@@ -394,6 +394,22 @@ export interface VariantAttr {
   // (ex.: "Lavanda + Roxo") -- só os 2 primeiros são usados na bolinha
   // dupla da UI, mesmo limite do protótipo original.
   colorHexes: string[]
+  // Redesign "Vendas": `value` acima já vem como "Marca Cor (Material)"
+  // (ou "Marca Cor1 (Mat1) + Marca Cor2 (Mat2)" pra combo) -- ótimo pro
+  // tooltip completo, longo demais pro chip compacto da lista. `shortValue`
+  // é só o(s) nome(s) de cor, sem marca (ex. "Vermelho" ou "Vermelho +
+  // Branco"); `material` é o material (PLA/PETG) só quando a peça usa 1
+  // filamento só -- combo de 2+ filamentos (podem ser materiais
+  // diferentes) ou acessório (sem material) ficam com `material: null`.
+  shortValue: string
+  material: string | null
+  // Redesign "Variação de peças em Pedidos": `colorHexes`/`shortValue` são
+  // arrays PARALELOS mas não pareados (ex. hex[0] pode não ser a cor de
+  // shortValue.split(' + ')[0] se algum filamento não tiver hex) -- `colors`
+  // é a versão pareada, 1 elemento por filamento/acessório do combo, na
+  // ordem do cadastro, pro componente VariacaoPecas renderizar bolinha+nome
+  // intercalados sem depender de zipar dois arrays separados.
+  colors: { hex: string | null; name: string }[]
 }
 
 const VARIANT_ATTR_TIER_RANK: Record<VariantAttrTier, number> = { produto: 0, complemento: 1, acessorio: 2 }
@@ -468,7 +484,15 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
           // Produto simples sem componente: a única variação é a cor dele
           // mesmo -- sempre hierarquia "produto" (é o produto em si, não um
           // complemento nem um acessório aplicado).
-          attrs: [{ name: 'Cor', value: label, tier: 'produto' as const, colorHexes: f?.colorHex ? [f.colorHex] : [] }],
+          attrs: [{
+            name: 'Cor',
+            value: label,
+            tier: 'produto' as const,
+            colorHexes: f?.colorHex ? [f.colorHex] : [],
+            shortValue: f?.colorName ?? label,
+            material: f?.material ?? null,
+            colors: f ? [{ hex: f.colorHex ?? null, name: f.colorName }] : [],
+          }],
           filamentIds: [r.filamentId],
         }
       })
@@ -544,6 +568,27 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
     return rawKey.split(',').map((id) => filamentById.get(id)?.colorHex).filter((h): h is string => Boolean(h))
   }
 
+  // Redesign "Vendas": versão curta de filamentComboLabel -- só os nomes
+  // de cor (sem marca), pro chip compacto da lista. `material` só vem
+  // preenchido pra combo de 1 filamento só (2+ pode ser material
+  // diferente por componente, não dá pra resumir num texto só).
+  function filamentComboShort(rawKey: string): { shortValue: string; material: string | null } {
+    const ids = rawKey.split(',')
+    const shortValue = ids.map((id) => filamentById.get(id)?.colorName ?? id).join(' + ')
+    const material = ids.length === 1 ? (filamentById.get(ids[0])?.material ?? null) : null
+    return { shortValue, material }
+  }
+
+  // Redesign "Variação de peças em Pedidos": versão pareada de
+  // filamentComboHexes/filamentComboShort -- 1 elemento por filamento do
+  // combo, na ordem do cadastro (ver VariantAttr.colors acima).
+  function filamentComboColors(rawKey: string): { hex: string | null; name: string }[] {
+    return rawKey.split(',').map((id) => {
+      const f = filamentById.get(id)
+      return { hex: f?.colorHex ?? null, name: f?.colorName ?? id }
+    })
+  }
+
   // Resolve UM par (choiceKey, rawKey) de colorChoices na sua fonte
   // estrutural -- ProductPart (peça), Product (componente) ou Accessory
   // (acessório com cor variável) -- usada tanto pra montar `label` (texto
@@ -553,9 +598,9 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
   // componente/acessório.
   function resolveChoiceAttr(choiceKey: string, rawKey: string): VariantAttr {
     const partName = partNameById.get(choiceKey)
-    if (partName) return { name: partName, value: filamentComboLabel(rawKey), tier: 'produto', colorHexes: filamentComboHexes(rawKey) }
+    if (partName) return { name: partName, value: filamentComboLabel(rawKey), tier: 'produto', colorHexes: filamentComboHexes(rawKey), ...filamentComboShort(rawKey), colors: filamentComboColors(rawKey) }
     const componentName = componentProductNameById.get(choiceKey)
-    if (componentName) return { name: componentName, value: filamentComboLabel(rawKey), tier: 'complemento', colorHexes: filamentComboHexes(rawKey) }
+    if (componentName) return { name: componentName, value: filamentComboLabel(rawKey), tier: 'complemento', colorHexes: filamentComboHexes(rawKey), ...filamentComboShort(rawKey), colors: filamentComboColors(rawKey) }
     const chosenAccessory = accessoryById.get(rawKey)
     if (chosenAccessory) {
       return {
@@ -563,9 +608,14 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
         value: chosenAccessory.colorName ?? '',
         tier: 'acessorio',
         colorHexes: chosenAccessory.colorHex ? [chosenAccessory.colorHex] : [],
+        // Acessório não tem material (PLA/PETG é coisa de filamento) --
+        // shortValue é a própria cor, já curta (sem marca).
+        shortValue: chosenAccessory.colorName ?? '',
+        material: null,
+        colors: chosenAccessory.colorName ? [{ hex: chosenAccessory.colorHex ?? null, name: chosenAccessory.colorName }] : [],
       }
     }
-    return { name: '', value: filamentComboLabel(rawKey), tier: 'complemento', colorHexes: filamentComboHexes(rawKey) }
+    return { name: '', value: filamentComboLabel(rawKey), tier: 'complemento', colorHexes: filamentComboHexes(rawKey), ...filamentComboShort(rawKey), colors: filamentComboColors(rawKey) }
   }
 
   function attrToLegacyLabel(attr: VariantAttr): string {

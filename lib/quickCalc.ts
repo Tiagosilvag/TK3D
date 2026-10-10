@@ -6,9 +6,17 @@
 // é sempre a soma direta de todos os termos, pensada pra responder rápido
 // "quanto custa fazer isso", não pra virar o custo definitivo de um produto
 // cadastrado (que continua passando por lib/costing.ts normalmente).
-export interface QuickCalcInput {
+// Melhoria "Calculadora rápida multi-filamento": impressão multi-material
+// (ex.: corpo preto 15g + detalhe verde 8g na mesma peça, ver ProductPart/
+// ProductPartFilament no schema) precisa de 1+ componentes de filamento, não
+// só um peso/preço único -- filamentCost vira a soma de cada componente.
+export interface QuickCalcFilamentComponent {
   weightGrams: number
-  filamentPricePerGram: number
+  pricePerGram: number
+}
+
+export interface QuickCalcInput {
+  filamentComponents: QuickCalcFilamentComponent[]
   printTimeHours: number
   printerCostPerHour: number
   suppliesAndAccessoriesCost: number
@@ -25,7 +33,7 @@ export interface QuickCalcBreakdown {
 }
 
 export function calculateQuickEstimate(input: QuickCalcInput): QuickCalcBreakdown {
-  const filamentCost = input.weightGrams * input.filamentPricePerGram
+  const filamentCost = input.filamentComponents.reduce((sum, c) => sum + c.weightGrams * c.pricePerGram, 0)
   const printerCost = input.printTimeHours * input.printerCostPerHour
   const laborCost = input.laborTimeHours * input.laborCostPerHour
   return {
