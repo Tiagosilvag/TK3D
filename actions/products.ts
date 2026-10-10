@@ -999,7 +999,7 @@ export async function applyProductPrice(
 }
 
 export interface VariantHistoryEntry {
-  kind: 'Produzido' | 'Montado' | 'Entregue' | 'Devolvido' | 'Vendido'
+  kind: 'Produzido' | 'Montado' | 'Entregue' | 'Devolvido' | 'Vendido' | 'Reservado'
   date: string
   quantity: number
   detail: string
@@ -1074,9 +1074,22 @@ export async function getVariantHistory(productId: string, comboKey: string, nee
     }
   }
 
-  const [deliveries, sales] = await Promise.all([
+  const [deliveries, sales, reservedItems] = await Promise.all([
     prisma.consignmentDelivery.findMany({ where: { productId, colorComboKey: comboKey }, include: { partner: { select: { name: true } } }, orderBy: { deliveryDate: 'asc' } }),
     prisma.sale.findMany({ where: { productId, colorComboKey: comboKey }, orderBy: { saleDate: 'asc' } }),
+    // Pedido do usuário "cadê os outros 3?" (resolvido: estavam
+    // reservados pra um pedido em aberto) -- reserva nunca foi um evento
+    // gravado (OrderItem.reservedQuantity é recalculado do zero por
+    // reconcileOrderReservations toda vez que o estoque muda, nunca uma
+    // linha de histórico própria), então sem isso aqui o "Disponível"
+    // podia cair pra 0 sem NENHUMA linha do histórico explicando por quê.
+    // `updatedAt` é a melhor aproximação de "quando essa reserva foi
+    // confirmada" (não existe uma data própria de reserva).
+    prisma.orderItem.findMany({
+      where: { productId, colorComboKey: comboKey, reservedQuantity: { gt: 0 }, status: { notIn: ['ENTREGUE', 'CANCELADO'] } },
+      include: { order: { select: { orderNumber: true, buyerOrPlatform: true } } },
+      orderBy: { updatedAt: 'asc' },
+    }),
   ])
   for (const d of deliveries) {
     entries.push({ kind: 'Entregue', date: d.deliveryDate.toISOString(), quantity: d.quantityDelivered, detail: d.partner.name })
@@ -1084,6 +1097,10 @@ export async function getVariantHistory(productId: string, comboKey: string, nee
   }
   for (const s of sales) {
     entries.push({ kind: 'Vendido', date: s.saleDate.toISOString(), quantity: s.quantity, detail: s.channel })
+  }
+  for (const i of reservedItems) {
+    const label = i.order.buyerOrPlatform ?? (i.order.orderNumber ? `#${i.order.orderNumber}` : 'pedido sem comprador informado')
+    entries.push({ kind: 'Reservado', date: i.updatedAt.toISOString(), quantity: i.reservedQuantity, detail: label })
   }
 
   return entries.sort((a, b) => a.date.localeCompare(b.date))

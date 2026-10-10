@@ -12,6 +12,11 @@ const HISTORY_KIND_CLASS: Record<VariantHistoryEntry['kind'], string> = {
   Entregue: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
   Devolvido: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
   Vendido: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+  // Pedido do usuário "cadê os outros 3?" -- resolvido: estavam reservados
+  // pra um pedido em aberto, não sumidos. Laranja: nem "disponível"
+  // (verde-ish em outras telas) nem "faltando" (âmbar de aviso) -- é
+  // estoque físico que já tem dono, categoria própria.
+  Reservado: 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300',
 }
 
 // Pedido do usuário "produzi 4 de um azul, cadê os outros 3?": os totais
