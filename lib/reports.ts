@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { getStockStatus, calculateStockReferenceQuantity, calculateStockPercentRemaining, type ProductionCostSnapshot } from '@/lib/costing'
 import { productNeedsAssembly } from '@/lib/products'
+import { getProductAverageProductionCost } from '@/actions/products'
 import type { Prisma, ProductionStatus, WasteReason } from '@prisma/client'
 
 // Badge do menu lateral (Filamentos, AppLayoutClient) -- mesma definição de
@@ -916,6 +917,21 @@ export interface ConsignmentVariantBreakdown {
   deliveries: ConsignmentDeliveryLine[]
 }
 
+// Melhoria "Resultado das vendas": quanto cada produto já rendeu de verdade
+// (soldValue/soldCommission são somas de dados reais -- preço/comissão
+// GRAVADOS em cada ConsignmentSaleReport, nunca uma estimativa) e quanto
+// pode render o que ainda está parado com o parceiro (remainingValue soma o
+// unitPrice REAL de cada entrega com saldo, não um preço médio inventado;
+// remainingProfitPotential é projeção -- usa defaultCommissionPercent do
+// parceiro, já que uma venda futura ainda não tem comissão própria
+// registrada). unitCost é o único número não-histórico aqui (não existe
+// costSnapshot em ConsignmentDelivery/ConsignmentSaleReport -- ver
+// getProductAverageProductionCost, "ao vivo" mesmo padrão já usado pelo
+// custo de Produto-como-componente em actions/assembly.ts) -- soldCost/
+// remainingCost usam o custo de HOJE pra toda peça, vendida há quanto tempo
+// for. unitPrice/profitPerUnit são só pra exibição ("Como o lucro é
+// calculado — por peça", preço da entrega mais recente deste produto,
+// qualquer cor) -- nunca entram nas somas reais acima.
 export interface ConsignmentProductBreakdown {
   productId: string
   productName: string
@@ -923,11 +939,23 @@ export interface ConsignmentProductBreakdown {
   sold: number
   remaining: number
   variants: ConsignmentVariantBreakdown[]
+  unitPrice: number
+  unitCost: number
+  commissionPerUnit: number
+  profitPerUnit: number
+  soldValue: number
+  soldCommission: number
+  soldCost: number
+  soldProfit: number
+  remainingValue: number
+  remainingCost: number
+  remainingProfitPotential: number
 }
 
 export interface ConsignmentHistoryEvent {
   date: Date
   type: 'entrega' | 'venda'
+  productId: string
   productName: string
   colorLabel: string | null
   quantity: number
@@ -937,6 +965,17 @@ export interface ConsignmentHistoryEvent {
   // pro parceiro na hora, mesmo cálculo de saldo que já existe em toda a
   // tela: entregue - vendido).
   id: string
+  // Melhoria "Histórico agrupado por dia": valor em R$ do evento -- entrega
+  // é quantityDelivered × unitPrice DAQUELA entrega (fato real, igual
+  // sempre foi); venda é quantitySold × preço realmente usado naquela venda
+  // (report.unitPrice ?? delivery.unitPrice). cost (só entrega, custo de
+  // produção ao vivo × quantidade) e profit (só venda, valor − comissão
+  // real − custo ao vivo × quantidade) alimentam o resumo por dia agrupado
+  // na UI -- calculado aqui (não na UI) pra não duplicar a mesma fórmula em
+  // dois lugares.
+  value: number
+  cost: number | null
+  profit: number | null
 }
 
 // Bug "registrar entregas separadas do mesmo produto+cor aparecia 2x no
@@ -977,6 +1016,18 @@ export interface ConsignmentPartnerDetail {
   itemsWithPartner: number
   totalSold: number
   commissionOwed: number
+  // Melhoria "Resultado das vendas": somas dos mesmos campos reais de cada
+  // ConsignmentProductBreakdown (ver comentário lá) -- soldCommission é
+  // sempre === commissionOwed acima (mesmo dado, 2 nomes porque o card
+  // "Resultado das vendas" usa a nomenclatura Vendido/Comissão/Custo/Lucro
+  // da própria conta, em vez de "a pagar").
+  soldValue: number
+  soldCommission: number
+  soldCost: number
+  soldProfit: number
+  remainingValue: number
+  remainingCost: number
+  remainingProfitPotential: number
   products: ConsignmentProductBreakdown[]
   saleableDeliveries: ConsignmentSaleableDelivery[]
   history: ConsignmentHistoryEvent[]
@@ -1015,6 +1066,16 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
     for (const v of breakdown) variantInfoByProductAndKey.set(`${p.id}::${v.key}`, { label: v.label, colorHex: v.colorHex })
   }))
 
+  // Melhoria "Resultado das vendas": custo de produção de cada produto,
+  // calculado ao vivo (ver comentário de ConsignmentProductBreakdown acima)
+  // -- um fetch por produto distinto entregue a este parceiro, nunca um por
+  // entrega/venda (catálogo pequeno, mesmo padrão N+1-em-paralelo já usado
+  // pelo resto deste arquivo).
+  const unitCostByProduct = new Map<string, number>()
+  await Promise.all(productIds.map(async (id) => {
+    unitCostByProduct.set(id, await getProductAverageProductionCost(id))
+  }))
+
   // Acessórios por combo: só busca pros pares (productId, colorComboKey)
   // que de fato aparecem nas entregas deste parceiro.
   const comboPairs = [...new Set(
@@ -1032,7 +1093,22 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
     accessoriesByComboPair.set(pairKey, list)
   }
 
-  const byProduct = new Map<string, { productName: string; delivered: number; sold: number; returned: number; variants: Map<string, { key: string | null; delivered: number; sold: number; returned: number; deliveries: ConsignmentDeliveryLine[] }> }>()
+  const byProduct = new Map<string, {
+    productName: string
+    delivered: number
+    sold: number
+    returned: number
+    variants: Map<string, { key: string | null; delivered: number; sold: number; returned: number; deliveries: ConsignmentDeliveryLine[] }>
+    // Preço da entrega mais RECENTE deste produto (qualquer cor) -- só pra
+    // exibição ("Preço un." na tabela, "Como o lucro é calculado — por
+    // peça"), nunca usado nas somas reais abaixo. Setado só na 1ª vez que o
+    // produto aparece no loop, que é sempre a entrega mais nova (partner.deliveries
+    // vem ordenado deliveryDate desc).
+    representativeUnitPrice: number
+    soldValue: number
+    soldCommission: number
+    remainingValue: number
+  }>()
   const history: ConsignmentHistoryEvent[] = []
   let totalSold = 0
   let commissionOwed = 0
@@ -1070,9 +1146,20 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
       saleableGroups.set(groupKey, group)
     }
 
-    const product = byProduct.get(delivery.productId) ?? { productName: delivery.product.name, delivered: 0, sold: 0, returned: 0, variants: new Map() }
+    const product = byProduct.get(delivery.productId) ?? {
+      productName: delivery.product.name,
+      delivered: 0,
+      sold: 0,
+      returned: 0,
+      variants: new Map(),
+      representativeUnitPrice: delivery.unitPrice.toNumber(),
+      soldValue: 0,
+      soldCommission: 0,
+      remainingValue: 0,
+    }
     product.delivered += delivery.quantityDelivered
     product.returned += delivery.returnedQuantity
+    product.remainingValue += deliveryRemaining * delivery.unitPrice.toNumber()
     const variant = product.variants.get(variantMapKey) ?? { key: variantKey, delivered: 0, sold: 0, returned: 0, deliveries: [] }
     variant.delivered += delivery.quantityDelivered
     variant.returned += delivery.returnedQuantity
@@ -1086,15 +1173,42 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
       saleReportsCount: delivery.saleReports.length,
     })
 
-    history.push({ date: delivery.deliveryDate, type: 'entrega', productName: delivery.product.name, colorLabel, quantity: delivery.quantityDelivered, id: delivery.id })
+    const deliveryUnitCost = unitCostByProduct.get(delivery.productId) ?? 0
+    history.push({
+      date: delivery.deliveryDate,
+      type: 'entrega',
+      productId: delivery.productId,
+      productName: delivery.product.name,
+      colorLabel,
+      quantity: delivery.quantityDelivered,
+      id: delivery.id,
+      value: delivery.quantityDelivered * delivery.unitPrice.toNumber(),
+      cost: delivery.quantityDelivered * deliveryUnitCost,
+      profit: null,
+    })
 
     for (const report of delivery.saleReports) {
       product.sold += report.quantitySold
       variant.sold += report.quantitySold
       totalSold += report.quantitySold
       const reportUnitPrice = report.unitPrice?.toNumber() ?? delivery.unitPrice.toNumber()
-      commissionOwed += report.quantitySold * reportUnitPrice * report.commissionPercent.toNumber()
-      history.push({ date: report.reportDate, type: 'venda', productName: delivery.product.name, colorLabel, quantity: report.quantitySold, id: report.id })
+      const reportValue = report.quantitySold * reportUnitPrice
+      const reportCommission = reportValue * report.commissionPercent.toNumber()
+      commissionOwed += reportCommission
+      product.soldValue += reportValue
+      product.soldCommission += reportCommission
+      history.push({
+        date: report.reportDate,
+        type: 'venda',
+        productId: delivery.productId,
+        productName: delivery.product.name,
+        colorLabel,
+        quantity: report.quantitySold,
+        id: report.id,
+        value: reportValue,
+        cost: null,
+        profit: reportValue - reportCommission - report.quantitySold * deliveryUnitCost,
+      })
     }
 
     product.variants.set(variantMapKey, variant)
@@ -1117,34 +1231,65 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
     }
   })
 
-  const productsBreakdown: ConsignmentProductBreakdown[] = [...byProduct.entries()].map(([productId, { productName, delivered, sold, returned, variants }]) => ({
-    productId,
-    productName,
-    delivered,
-    sold,
-    remaining: Math.max(0, delivered - sold - returned),
-    variants: [...variants.values()].map((v) => ({
-      key: v.key,
-      label: v.key ? (variantInfoByProductAndKey.get(`${productId}::${v.key}`)?.label ?? v.key) : null,
-      colorHex: v.key ? (variantInfoByProductAndKey.get(`${productId}::${v.key}`)?.colorHex ?? null) : null,
-      delivered: v.delivered,
-      sold: v.sold,
-      remaining: Math.max(0, v.delivered - v.sold - v.returned),
-      accessories: v.key ? (accessoriesByComboPair.get(`${productId}::${v.key}`) ?? []) : [],
-      deliveries: v.deliveries,
-    })),
-  }))
+  const defaultCommissionPercent = partner.defaultCommissionPercent.toNumber()
+
+  const productsBreakdown: ConsignmentProductBreakdown[] = [...byProduct.entries()].map(([productId, { productName, delivered, sold, returned, variants, representativeUnitPrice, soldValue, soldCommission, remainingValue }]) => {
+    const remaining = Math.max(0, delivered - sold - returned)
+    const unitCost = unitCostByProduct.get(productId) ?? 0
+    const commissionPerUnit = representativeUnitPrice * defaultCommissionPercent
+    const soldCost = sold * unitCost
+    const remainingCost = remaining * unitCost
+    return {
+      productId,
+      productName,
+      delivered,
+      sold,
+      remaining,
+      variants: [...variants.values()].map((v) => ({
+        key: v.key,
+        label: v.key ? (variantInfoByProductAndKey.get(`${productId}::${v.key}`)?.label ?? v.key) : null,
+        colorHex: v.key ? (variantInfoByProductAndKey.get(`${productId}::${v.key}`)?.colorHex ?? null) : null,
+        delivered: v.delivered,
+        sold: v.sold,
+        remaining: Math.max(0, v.delivered - v.sold - v.returned),
+        accessories: v.key ? (accessoriesByComboPair.get(`${productId}::${v.key}`) ?? []) : [],
+        deliveries: v.deliveries,
+      })),
+      unitPrice: representativeUnitPrice,
+      unitCost,
+      commissionPerUnit,
+      profitPerUnit: representativeUnitPrice - commissionPerUnit - unitCost,
+      soldValue,
+      soldCommission,
+      soldCost,
+      soldProfit: soldValue - soldCommission - soldCost,
+      remainingValue,
+      remainingCost,
+      remainingProfitPotential: remainingValue * (1 - defaultCommissionPercent) - remainingCost,
+    }
+  })
 
   const itemsWithPartner = productsBreakdown.reduce((sum, p) => sum + p.remaining, 0)
+  const soldValue = productsBreakdown.reduce((sum, p) => sum + p.soldValue, 0)
+  const soldCost = productsBreakdown.reduce((sum, p) => sum + p.soldCost, 0)
+  const remainingValue = productsBreakdown.reduce((sum, p) => sum + p.remainingValue, 0)
+  const remainingCost = productsBreakdown.reduce((sum, p) => sum + p.remainingCost, 0)
 
   return {
     partnerId: partner.id,
     partnerName: partner.name,
-    defaultCommissionPercent: partner.defaultCommissionPercent.toNumber(),
+    defaultCommissionPercent,
     notes: partner.notes,
     itemsWithPartner,
     totalSold,
     commissionOwed,
+    soldValue,
+    soldCommission: commissionOwed,
+    soldCost,
+    soldProfit: soldValue - commissionOwed - soldCost,
+    remainingValue,
+    remainingCost,
+    remainingProfitPotential: remainingValue * (1 - defaultCommissionPercent) - remainingCost,
     products: productsBreakdown,
     saleableDeliveries,
     history,
