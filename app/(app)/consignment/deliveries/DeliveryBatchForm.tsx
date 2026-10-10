@@ -135,11 +135,31 @@ export function DeliveryBatchForm({
 
     setItems((prev) => [...prev, ...newItems])
     setSelectedProduct(null)
-    setView('form')
+    // Pedido "melhorar a seleção de produtos, só dá pra adicionar 1 por
+    // vez": antes, confirmar um produto voltava pro formulário inteiro --
+    // uma entrega com vários produtos (comum, ver histórico de qualquer
+    // parceiro) exigia clicar "+ Adicionar produto" e buscar de novo a
+    // CADA produto. Agora volta direto pra lista de produtos, pronta pra
+    // escolher o próximo sem sair do fluxo -- "Ver entrega" abaixo leva pro
+    // formulário quando já tiver terminado de adicionar.
+    setView('pickProduct')
   }
 
   function removeItem(index: number) {
     setItems((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  // Pedido "melhorar essa também, pois não dá pra editar o valor, não tem
+  // uma conferência final também": a lista "Itens desta entrega" só
+  // mostrava nome+cor+quantidade em texto corrido, sem jeito de corrigir
+  // preço (ou quantidade) sem excluir e refazer o produto inteiro desde o
+  // picker -- e sem o preço de cada linha nem o subtotal, não dava pra
+  // conferir o valor antes de enviar. Agora cada linha tem quantidade e
+  // preço editáveis direto (state local, nada é gravado até "Registrar
+  // entrega") + subtotal calculado, igual à conferência que Registrar
+  // produção/Registrar venda já oferecem antes de confirmar.
+  function updateItem(index: number, patch: Partial<Pick<ItemDraft, 'quantity' | 'unitPrice'>>) {
+    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)))
   }
 
   const totalUnits = items.reduce((sum, i) => sum + i.quantity, 0)
@@ -153,6 +173,19 @@ export function DeliveryBatchForm({
     if (items.length === 0) {
       alert('Adicione pelo menos um produto')
       return
+    }
+    // Quantidade/preço agora são editáveis na conferência final (acima) --
+    // precisa revalidar aqui, diferente de antes (quando só confirmAddItems
+    // gravava esses valores, já validados na hora).
+    for (const item of items) {
+      if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+        alert(`Quantidade inválida para "${item.productName}${item.colorLabel ? ` — ${item.colorLabel}` : ''}"`)
+        return
+      }
+      if (!Number.isFinite(item.unitPrice) || item.unitPrice <= 0) {
+        alert(`Preço inválido para "${item.productName}${item.colorLabel ? ` — ${item.colorLabel}` : ''}"`)
+        return
+      }
     }
     const fd = new FormData()
     fd.set('partnerId', partnerId)
@@ -181,9 +214,16 @@ export function DeliveryBatchForm({
     >
       {view === 'pickProduct' && (
         <div className="grid grid-cols-1 gap-3 p-5">
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setView('form')} aria-label="Voltar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">←</button>
-            <h3 className="font-display text-base font-semibold">Escolher produto</h3>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setView('form')} aria-label="Voltar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">←</button>
+              <h3 className="font-display text-base font-semibold">Escolher produto</h3>
+            </div>
+            {items.length > 0 && (
+              <button type="button" onClick={() => setView('form')} className="shrink-0 text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                Ver entrega ({items.length})
+              </button>
+            )}
           </div>
           <input
             autoFocus
@@ -200,17 +240,33 @@ export function DeliveryBatchForm({
               return visible.length === 0 ? (
                 <p className="px-2 py-4 text-center text-sm text-slate-400 dark:text-slate-500">Nenhum produto encontrado.</p>
               ) : (
-                visible.map((p) => (
-                  <button
-                    key={p.productId}
-                    type="button"
-                    onClick={() => openVariantPicker(p)}
-                    className="flex w-full items-center justify-between rounded-lg border border-slate-200 px-3 py-2.5 text-left text-sm hover:border-violet-400 dark:border-slate-700 dark:hover:border-violet-500"
-                  >
-                    {p.productName}
-                    <span aria-hidden className="text-slate-400">›</span>
-                  </button>
-                ))
+                visible.map((p) => {
+                  // Pedido "melhorar a seleção de produtos": com o fluxo
+                  // agora voltando direto pra esta lista a cada produto
+                  // confirmado (ver confirmAddItems acima), um selo aqui
+                  // mostra o que já foi adicionado nesta mesma entrega --
+                  // sem isso, não dava pra saber de relance quais produtos
+                  // já tinham sido feitos ao rolar a lista de novo.
+                  const addedQty = items.filter((i) => i.productId === p.productId).reduce((sum, i) => sum + i.quantity, 0)
+                  return (
+                    <button
+                      key={p.productId}
+                      type="button"
+                      onClick={() => openVariantPicker(p)}
+                      className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2.5 text-left text-sm hover:border-violet-400 dark:border-slate-700 dark:hover:border-violet-500"
+                    >
+                      <span className="min-w-0 flex-1 break-words">{p.productName}</span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        {addedQty > 0 && (
+                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+                            {addedQty} adicionado{addedQty > 1 ? 's' : ''}
+                          </span>
+                        )}
+                        <span aria-hidden className="text-slate-400">›</span>
+                      </span>
+                    </button>
+                  )
+                })
               )
             })()}
           </div>
@@ -322,12 +378,42 @@ export function DeliveryBatchForm({
             ) : (
               <div className="mt-1.5 space-y-1.5">
                 {items.map((item, i) => (
-                  <div key={i} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
-                    <span className="flex items-center gap-2 text-sm">
-                      {item.colorHex && <span style={{ background: item.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                      {item.productName}{item.colorLabel && <span className="text-slate-500 dark:text-slate-400"> - {item.colorLabel}</span>} <span className="text-slate-500 dark:text-slate-400">x{item.quantity}</span>
-                    </span>
-                    <button type="button" onClick={() => removeItem(i)} aria-label="Remover item" className="text-slate-400 hover:text-red-600 dark:hover:text-red-400">🗑</button>
+                  <div key={i} className="rounded-lg border border-slate-200 p-2.5 dark:border-slate-700">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="flex min-w-0 flex-1 items-start gap-1.5 break-words text-sm">
+                        {item.colorHex && <span style={{ background: item.colorHex }} className="mt-1 inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                        <span>
+                          {item.productName}
+                          {item.colorLabel && <span className="text-slate-500 dark:text-slate-400"> - {item.colorLabel}</span>}
+                        </span>
+                      </span>
+                      <button type="button" onClick={() => removeItem(i)} aria-label="Remover item" className="shrink-0 text-slate-400 hover:text-red-600 dark:hover:text-red-400">🗑</button>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <label className="text-xs text-slate-500 dark:text-slate-400">
+                        Quantidade
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          value={item.quantity}
+                          onChange={(e) => updateItem(i, { quantity: parseInt(e.target.value, 10) || 0 })}
+                          className="tk-input-full"
+                        />
+                      </label>
+                      <label className="text-xs text-slate-500 dark:text-slate-400">
+                        Preço unit. (R$)
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          value={item.unitPrice}
+                          onChange={(e) => updateItem(i, { unitPrice: parseFloat(e.target.value) || 0 })}
+                          className="tk-input-full"
+                        />
+                      </label>
+                    </div>
+                    <p className="mt-1 text-right text-xs text-slate-400 dark:text-slate-500">{formatCurrency(item.quantity * item.unitPrice)}</p>
                   </div>
                 ))}
               </div>
