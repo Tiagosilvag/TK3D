@@ -52,7 +52,11 @@ export default async function ProductionPage({
     prisma.productionRun.findMany({
       where: runsWhere,
       orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
-      include: { product: true, productPart: true },
+      // Pedido do usuário "modal pra ver a cor em Produção": a lista (Lista
+      // tab) nunca mostrava a cor usada em cada run -- só "Por produto"
+      // tinha isso. filament/filamentUsages aqui alimentam o modal "Ver
+      // cor" por linha (ProductionRunsExplorer.tsx).
+      include: { product: true, productPart: true, filament: true, filamentUsages: { include: { filament: true } } },
       skip: (currentPage - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
     }),
@@ -211,6 +215,18 @@ export default async function ProductionPage({
   // real, exibida como link "Ver Plate" na explorer.
   const runs: ProductionRunRow[] = runRecords.map((run) => {
     const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+    // Pedido do usuário "modal pra ver a cor em Produção": peça de
+    // multi-filamento usa filamentUsages (cada componente real, ver
+    // CLAUDE.md -- os campos escalares filamentId/gramsUsed são só o 1º
+    // componente, mantidos por compatibilidade); 1 filamento só usa o
+    // campo escalar direto. Mesma convenção de label que getProductionByProduct
+    // já usa ("Marca Cor (Material)", marca inclusa pra não confundir
+    // duas cores com mesmo nome de fabricantes diferentes).
+    const colorBreakdown = run.filamentUsages.map((u) => ({
+      label: `${u.filament.manufacturer} ${u.filament.colorName} (${u.filament.material})`,
+      colorHex: u.filament.colorHex,
+      gramsUsed: u.gramsUsed.toNumber(),
+    }))
     return {
       id: run.id,
       date: run.date.toISOString(),
@@ -222,6 +238,9 @@ export default async function ProductionPage({
       status: run.status,
       cost: snapshot ? snapshot.total : null,
       cancelReason: run.cancelReason,
+      filamentLabel: `${run.filament.manufacturer} ${run.filament.colorName} (${run.filament.material})`,
+      colorHex: run.filament.colorHex,
+      colorBreakdown,
     }
   })
 
