@@ -3,6 +3,7 @@ import { DeliveriesExplorer, type DeliveryBatchRow } from './DeliveriesExplorer'
 import { resolveDateRange } from '@/lib/dateRange'
 import { getProductVariantStockOptions, getProductVariantBreakdown } from '@/lib/reports'
 import { productNeedsAssembly } from '@/lib/products'
+import { getProductAverageProductionCost } from '@/actions/products'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,6 +27,15 @@ export default async function ConsignmentDeliveriesPage({
     prisma.consignmentPartner.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getProductVariantStockOptions(),
   ])
+
+  // Melhoria "Registrar entrega §2/§3": custo de produção ao vivo de cada
+  // produto -- mesmo padrão já usado pro card "Resultado das vendas" do
+  // parceiro (lib/reports.ts#getConsignmentPartnerDetail) -- alimenta o
+  // "custo de produção"/"lucro estimado" do novo modal de entrega em lote.
+  const unitCostByProductId = new Map<string, number>()
+  await Promise.all(deliveryOptions.map(async (o) => {
+    unitCostByProductId.set(o.productId, await getProductAverageProductionCost(o.productId))
+  }))
 
   // Melhoria "Entregas em consignação" §5: rótulo de cor de cada linha --
   // reaproveita a mesma quebra de variante que Estoque/Parceiros já usam
@@ -117,8 +127,8 @@ export default async function ConsignmentDeliveriesPage({
 
       <DeliveriesExplorer
         batches={batches}
-        partners={partners.map((p) => ({ id: p.id, name: p.name }))}
-        products={deliveryOptions}
+        partners={partners.map((p) => ({ id: p.id, name: p.name, defaultCommissionPercent: p.defaultCommissionPercent.toNumber() }))}
+        products={deliveryOptions.map((o) => ({ ...o, unitCost: unitCostByProductId.get(o.productId) ?? 0 }))}
         defaultProductId={productId}
       />
     </div>

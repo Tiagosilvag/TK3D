@@ -212,3 +212,38 @@ export async function undoConsignmentDeliveryReturn(id: string): Promise<ActionR
   revalidatePath('/consignment/partners')
   return { success: true }
 }
+
+export interface LastDeliveryItem {
+  productId: string
+  colorComboKey: string | null
+  quantity: number
+  unitPrice: number
+}
+
+// Melhoria "Registrar entrega §2": "↻ Repetir última entrega" no novo modal
+// de 2 colunas -- busca sob demanda (só quando o botão é clicado, nunca
+// pré-carregado pra todos os parceiros de uma vez) o último LOTE
+// (ConsignmentDelivery.batchId) deste parceiro e devolve seus itens
+// (produto+cor+quantidade+preço) pra o formulário pré-preencher, já capado
+// pelo estoque atual disponível do lado do cliente (DeliveryBatchForm.tsx
+// -- nunca aqui, que não tem acesso ao mesmo cálculo de "disponível" que
+// ProductVariantStockInfo já faz).
+export async function getLastConsignmentDeliveryItems(partnerId: string): Promise<LastDeliveryItem[]> {
+  const last = await prisma.consignmentDelivery.findFirst({
+    where: { partnerId },
+    orderBy: [{ deliveryDate: 'desc' }, { createdAt: 'desc' }],
+    select: { batchId: true },
+  })
+  if (!last) return []
+
+  const items = await prisma.consignmentDelivery.findMany({
+    where: { partnerId, batchId: last.batchId },
+    select: { productId: true, colorComboKey: true, quantityDelivered: true, unitPrice: true },
+  })
+  return items.map((i) => ({
+    productId: i.productId,
+    colorComboKey: i.colorComboKey,
+    quantity: i.quantityDelivered,
+    unitPrice: i.unitPrice.toNumber(),
+  }))
+}

@@ -1,16 +1,16 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createConsignmentDeliveryBatch } from '@/actions/consignmentDeliveries'
+import { createConsignmentDeliveryBatch, getLastConsignmentDeliveryItems } from '@/actions/consignmentDeliveries'
 import { formatCurrency } from '@/lib/format'
 import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
-import { VariacaoPecas } from '@/components/VariacaoPecas'
 import type { VariantAttr } from '@/lib/reports'
 
 export interface PartnerOption {
   id: string
   name: string
+  defaultCommissionPercent: number
 }
 
 export interface ProductVariantOption {
@@ -18,11 +18,6 @@ export interface ProductVariantOption {
   label: string
   colorHex: string | null
   available: number
-  // Pedido do usuário "aqui deve aparecer a cor também, melhor de
-  // localizar" (Entregas em consignação, mesmo problema já resolvido em
-  // Pedidos): getProductVariantStockOptions já devolve isso, page.tsx
-  // nunca descartava -- só faltava o componente usar em vez do texto
-  // corrido (v.label).
   attrs: VariantAttr[]
 }
 
@@ -30,27 +25,86 @@ export interface ProductOption {
   productId: string
   productName: string
   suggestedPrice: number | null
+  // Melhoria "Registrar entrega §2/§3": custo de produção ao vivo, pro
+  // rodapé "custo de produção"/"lucro estimado" -- ver page.tsx
+  // (getProductAverageProductionCost, mesmo padrão já usado em
+  // getConsignmentPartnerDetail pro card "Resultado das vendas").
+  unitCost: number
   variants: ProductVariantOption[]
 }
 
-interface ItemDraft {
-  productId: string
-  productName: string
-  colorComboKey: string | null
-  colorLabel: string | null
+const NO_VARIANT_KEY = '__none__'
+
+interface DeliveryLine {
+  variantKey: string | null
+  label: string
   colorHex: string | null
   quantity: number
-  unitPrice: number
 }
 
-// Melhoria "Entregas em consignação" §1/§3: cadastro vira modal com um
-// fluxo em passos -- escolher parceiro, "+ Adicionar produto" abre a lista
-// de produtos, escolher um produto abre suas variantes de cor com estoque
-// disponível (getProductVariantStockOptions), preencher quantidade de cada
-// cor e confirmar volta pra lista principal do modal. Repete pra quantos
-// produtos forem necessários numa mesma entrega -- tudo vira UMA submissão
-// (createConsignmentDeliveryBatch), N linhas de ConsignmentDelivery
-// compartilhando um batchId.
+function lineKey(productId: string, variantKey: string | null): string {
+  return `${productId}::${variantKey ?? NO_VARIANT_KEY}`
+}
+
+// Pedido "nomes de variação curtos": "Rosa pink · Dourado" em vez de
+// "ARGOLA — DOURADO, ELO — DOURADO, ROSA PINK" -- attrs[].shortValue já é
+// só o(s) nome(s) de cor sem marca/nome de peça (lib/reports.ts), junta
+// com " · " em vez do `label` longo que as outras telas usam.
+function compactVariantLabel(v: ProductVariantOption): string {
+  if (v.attrs.length === 0) return v.label
+  return v.attrs.map((a) => a.shortValue).join(' · ')
+}
+
+function yesterdayString(): string {
+  const d = new Date(today())
+  d.setUTCDate(d.getUTCDate() - 1)
+  return d.toISOString().slice(0, 10)
+}
+
+function QtyStepper({
+  value,
+  onDec,
+  onInc,
+  incDisabled,
+}: {
+  value: number
+  onDec: () => void
+  onInc: () => void
+  incDisabled: boolean
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1.5">
+      <button
+        type="button"
+        onClick={onDec}
+        disabled={value <= 0}
+        aria-label="Diminuir"
+        className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-300 text-slate-600 disabled:opacity-30 dark:border-slate-600 dark:text-slate-300"
+      >
+        −
+      </button>
+      <span className="w-5 text-center text-sm font-medium tabular-nums">{value}</span>
+      <button
+        type="button"
+        onClick={onInc}
+        disabled={incDisabled}
+        aria-label="Aumentar"
+        className="flex h-6 w-6 items-center justify-center rounded-full border border-violet-400 text-violet-600 disabled:opacity-30 dark:border-violet-500 dark:text-violet-400"
+      >
+        +
+      </button>
+    </div>
+  )
+}
+
+// Redesign "Registrar entrega §2": o fluxo antigo (Adicionar produto →
+// escolher variante → digitar quantidade/preço → "Adicionar à entrega" →
+// voltar, repetir por produto) levava ~40 cliques/digitações pra uma
+// entrega de 10 produtos. Vira tela única de 2 colunas: esquerda lista
+// TODOS os produtos com estoque (−/+ direto na linha, sem botão
+// "adicionar" -- mexer no contador já reflete na entrega), direita mostra
+// ao vivo o que foi montado, com chips removíveis por variante e preço
+// ajustável por produto (um valor só, vale pra todas as cores dele).
 export function DeliveryBatchForm({
   open,
   onOpenChange,
@@ -63,21 +117,25 @@ export function DeliveryBatchForm({
   partners: PartnerOption[]
   products: ProductOption[]
   // 2.2: link de ação rápida "Entregar a parceiro" em /stock chega aqui
-  // com ?productId=... -- abre o modal já na tela de variantes daquele
-  // produto, pulando a lista de escolha.
+  // com ?productId=... -- abre o modal com esse produto já expandido.
   defaultProductId?: string
 }) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
-  const [view, setView] = useState<'form' | 'pickProduct' | 'pickVariant'>('form')
   const [partnerId, setPartnerId] = useState('')
+  const [dateMode, setDateMode] = useState<'hoje' | 'ontem' | 'outra'>('hoje')
   const [deliveryDate, setDeliveryDate] = useState(today())
   const [notes, setNotes] = useState('')
-  const [items, setItems] = useState<ItemDraft[]>([])
-  const [selectedProduct, setSelectedProduct] = useState<ProductOption | null>(null)
-  const [productSearch, setProductSearch] = useState('')
-  const [variantQuantities, setVariantQuantities] = useState<Record<string, string>>({})
-  const [addUnitPrice, setAddUnitPrice] = useState('')
+  const [notesOpen, setNotesOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const [expandedProductId, setExpandedProductId] = useState<string | null>(defaultProductId ?? null)
+  const [quantities, setQuantities] = useState<Record<string, number>>({})
+  const [prices, setPrices] = useState<Record<string, number>>({})
+  const [repeating, setRepeating] = useState(false)
+  const [error, setError] = useState('')
+
+  const productById = useMemo(() => new Map(products.map((p) => [p.productId, p])), [products])
+  const selectedPartner = partners.find((p) => p.id === partnerId) ?? null
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -87,130 +145,179 @@ export function DeliveryBatchForm({
   }, [open])
 
   useEffect(() => {
-    if (open && defaultProductId) {
-      const product = products.find((p) => p.productId === defaultProductId)
-      if (product) openVariantPicker(product)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- só na abertura inicial, não a cada render
+    if (open) setExpandedProductId(defaultProductId ?? null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só na abertura inicial
   }, [open, defaultProductId])
 
   function resetAll() {
-    setView('form')
     setPartnerId('')
+    setDateMode('hoje')
     setDeliveryDate(today())
     setNotes('')
-    setItems([])
-    setSelectedProduct(null)
-    setProductSearch('')
-    setVariantQuantities({})
-    setAddUnitPrice('')
+    setNotesOpen(false)
+    setSearch('')
+    setExpandedProductId(null)
+    setQuantities({})
+    setPrices({})
+    setError('')
   }
 
-  function openVariantPicker(product: ProductOption) {
-    setSelectedProduct(product)
-    setVariantQuantities({})
-    setAddUnitPrice(product.suggestedPrice != null ? String(product.suggestedPrice) : '')
-    setView('pickVariant')
+  function setQty(productId: string, variantKey: string | null, next: number, available: number | null) {
+    const clamped = available == null ? Math.max(0, next) : Math.max(0, Math.min(available, next))
+    const key = lineKey(productId, variantKey)
+    setQuantities((prev) => {
+      if (clamped === 0) {
+        const { [key]: _removed, ...rest } = prev
+        return rest
+      }
+      return { ...prev, [key]: clamped }
+    })
+    if (clamped > 0) {
+      setPrices((prev) => {
+        if (prev[productId] !== undefined) return prev
+        const product = productById.get(productId)
+        return { ...prev, [productId]: product?.suggestedPrice ?? 0 }
+      })
+    }
   }
 
-  function confirmAddItems() {
-    if (!selectedProduct) return
-    const price = parseFloat(addUnitPrice)
-    if (!Number.isFinite(price) || price <= 0) {
-      alert('Informe um preço unitário válido')
+  function adjustPrice(productId: string, delta: number) {
+    setPrices((prev) => {
+      const current = prev[productId] ?? productById.get(productId)?.suggestedPrice ?? 0
+      return { ...prev, [productId]: Math.max(0, Math.round((current + delta) * 100) / 100) }
+    })
+  }
+
+  function handleDateChip(mode: 'hoje' | 'ontem' | 'outra') {
+    setDateMode(mode)
+    if (mode === 'hoje') setDeliveryDate(today())
+    if (mode === 'ontem') setDeliveryDate(yesterdayString())
+  }
+
+  function handleClear() {
+    setQuantities({})
+    setPrices({})
+    setError('')
+  }
+
+  async function handleRepeatLast() {
+    if (!partnerId) {
+      setError('Selecione um parceiro primeiro')
       return
     }
-
-    const newItems: ItemDraft[] = []
-    if (selectedProduct.variants.length === 0) {
-      const qty = parseInt(variantQuantities.__none__ ?? '', 10)
-      if (Number.isFinite(qty) && qty > 0) {
-        newItems.push({ productId: selectedProduct.productId, productName: selectedProduct.productName, colorComboKey: null, colorLabel: null, colorHex: null, quantity: qty, unitPrice: price })
+    setRepeating(true)
+    setError('')
+    try {
+      const items = await getLastConsignmentDeliveryItems(partnerId)
+      if (items.length === 0) {
+        setError('Esse parceiro ainda não tem nenhuma entrega anterior')
+        return
       }
-    } else {
-      for (const v of selectedProduct.variants) {
-        const qty = parseInt(variantQuantities[v.key] ?? '', 10)
-        if (Number.isFinite(qty) && qty > 0) {
-          newItems.push({ productId: selectedProduct.productId, productName: selectedProduct.productName, colorComboKey: v.key, colorLabel: v.label, colorHex: v.colorHex, quantity: qty, unitPrice: price })
+      const newQuantities: Record<string, number> = {}
+      const newPrices: Record<string, number> = {}
+      for (const item of items) {
+        const product = productById.get(item.productId)
+        if (!product) continue
+        if (item.colorComboKey === null) {
+          newQuantities[lineKey(item.productId, null)] = item.quantity
+        } else {
+          const variant = product.variants.find((v) => v.key === item.colorComboKey)
+          if (!variant || variant.available <= 0) continue
+          const qty = Math.min(item.quantity, variant.available)
+          if (qty <= 0) continue
+          newQuantities[lineKey(item.productId, item.colorComboKey)] = qty
         }
+        if (newPrices[item.productId] === undefined) newPrices[item.productId] = item.unitPrice
       }
+      setQuantities(newQuantities)
+      setPrices(newPrices)
+    } finally {
+      setRepeating(false)
     }
+  }
 
-    if (newItems.length === 0) {
-      alert('Informe a quantidade de pelo menos uma variação')
-      return
+  // Itens da entrega agrupados por produto (pra renderizar 1 card por
+  // produto na coluna direita, com chip por variante).
+  const itemsByProduct = useMemo(() => {
+    const map = new Map<string, DeliveryLine[]>()
+    for (const [key, quantity] of Object.entries(quantities)) {
+      if (quantity <= 0) continue
+      const sep = key.lastIndexOf('::')
+      const productId = key.slice(0, sep)
+      const rawVariantKey = key.slice(sep + 2)
+      const variantKey = rawVariantKey === NO_VARIANT_KEY ? null : rawVariantKey
+      const product = productById.get(productId)
+      if (!product) continue
+      const variant = variantKey ? product.variants.find((v) => v.key === variantKey) : undefined
+      const list = map.get(productId) ?? []
+      list.push({
+        variantKey,
+        label: variant ? compactVariantLabel(variant) : product.productName,
+        colorHex: variant?.colorHex ?? null,
+        quantity,
+      })
+      map.set(productId, list)
     }
+    return [...map.entries()].map(([productId, lines]) => ({ product: productById.get(productId)!, lines }))
+  }, [quantities, productById])
 
-    setItems((prev) => [...prev, ...newItems])
-    setSelectedProduct(null)
-    // Pedido "melhorar a seleção de produtos, só dá pra adicionar 1 por
-    // vez": antes, confirmar um produto voltava pro formulário inteiro --
-    // uma entrega com vários produtos (comum, ver histórico de qualquer
-    // parceiro) exigia clicar "+ Adicionar produto" e buscar de novo a
-    // CADA produto. Agora volta direto pra lista de produtos, pronta pra
-    // escolher o próximo sem sair do fluxo -- "Ver entrega" abaixo leva pro
-    // formulário quando já tiver terminado de adicionar.
-    setView('pickProduct')
-  }
+  const totalUnits = itemsByProduct.reduce((sum, { lines }) => sum + lines.reduce((s, l) => s + l.quantity, 0), 0)
+  const totalValue = itemsByProduct.reduce((sum, { product, lines }) => {
+    const price = prices[product.productId] ?? product.suggestedPrice ?? 0
+    return sum + lines.reduce((s, l) => s + l.quantity * price, 0)
+  }, 0)
+  const totalCost = itemsByProduct.reduce((sum, { product, lines }) => sum + lines.reduce((s, l) => s + l.quantity * product.unitCost, 0), 0)
+  const estimatedProfit = selectedPartner ? totalValue * (1 - selectedPartner.defaultCommissionPercent) - totalCost : null
 
-  function removeItem(index: number) {
-    setItems((prev) => prev.filter((_, i) => i !== index))
-  }
+  const dateLabel = dateMode === 'hoje' ? 'hoje' : dateMode === 'ontem' ? 'ontem' : new Date(deliveryDate).toLocaleDateString('pt-BR')
 
-  // Pedido "melhorar essa também, pois não dá pra editar o valor, não tem
-  // uma conferência final também": a lista "Itens desta entrega" só
-  // mostrava nome+cor+quantidade em texto corrido, sem jeito de corrigir
-  // preço (ou quantidade) sem excluir e refazer o produto inteiro desde o
-  // picker -- e sem o preço de cada linha nem o subtotal, não dava pra
-  // conferir o valor antes de enviar. Agora cada linha tem quantidade e
-  // preço editáveis direto (state local, nada é gravado até "Registrar
-  // entrega") + subtotal calculado, igual à conferência que Registrar
-  // produção/Registrar venda já oferecem antes de confirmar.
-  function updateItem(index: number, patch: Partial<Pick<ItemDraft, 'quantity' | 'unitPrice'>>) {
-    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)))
-  }
-
-  const totalUnits = items.reduce((sum, i) => sum + i.quantity, 0)
-  const totalValue = items.reduce((sum, i) => sum + i.quantity * i.unitPrice, 0)
+  const filteredProducts = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    return term ? products.filter((p) => p.productName.toLowerCase().includes(term)) : products
+  }, [products, search])
 
   async function action() {
     if (!partnerId) {
-      alert('Selecione um parceiro')
+      setError('Selecione um parceiro')
       return
     }
-    if (items.length === 0) {
-      alert('Adicione pelo menos um produto')
+    if (itemsByProduct.length === 0) {
+      setError('Adicione pelo menos um produto')
       return
     }
-    // Quantidade/preço agora são editáveis na conferência final (acima) --
-    // precisa revalidar aqui, diferente de antes (quando só confirmAddItems
-    // gravava esses valores, já validados na hora).
-    for (const item of items) {
-      if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
-        alert(`Quantidade inválida para "${item.productName}${item.colorLabel ? ` — ${item.colorLabel}` : ''}"`)
-        return
-      }
-      if (!Number.isFinite(item.unitPrice) || item.unitPrice <= 0) {
-        alert(`Preço inválido para "${item.productName}${item.colorLabel ? ` — ${item.colorLabel}` : ''}"`)
+    for (const { product } of itemsByProduct) {
+      const price = prices[product.productId] ?? 0
+      if (!Number.isFinite(price) || price <= 0) {
+        setError(`Preço inválido para "${product.productName}"`)
         return
       }
     }
+    setError('')
+
     const fd = new FormData()
     fd.set('partnerId', partnerId)
     fd.set('deliveryDate', deliveryDate)
     fd.set('notes', notes)
-    fd.set('itemsJson', JSON.stringify(items.map((i) => ({
-      productId: i.productId,
-      colorComboKey: i.colorComboKey,
-      quantityDelivered: i.quantity,
-      unitPrice: i.unitPrice,
-    }))))
+    fd.set(
+      'itemsJson',
+      JSON.stringify(
+        itemsByProduct.flatMap(({ product, lines }) =>
+          lines.map((l) => ({
+            productId: product.productId,
+            colorComboKey: l.variantKey,
+            quantityDelivered: l.quantity,
+            unitPrice: prices[product.productId] ?? 0,
+          })),
+        ),
+      ),
+    )
     const result = await createConsignmentDeliveryBatch(fd)
     if (!result.success) {
-      alert(result.error)
+      setError(result.error ?? 'Erro ao registrar entrega')
       return
     }
     onOpenChange(false)
+    resetAll()
     router.refresh()
   }
 
@@ -218,245 +325,262 @@ export function DeliveryBatchForm({
     <dialog
       ref={dialogRef}
       onClose={() => { onOpenChange(false); resetAll() }}
-      className="w-full [--tk-dialog-cap:28rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      className="w-full [--tk-dialog-cap:34rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 backdrop:bg-slate-950/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 lg:[--tk-dialog-cap:60rem]"
     >
-      {view === 'pickProduct' && (
-        <div className="grid grid-cols-1 gap-3 p-5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={() => setView('form')} aria-label="Voltar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">←</button>
-              <h3 className="font-display text-base font-semibold">Escolher produto</h3>
+      <form action={action} className="grid grid-cols-1 gap-3 p-5">
+        <div className="flex items-center justify-between">
+          <h3 className="font-display text-base font-semibold">Registrar entrega</h3>
+          <button type="button" onClick={() => { onOpenChange(false); resetAll() }} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
+        </div>
+
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Parceiro</p>
+            <div className="flex flex-wrap gap-1.5">
+              {partners.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setPartnerId(p.id)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium ${
+                    partnerId === p.id
+                      ? 'bg-violet-600 text-white'
+                      : 'border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {p.name}
+                </button>
+              ))}
             </div>
-            {items.length > 0 && (
-              <button type="button" onClick={() => setView('form')} className="shrink-0 text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
-                Ver entrega ({items.length})
-              </button>
-            )}
           </div>
-          <input
-            autoFocus
-            type="search"
-            value={productSearch}
-            onChange={(e) => setProductSearch(e.target.value)}
-            placeholder="Buscar produto..."
-            className="tk-input-full"
-          />
-          <div className="max-h-80 space-y-1 overflow-y-auto">
-            {(() => {
-              const term = productSearch.trim().toLowerCase()
-              const visible = term ? products.filter((p) => p.productName.toLowerCase().includes(term)) : products
-              return visible.length === 0 ? (
+          <div>
+            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Data da entrega</p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(['hoje', 'ontem'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => handleDateChip(mode)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium capitalize ${
+                    dateMode === mode
+                      ? 'bg-violet-600 text-white'
+                      : 'border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => handleDateChip('outra')}
+                className={`rounded-full px-3 py-1 text-xs font-medium ${
+                  dateMode === 'outra'
+                    ? 'bg-violet-600 text-white'
+                    : 'border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
+                }`}
+              >
+                Outra data…
+              </button>
+              {dateMode === 'outra' && (
+                <input
+                  type="date"
+                  value={deliveryDate}
+                  onChange={(e) => setDeliveryDate(e.target.value)}
+                  className="tk-input w-36"
+                  required
+                />
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Produtos em estoque</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500">Use − / + direto na linha · sem botão &quot;adicionar&quot;</p>
+            </div>
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar produto…"
+              className="tk-input-full mt-2"
+            />
+            <div className="mt-2 max-h-96 space-y-1.5 overflow-y-auto pr-1">
+              {filteredProducts.length === 0 && (
                 <p className="px-2 py-4 text-center text-sm text-slate-400 dark:text-slate-500">Nenhum produto encontrado.</p>
-              ) : (
-                visible.map((p) => {
-                  // Pedido "melhorar a seleção de produtos": com o fluxo
-                  // agora voltando direto pra esta lista a cada produto
-                  // confirmado (ver confirmAddItems acima), um selo aqui
-                  // mostra o que já foi adicionado nesta mesma entrega --
-                  // sem isso, não dava pra saber de relance quais produtos
-                  // já tinham sido feitos ao rolar a lista de novo.
-                  const addedQty = items.filter((i) => i.productId === p.productId).reduce((sum, i) => sum + i.quantity, 0)
-                  return (
-                    <button
-                      key={p.productId}
-                      type="button"
-                      onClick={() => openVariantPicker(p)}
-                      className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2.5 text-left text-sm hover:border-violet-400 dark:border-slate-700 dark:hover:border-violet-500"
+              )}
+              {filteredProducts.map((product) => {
+                const totalAvailable = product.variants.reduce((s, v) => s + v.available, 0)
+                const addedForProduct = product.variants.reduce((s, v) => s + (quantities[lineKey(product.productId, v.key)] ?? 0), 0)
+                  + (quantities[lineKey(product.productId, null)] ?? 0)
+                const multiVariant = product.variants.length > 1
+                const singleVariant = product.variants.length === 1 ? product.variants[0] : null
+                const isExpanded = expandedProductId === product.productId
+
+                return (
+                  <div key={product.productId} className="rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div
+                      role={multiVariant ? 'button' : undefined}
+                      tabIndex={multiVariant ? 0 : undefined}
+                      onClick={multiVariant ? () => setExpandedProductId(isExpanded ? null : product.productId) : undefined}
+                      className={`flex items-center justify-between gap-2 px-3 py-2 ${multiVariant ? 'cursor-pointer' : ''}`}
                     >
-                      <span className="min-w-0 flex-1 break-words">{p.productName}</span>
-                      <span className="flex shrink-0 items-center gap-2">
-                        {addedQty > 0 && (
-                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-                            {addedQty} adicionado{addedQty > 1 ? 's' : ''}
-                          </span>
-                        )}
-                        <span aria-hidden className="text-slate-400">›</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="flex items-center gap-1.5 truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                          {product.productName}
+                          {addedForProduct > 0 && (
+                            <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">
+                              {addedForProduct}
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-xs text-slate-400 dark:text-slate-500">
+                          {product.variants.length === 0 ? 'sem variação cadastrada' : `${product.variants.length} ${product.variants.length === 1 ? 'variação' : 'variações'} · ${totalAvailable} em estoque`}
+                        </p>
+                      </div>
+                      <span className="shrink-0 text-sm text-slate-500 dark:text-slate-400">
+                        {product.suggestedPrice != null ? formatCurrency(product.suggestedPrice) : '—'}
                       </span>
-                    </button>
+                      {singleVariant && (
+                        <QtyStepper
+                          value={quantities[lineKey(product.productId, singleVariant.key)] ?? 0}
+                          onDec={() => setQty(product.productId, singleVariant.key, (quantities[lineKey(product.productId, singleVariant.key)] ?? 0) - 1, singleVariant.available)}
+                          onInc={() => setQty(product.productId, singleVariant.key, (quantities[lineKey(product.productId, singleVariant.key)] ?? 0) + 1, singleVariant.available)}
+                          incDisabled={(quantities[lineKey(product.productId, singleVariant.key)] ?? 0) >= singleVariant.available}
+                        />
+                      )}
+                      {product.variants.length === 0 && (
+                        <QtyStepper
+                          value={quantities[lineKey(product.productId, null)] ?? 0}
+                          onDec={() => setQty(product.productId, null, (quantities[lineKey(product.productId, null)] ?? 0) - 1, null)}
+                          onInc={() => setQty(product.productId, null, (quantities[lineKey(product.productId, null)] ?? 0) + 1, null)}
+                          incDisabled={false}
+                        />
+                      )}
+                      {multiVariant && <span aria-hidden className="shrink-0 text-slate-400">{isExpanded ? '▴' : '▾'}</span>}
+                    </div>
+
+                    {multiVariant && isExpanded && (
+                      <div className="space-y-1.5 border-t border-slate-100 px-3 py-2 dark:border-slate-800">
+                        {product.variants.map((v) => (
+                          <div key={v.key} className="flex items-center justify-between gap-2 text-sm">
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              {v.colorHex && <span style={{ background: v.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                              <span className="truncate">{compactVariantLabel(v)}</span>
+                              <span className="shrink-0 text-xs text-slate-400 dark:text-slate-500">{v.available} disp.</span>
+                            </span>
+                            <QtyStepper
+                              value={quantities[lineKey(product.productId, v.key)] ?? 0}
+                              onDec={() => setQty(product.productId, v.key, (quantities[lineKey(product.productId, v.key)] ?? 0) - 1, v.available)}
+                              onInc={() => setQty(product.productId, v.key, (quantities[lineKey(product.productId, v.key)] ?? 0) + 1, v.available)}
+                              incDisabled={(quantities[lineKey(product.productId, v.key)] ?? 0) >= v.available}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Itens desta entrega</p>
+              <div className="flex items-center gap-3 text-xs font-medium">
+                <button type="button" onClick={() => void handleRepeatLast()} disabled={repeating} className="text-violet-600 hover:underline disabled:opacity-50 dark:text-violet-400">
+                  {repeating ? 'Carregando…' : '↻ Repetir última entrega'}
+                </button>
+                {itemsByProduct.length > 0 && (
+                  <button type="button" onClick={handleClear} className="text-red-600 hover:underline dark:text-red-400">
+                    Limpar
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-2 max-h-96 space-y-1.5 overflow-y-auto pr-1">
+              {itemsByProduct.length === 0 ? (
+                <p className="px-2 py-4 text-center text-sm text-slate-400 dark:text-slate-500">Nenhum produto adicionado ainda.</p>
+              ) : (
+                itemsByProduct.map(({ product, lines }) => {
+                  const price = prices[product.productId] ?? product.suggestedPrice ?? 0
+                  const productQty = lines.reduce((s, l) => s + l.quantity, 0)
+                  const subtotal = productQty * price
+                  return (
+                    <div key={product.productId} className="rounded-lg border border-slate-200 p-2.5 dark:border-slate-700">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{product.productName}</p>
+                        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatCurrency(subtotal)}</p>
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {lines.map((l) => (
+                          <span key={l.variantKey ?? NO_VARIANT_KEY} className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-xs dark:border-slate-700">
+                            {l.colorHex && <span style={{ background: l.colorHex }} className="inline-block h-2 w-2 shrink-0 rounded-full" />}
+                            {l.label} ×{l.quantity}
+                            <button
+                              type="button"
+                              onClick={() => setQty(product.productId, l.variantKey, 0, null)}
+                              aria-label="Remover"
+                              className="text-slate-400 hover:text-red-600 dark:hover:text-red-400"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                      <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                        <span>{productQty} un × valor un.</span>
+                        <div className="flex items-center gap-1.5">
+                          <button type="button" onClick={() => adjustPrice(product.productId, -1)} aria-label="Diminuir preço" className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-300 text-slate-600 dark:border-slate-600 dark:text-slate-300">−</button>
+                          <span className="w-16 text-center text-sm font-medium tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(price)}</span>
+                          <button type="button" onClick={() => adjustPrice(product.productId, 1)} aria-label="Aumentar preço" className="flex h-6 w-6 items-center justify-center rounded-full border border-violet-400 text-violet-600 dark:border-violet-500 dark:text-violet-400">+</button>
+                        </div>
+                      </div>
+                    </div>
                   )
                 })
-              )
-            })()}
-          </div>
-        </div>
-      )}
-
-      {view === 'pickVariant' && selectedProduct && (
-        <div className="grid grid-cols-1 gap-3 p-5">
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setView('pickProduct')} aria-label="Voltar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">←</button>
-            <h3 className="font-display text-base font-semibold">{selectedProduct.productName}</h3>
-          </div>
-
-          {selectedProduct.variants.length > 0 ? (
-            <>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Informe a quantidade de cada variação disponível em estoque.</p>
-              {/* Pedido "aqui também deve aparecer somente o que tem
-                  disponível": uma variação com 0 em estoque não pode ser
-                  entregue a um parceiro (não existe pra dar), então some
-                  da lista em vez de aparecer com o campo desabilitado. */}
-              {selectedProduct.variants.every((v) => v.available <= 0) && (
-                <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
-                  Nenhuma variação deste produto tem estoque disponível pra entregar.
-                </p>
               )}
-              <div className="space-y-2">
-                {selectedProduct.variants.filter((v) => v.available > 0).map((v) => (
-                  // Bug "modal esticada": rótulo de variante multi-cor pode ficar
-                  // bem longo (ex.: "CANECA: BEGE/NUDE, CHOCOLATE: BRANCO + MARROM,
-                  // CORAÇÃO: VERMELHO, CORRENTE — DOURADO, MOSQUETÃO: MARROM") --
-                  // sem quebrar linha, empurrava a <dialog> pra muito além de
-                  // max-w-md. min-w-0 + break-words deixa o texto quebrar dentro
-                  // da largura fixa da modal em vez de alargá-la.
-                  <div key={v.key} className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
-                    <span className="min-w-0 flex-1 text-sm">
-                      {v.attrs.length > 0 ? (
-                        <VariacaoPecas attrs={v.attrs} />
-                      ) : (
-                        <span className="flex items-start gap-2">
-                          {v.colorHex && <span style={{ background: v.colorHex }} className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                          <span className="break-words font-medium text-slate-900 dark:text-slate-100">{v.label}</span>
-                        </span>
-                      )}
-                      <span className="mt-1 block text-xs text-slate-400 dark:text-slate-500">{v.available} em estoque</span>
-                    </span>
-                    <input
-                      type="number"
-                      step="1"
-                      min="0"
-                      max={v.available}
-                      placeholder="0"
-                      value={variantQuantities[v.key] ?? ''}
-                      onChange={(e) => setVariantQuantities((prev) => ({ ...prev, [v.key]: e.target.value }))}
-                      className="tk-input w-20 shrink-0"
-                    />
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : (
-            <label className="text-sm">
-              Quantidade
-              <input
-                type="number"
-                step="1"
-                min="1"
-                value={variantQuantities.__none__ ?? ''}
-                onChange={(e) => setVariantQuantities({ __none__: e.target.value })}
-                className="tk-input-full"
-              />
-            </label>
-          )}
-
-          <label className="text-sm">
-            Preço unitário
-            <input
-              type="number"
-              step="0.01"
-              min="0.01"
-              value={addUnitPrice}
-              onChange={(e) => setAddUnitPrice(e.target.value)}
-              className="tk-input-full"
-            />
-          </label>
-
-          <button type="button" onClick={confirmAddItems} className="tk-btn-primary">
-            Adicionar à entrega
-          </button>
-        </div>
-      )}
-
-      {view === 'form' && (
-        <form action={action} className="grid grid-cols-1 gap-3 p-5">
-          <div className="mb-1 flex items-center justify-between">
-            <h3 className="font-display text-base font-semibold">Registrar entrega</h3>
-            <button type="button" onClick={() => dialogRef.current?.close()} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
+            </div>
           </div>
+        </div>
 
-          <label className="text-sm">
-            Parceiro
-            <select value={partnerId} onChange={(e) => setPartnerId(e.target.value)} className="tk-input-full" required>
-              <option value="" disabled>Selecione</option>
-              {partners.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          </label>
+        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-          <div className="text-sm">
-            <p className="font-medium text-slate-700 dark:text-slate-300">Itens desta entrega</p>
-            {items.length === 0 ? (
-              <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Nenhum produto adicionado ainda.</p>
-            ) : (
-              <div className="mt-1.5 space-y-1.5">
-                {items.map((item, i) => (
-                  <div key={i} className="rounded-lg border border-slate-200 p-2.5 dark:border-slate-700">
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="flex min-w-0 flex-1 items-start gap-1.5 break-words text-sm">
-                        {item.colorHex && <span style={{ background: item.colorHex }} className="mt-1 inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                        <span>
-                          {item.productName}
-                          {item.colorLabel && <span className="text-slate-500 dark:text-slate-400"> - {item.colorLabel}</span>}
-                        </span>
-                      </span>
-                      <button type="button" onClick={() => removeItem(i)} aria-label="Remover item" className="shrink-0 text-slate-400 hover:text-red-600 dark:hover:text-red-400">🗑</button>
-                    </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2">
-                      <label className="text-xs text-slate-500 dark:text-slate-400">
-                        Quantidade
-                        <input
-                          type="number"
-                          step="1"
-                          min="1"
-                          value={item.quantity}
-                          onChange={(e) => updateItem(i, { quantity: parseInt(e.target.value, 10) || 0 })}
-                          className="tk-input-full"
-                        />
-                      </label>
-                      <label className="text-xs text-slate-500 dark:text-slate-400">
-                        Preço unit. (R$)
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0.01"
-                          value={item.unitPrice}
-                          onChange={(e) => updateItem(i, { unitPrice: parseFloat(e.target.value) || 0 })}
-                          className="tk-input-full"
-                        />
-                      </label>
-                    </div>
-                    <p className="mt-1 text-right text-xs text-slate-400 dark:text-slate-500">{formatCurrency(item.quantity * item.unitPrice)}</p>
-                  </div>
-                ))}
-              </div>
+        <div className="flex flex-wrap items-end justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {selectedPartner ? selectedPartner.name : 'Selecione um parceiro'} · {totalUnits} {totalUnits === 1 ? 'peça' : 'peças'} · {itemsByProduct.length} {itemsByProduct.length === 1 ? 'produto' : 'produtos'} · {dateLabel}
+          </p>
+          <div className="text-right">
+            <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">{formatCurrency(totalValue)}</p>
+            <p className="text-xs text-slate-400 dark:text-slate-500">custo de produção {formatCurrency(totalCost)}</p>
+            {estimatedProfit != null && (
+              <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                lucro após comissão {(selectedPartner!.defaultCommissionPercent * 100).toFixed(0)}%: {formatCurrency(estimatedProfit)}
+              </p>
             )}
           </div>
+        </div>
 
-          <button type="button" onClick={() => { setProductSearch(''); setView('pickProduct') }} className="rounded-lg border border-dashed border-slate-300 py-2 text-sm font-medium text-violet-600 hover:bg-slate-50 dark:border-slate-700 dark:text-violet-400 dark:hover:bg-slate-800/60">
-            + Adicionar produto
-          </button>
-
-          <label className="text-sm">
-            Data da entrega
-            <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="tk-input-full" required />
-          </label>
-
+        {notesOpen ? (
           <label className="text-sm">
             Observações (opcional)
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="tk-input-full" rows={2} />
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="tk-input-full" rows={2} autoFocus />
           </label>
+        ) : (
+          <button type="button" onClick={() => setNotesOpen(true)} className="self-start text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+            + Observação (opcional)
+          </button>
+        )}
 
-          <div className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-sm font-medium dark:bg-slate-800/60">
-            <span>Total da entrega</span>
-            <span>{items.length > 0 ? `${totalUnits} un - ${formatCurrency(totalValue)}` : '—'}</span>
-          </div>
-
-          <div className="mt-1 flex items-center justify-end gap-3">
-            <button type="button" onClick={() => dialogRef.current?.close()} className="text-sm text-slate-500 hover:underline dark:text-slate-400">Cancelar</button>
-            <SubmitButton pendingLabel="Salvando…">Registrar entrega</SubmitButton>
-          </div>
-        </form>
-      )}
+        <div className="mt-1 flex items-center justify-end gap-3">
+          <button type="button" onClick={() => { onOpenChange(false); resetAll() }} className="text-sm text-slate-500 hover:underline dark:text-slate-400">Cancelar</button>
+          <SubmitButton pendingLabel="Salvando…" disabled={!partnerId || itemsByProduct.length === 0}>Registrar entrega</SubmitButton>
+        </div>
+      </form>
     </dialog>
   )
 }
