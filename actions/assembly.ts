@@ -1128,12 +1128,33 @@ const updateAssemblyColorChoicesSchema = z.object({
   productId: z.string().min(1),
   oldComboKey: z.string().min(1),
   colorChoicesJson: z.string().min(1),
+  // Pedido "nessa edição só pode editar todas as unidades que estão
+  // disponíveis, no caso quero editar somente 1": antes, corrigir a cor
+  // recolorizia TODAS as unidades daquele combo de uma vez (todo
+  // ProductAssembly cujo colorChoices batia com oldComboKey) -- sem jeito
+  // de mover só PARTE delas (ex.: 1 das 4 que saíram erradas, deixando as
+  // outras 3 como estavam). Quantidade agora é obrigatória e pode ser
+  // menor que o total montado -- ver lógica de "plano" abaixo.
+  quantity: z.coerce.number().int('Quantidade deve ser um número inteiro').positive('Quantidade deve ser maior que zero'),
 })
 
+// Bug/pedido "quero editar somente 1": uma montagem (ProductAssembly) é 1
+// LINHA com uma quantidade (ex.: "4 montado" de uma vez) -- reescrever só
+// o rótulo, como antes, move a cor de TODAS as unidades daquela linha
+// junto. Mover só uma fração exige "cortar" a linha: reduz a(s) montagem(s)
+// antiga(s) na quantidade tirada (mantendo a cor antiga pro resto) e cria
+// uma montagem NOVA só com a quantidade movida, já na cor corrigida --
+// mesmo padrão de "plano consumido mais antigo primeiro" + fração de
+// custo/estoque proporcional que reverseExcessAssemblyForRun já usa (acima
+// nesta mesma tela), não um mecanismo novo. `quantity === total montado`
+// (corrigir tudo, uso mais comum antes desta melhoria) acaba tendo o MESMO
+// resultado de antes: cada montagem antiga é 100% movida (apagada) e uma
+// nova sobe com o total -- só que agora representada como
+// apagar+recriar em vez de atualizar-no-lugar, resultado idêntico.
 export async function updateAssemblyColorChoices(formData: FormData): Promise<ActionResult> {
   const parsed = updateAssemblyColorChoicesSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
-  const { productId, oldComboKey, colorChoicesJson } = parsed.data
+  const { productId, oldComboKey, colorChoicesJson, quantity } = parsed.data
 
   let newColorChoices: Record<string, string>
   try {
@@ -1145,7 +1166,7 @@ export async function updateAssemblyColorChoices(formData: FormData): Promise<Ac
     return { success: false, error: 'Selecione ao menos uma cor' }
   }
 
-  const assemblies = await prisma.productAssembly.findMany({ where: { productId } })
+  const assemblies = await prisma.productAssembly.findMany({ where: { productId }, orderBy: { assembledAt: 'asc' } })
   const matching = assemblies.filter((a) => {
     const choices = a.colorChoices as Record<string, string> | null
     return choices ? serializeColorChoices(choices) === oldComboKey : false
@@ -1154,45 +1175,124 @@ export async function updateAssemblyColorChoices(formData: FormData): Promise<Ac
     return { success: false, error: 'Nenhuma montagem encontrada com essa combinação de cores (pode já ter sido editada/excluída)' }
   }
   const oldColorChoices = matching[0].colorChoices as Record<string, string>
-  const matchingIds = matching.map((a) => a.id)
+  const totalMatching = matching.reduce((sum, a) => sum + a.quantity, 0)
+  if (quantity > totalMatching) {
+    return { success: false, error: `Só há ${totalMatching} unidade(s) montada(s) com essa combinação de cor pra corrigir` }
+  }
 
   // Só as chaves de ACESSÓRIO com irmãos de cor têm estoque físico
   // separado por cor -- peça/componente-produto não aparecem aqui de
   // propósito (tratadas pela reescrita do rótulo sozinha, ver comentário
-  // acima).
+  // acima). Mapa id-antigo → id-novo (não mais por `key`): StockConsumption
+  // só guarda o resourceId consumido, nunca a chave do colorChoices que o
+  // originou.
   const status = await getAssemblyStatus(productId)
   const accessoryKeyIds = new Set(status.accessoryRequirements.filter((r) => r.colorOptions).map((r) => r.id))
-  const changedAccessoryKeys = Object.keys(newColorChoices).filter(
-    (key) => accessoryKeyIds.has(key) && oldColorChoices[key] !== undefined && oldColorChoices[key] !== newColorChoices[key],
-  )
+  const changedOldToNewAccessoryId = new Map<string, string>()
+  for (const key of Object.keys(newColorChoices)) {
+    if (!accessoryKeyIds.has(key)) continue
+    const oldId = oldColorChoices[key]
+    const newId = newColorChoices[key]
+    if (oldId !== undefined && oldId !== newId) changedOldToNewAccessoryId.set(oldId, newId)
+  }
+
+  // Plano: tira `quantity` unidades das montagens mais ANTIGAS primeiro
+  // (mesmo critério de reverseExcessAssemblyForRun) -- cada montagem do
+  // plano contribui com `units` (até sua própria quantidade inteira).
+  let remaining = quantity
+  const plan: { assembly: (typeof matching)[number]; units: number }[] = []
+  for (const assembly of matching) {
+    if (remaining <= 0) break
+    const take = Math.min(remaining, assembly.quantity)
+    if (take <= 0) continue
+    plan.push({ assembly, units: take })
+    remaining -= take
+  }
 
   try {
     await prisma.$transaction(async (tx) => {
-      for (const key of changedAccessoryKeys) {
-        const oldAccessoryId = oldColorChoices[key]
-        const newAccessoryId = newColorChoices[key]
-        const consumptions = await tx.stockConsumption.findMany({
-          where: { resourceType: 'ACCESSORY', resourceId: oldAccessoryId, source: 'ASSEMBLY', sourceId: { in: matchingIds } },
-        })
-        const totalQuantity = consumptions.reduce((sum, c) => sum + c.quantity.toNumber(), 0)
-        if (totalQuantity <= 0) continue
-        const newAccessory = await tx.accessory.findUniqueOrThrow({ where: { id: newAccessoryId } })
-        if (newAccessory.currentStock.toNumber() < totalQuantity) {
-          throw new Error(
-            `Estoque insuficiente de "${accessoryLabel(newAccessory)}" pra trocar (necessário ${totalQuantity}, disponível ${newAccessory.currentStock.toNumber()})`,
-          )
+      let newCost = 0
+      let hadCostSnapshot = false
+      const newConsumptionRows: { resourceType: 'ACCESSORY' | 'SUPPLY' | 'PACKAGING'; resourceId: string; quantity: number }[] = []
+      // Delta líquido de estoque por acessório -- positivo = devolve
+      // (saiu da cor antiga), negativo = consome (entrou na cor nova).
+      // Acumulado em vez de aplicado na hora pra validar TUDO antes de
+      // escrever qualquer coisa (nunca deixa currentStock negativo).
+      const accessoryStockDelta = new Map<string, number>()
+
+      for (const { assembly, units } of plan) {
+        const fraction = units / assembly.quantity
+        const fullyMoved = units === assembly.quantity
+
+        const snapshot = assembly.costSnapshot as { componentProductsCost: number; total: number } | null
+        if (snapshot) {
+          hadCostSnapshot = true
+          newCost += snapshot.total * fraction
         }
-        await tx.accessory.update({ where: { id: oldAccessoryId }, data: { currentStock: { increment: totalQuantity } } })
-        await tx.accessory.update({ where: { id: newAccessoryId }, data: { currentStock: { decrement: totalQuantity } } })
+
+        // Todo StockConsumption desta montagem (não só o(s) acessório(s)
+        // trocado(s)) -- cada um é dividido na mesma fração, pra que a
+        // montagem antiga (reduzida) e a nova continuem com o consumo
+        // certo registrado, mesmo os que não mudaram de cor (continuam
+        // apontando pro mesmo resourceId, só migram de sourceId).
+        const consumptions = await tx.stockConsumption.findMany({ where: { source: 'ASSEMBLY', sourceId: assembly.id } })
         for (const c of consumptions) {
-          await tx.stockConsumption.update({ where: { id: c.id }, data: { resourceId: newAccessoryId } })
+          const moveQty = c.quantity.toNumber() * fraction
+          if (moveQty <= 0) continue
+          const newResourceId = c.resourceType === 'ACCESSORY' ? (changedOldToNewAccessoryId.get(c.resourceId) ?? c.resourceId) : c.resourceId
+          newConsumptionRows.push({ resourceType: c.resourceType, resourceId: newResourceId, quantity: moveQty })
+          if (newResourceId !== c.resourceId) {
+            accessoryStockDelta.set(c.resourceId, (accessoryStockDelta.get(c.resourceId) ?? 0) + moveQty)
+            accessoryStockDelta.set(newResourceId, (accessoryStockDelta.get(newResourceId) ?? 0) - moveQty)
+          }
+          if (fullyMoved) {
+            await tx.stockConsumption.delete({ where: { id: c.id } })
+          } else {
+            await tx.stockConsumption.update({ where: { id: c.id }, data: { quantity: c.quantity.toNumber() - moveQty } })
+          }
+        }
+
+        if (fullyMoved) {
+          await tx.productAssembly.delete({ where: { id: assembly.id } })
+        } else {
+          const remainingSnapshot = snapshot
+            ? { componentProductsCost: snapshot.componentProductsCost * (1 - fraction), total: snapshot.total * (1 - fraction) }
+            : undefined
+          await tx.productAssembly.update({
+            where: { id: assembly.id },
+            data: { quantity: assembly.quantity - units, ...(remainingSnapshot ? { costSnapshot: remainingSnapshot } : {}) },
+          })
         }
       }
 
-      for (const a of matching) {
-        await tx.productAssembly.update({
-          where: { id: a.id },
-          data: { colorChoices: newColorChoices as unknown as Prisma.InputJsonValue },
+      // Valida TODO o estoque de acessório necessário antes de aplicar
+      // qualquer incremento/decremento -- nunca deixa currentStock negativo
+      // mesmo com vários acessórios trocados ao mesmo tempo.
+      for (const [accessoryId, delta] of accessoryStockDelta) {
+        if (delta >= 0) continue
+        const accessory = await tx.accessory.findUniqueOrThrow({ where: { id: accessoryId } })
+        if (accessory.currentStock.toNumber() + delta < 0) {
+          throw new Error(
+            `Estoque insuficiente de "${accessoryLabel(accessory)}" pra trocar (necessário ${-delta}, disponível ${accessory.currentStock.toNumber()})`,
+          )
+        }
+      }
+      for (const [accessoryId, delta] of accessoryStockDelta) {
+        await tx.accessory.update({ where: { id: accessoryId }, data: { currentStock: { increment: delta } } })
+      }
+
+      const newAssembly = await tx.productAssembly.create({
+        data: {
+          productId,
+          quantity,
+          notes: null,
+          colorChoices: newColorChoices as unknown as Prisma.InputJsonValue,
+          ...(hadCostSnapshot ? { costSnapshot: { componentProductsCost: 0, total: newCost } } : {}),
+        },
+      })
+      for (const row of newConsumptionRows) {
+        await tx.stockConsumption.create({
+          data: { resourceType: row.resourceType, resourceId: row.resourceId, quantity: row.quantity, productId, source: 'ASSEMBLY', sourceId: newAssembly.id },
         })
       }
     })

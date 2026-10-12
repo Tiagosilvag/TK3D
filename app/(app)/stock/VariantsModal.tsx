@@ -280,6 +280,13 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
                           <EditVariantColorsForm
                             productId={product.productId}
                             comboKey={v.key}
+                            // Teto do campo "Quantidade a corrigir" --
+                            // Disponível + Consignado + Vendido desta
+                            // linha é o total que já passou por
+                            // ProductAssembly com esse combo (Prontas p/
+                            // montar é produção AINDA não montada, não
+                            // entra nessa soma).
+                            maxUnits={v.available + v.consignado + v.sold}
                             onCancel={() => setEditingKey(null)}
                             // Fecha a modal inteira (não só o formulário de edição):
                             // `product` vem do state `viewingProduct` do componente

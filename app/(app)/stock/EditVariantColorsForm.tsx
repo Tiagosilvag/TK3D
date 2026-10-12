@@ -40,11 +40,23 @@ interface EditableChoice {
 export function EditVariantColorsForm({
   productId,
   comboKey,
+  // Pedido "só pode editar todas as unidades que estão disponíveis, no
+  // caso quero editar somente 1": antes a correção sempre movia TODAS as
+  // unidades montadas desta cor de uma vez -- quantidade virou um campo
+  // obrigatório (padrão 1, o caso mais comum: corrigir só a(s) peça(s)
+  // que saiu(íram) errada(s), sem mexer no resto). `maxUnits` (Disponível +
+  // Consignado + Vendido desta linha, vindo de VariantsModal -- a mesma
+  // soma que corresponde ao total já montado) é só um teto pro campo; a
+  // action recalcula e valida o total de verdade no servidor de qualquer
+  // jeito, então um `maxUnits` desatualizado nunca deixa passar mais do
+  // que existe.
+  maxUnits,
   onCancel,
   onSaved,
 }: {
   productId: string
   comboKey: string
+  maxUnits: number
   onCancel: () => void
   onSaved: () => void
 }) {
@@ -54,6 +66,7 @@ export function EditVariantColorsForm({
   const [error, setError] = useState('')
   const [editable, setEditable] = useState<EditableChoice[]>([])
   const [values, setValues] = useState<Record<string, string>>({})
+  const [quantity, setQuantity] = useState('1')
 
   useEffect(() => {
     let cancelled = false
@@ -91,12 +104,18 @@ export function EditVariantColorsForm({
   }, [productId, comboKey])
 
   async function save() {
+    const qty = parseInt(quantity, 10)
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setError('Quantidade inválida')
+      return
+    }
     setSaving(true)
     setError('')
     const fd = new FormData()
     fd.set('productId', productId)
     fd.set('oldComboKey', comboKey)
     fd.set('colorChoicesJson', JSON.stringify(values))
+    fd.set('quantity', String(qty))
     const result = await updateAssemblyColorChoices(fd)
     setSaving(false)
     if (!result.success) {
@@ -114,6 +133,18 @@ export function EditVariantColorsForm({
   return (
     <div className="grid gap-2 py-2">
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      <label className="text-xs">
+        Quantidade a corrigir{maxUnits > 0 && ` (máx. ${maxUnits})`}
+        <input
+          type="number"
+          step="1"
+          min={1}
+          max={maxUnits > 0 ? maxUnits : undefined}
+          value={quantity}
+          onChange={(e) => setQuantity(e.target.value)}
+          className="tk-input-full mt-1"
+        />
+      </label>
       {editable.map((row) => (
         <label key={row.key} className="text-xs">
           {row.label}
