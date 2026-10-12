@@ -41,15 +41,39 @@ export default async function ConsignmentDeliveriesPage({
   // (/products/:id) já calcula ao vivo a partir do custo+markup
   // (getProductCostBreakdown -- nunca null, ao contrário do campo
   // cadastrado), só quando o campo manual está vazio.
+  // Bug "algo deu errado nesta tela" (pool de conexões esgotado -- "Timed
+  // out fetching a new connection from the connection pool", limit: 5):
+  // Promise.all sobre TODO o catálogo (70+ produtos) disparava
+  // getProductAverageProductionCost + getProductCostBreakdown de uma vez
+  // só -- cada chamada já faz 2+ queries internamente (e produto composto
+  // com componentes soma MAIS uma leva em paralelo por componente), então
+  // só esta página sozinha conseguia pedir dezenas de conexões ao mesmo
+  // tempo de um pool de 5, derrubando até queries de OUTRAS páginas/
+  // usuários concorrentes na mesma janela (os logs mostravam
+  // settings.findUniqueOrThrow de outro request falhando junto). Processa
+  // sequencialmente (nunca mais que 1 produto por vez) -- mais lento, mas
+  // nunca estoura o pool. Cada chamada continua isolada em try/catch:
+  // custo/preço ao vivo são só um EXTRA pra UI (footer de custo/lucro,
+  // fallback de preço) -- um produto malformado nunca pode derrubar a
+  // tela inteira por causa disso, fica com custo 0/sem fallback de preço
+  // (mesmo "nunca inventa dado" de sempre).
   const unitCostByProductId = new Map<string, number>()
   const fallbackPriceByProductId = new Map<string, number>()
-  await Promise.all(deliveryOptions.map(async (o) => {
-    unitCostByProductId.set(o.productId, await getProductAverageProductionCost(o.productId))
-    if (o.suggestedPrice == null) {
-      const breakdown = await getProductCostBreakdown(o.productId)
-      fallbackPriceByProductId.set(o.productId, breakdown.suggestedPrice)
+  for (const o of deliveryOptions) {
+    try {
+      unitCostByProductId.set(o.productId, await getProductAverageProductionCost(o.productId))
+    } catch {
+      unitCostByProductId.set(o.productId, 0)
     }
-  }))
+    if (o.suggestedPrice == null) {
+      try {
+        const breakdown = await getProductCostBreakdown(o.productId)
+        fallbackPriceByProductId.set(o.productId, breakdown.suggestedPrice)
+      } catch {
+        // sem fallback -- fica null, UI mostra "—" em vez de inventar preço.
+      }
+    }
+  }
 
   // Melhoria "Entregas em consignação" §5: rótulo de cor de cada linha --
   // reaproveita a mesma quebra de variante que Estoque/Parceiros já usam
