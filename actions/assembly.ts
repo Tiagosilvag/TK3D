@@ -1166,50 +1166,61 @@ export async function updateAssemblyColorChoices(formData: FormData): Promise<Ac
     return { success: false, error: 'Selecione ao menos uma cor' }
   }
 
-  const assemblies = await prisma.productAssembly.findMany({ where: { productId }, orderBy: { assembledAt: 'asc' } })
-  const matching = assemblies.filter((a) => {
-    const choices = a.colorChoices as Record<string, string> | null
-    return choices ? serializeColorChoices(choices) === oldComboKey : false
-  })
-  if (matching.length === 0) {
-    return { success: false, error: 'Nenhuma montagem encontrada com essa combinação de cores (pode já ter sido editada/excluída)' }
-  }
-  const oldColorChoices = matching[0].colorChoices as Record<string, string>
-  const totalMatching = matching.reduce((sum, a) => sum + a.quantity, 0)
-  if (quantity > totalMatching) {
-    return { success: false, error: `Só há ${totalMatching} unidade(s) montada(s) com essa combinação de cor pra corrigir` }
-  }
-
-  // Só as chaves de ACESSÓRIO com irmãos de cor têm estoque físico
-  // separado por cor -- peça/componente-produto não aparecem aqui de
-  // propósito (tratadas pela reescrita do rótulo sozinha, ver comentário
-  // acima). Mapa id-antigo → id-novo (não mais por `key`): StockConsumption
-  // só guarda o resourceId consumido, nunca a chave do colorChoices que o
-  // originou.
-  const status = await getAssemblyStatus(productId)
-  const accessoryKeyIds = new Set(status.accessoryRequirements.filter((r) => r.colorOptions).map((r) => r.id))
-  const changedOldToNewAccessoryId = new Map<string, string>()
-  for (const key of Object.keys(newColorChoices)) {
-    if (!accessoryKeyIds.has(key)) continue
-    const oldId = oldColorChoices[key]
-    const newId = newColorChoices[key]
-    if (oldId !== undefined && oldId !== newId) changedOldToNewAccessoryId.set(oldId, newId)
-  }
-
-  // Plano: tira `quantity` unidades das montagens mais ANTIGAS primeiro
-  // (mesmo critério de reverseExcessAssemblyForRun) -- cada montagem do
-  // plano contribui com `units` (até sua própria quantidade inteira).
-  let remaining = quantity
-  const plan: { assembly: (typeof matching)[number]; units: number }[] = []
-  for (const assembly of matching) {
-    if (remaining <= 0) break
-    const take = Math.min(remaining, assembly.quantity)
-    if (take <= 0) continue
-    plan.push({ assembly, units: take })
-    remaining -= take
-  }
-
+  // Bug "botão Salvar não funciona" (mesma classe do pool de conexões
+  // esgotado em /consignment/deliveries): qualquer erro inesperado aqui
+  // (ex.: timeout de conexão) propagava cru da server action pro cliente
+  // em vez de virar { success: false, error } -- EditVariantColorsForm.tsx
+  // não tinha try/catch no lado dele também, então o botão ficava preso
+  // em "Salvando…" sem nenhum feedback. Um try/catch só (em vez de dois
+  // separados) cobre da 1ª query até o fim da transação.
+  let matching: Awaited<ReturnType<typeof prisma.productAssembly.findMany>>
+  let oldColorChoices: Record<string, string>
+  let totalMatching: number
+  let changedOldToNewAccessoryId: Map<string, string>
   try {
+    const assemblies = await prisma.productAssembly.findMany({ where: { productId }, orderBy: { assembledAt: 'asc' } })
+    matching = assemblies.filter((a) => {
+      const choices = a.colorChoices as Record<string, string> | null
+      return choices ? serializeColorChoices(choices) === oldComboKey : false
+    })
+    if (matching.length === 0) {
+      return { success: false, error: 'Nenhuma montagem encontrada com essa combinação de cores (pode já ter sido editada/excluída)' }
+    }
+    oldColorChoices = matching[0].colorChoices as Record<string, string>
+    totalMatching = matching.reduce((sum, a) => sum + a.quantity, 0)
+    if (quantity > totalMatching) {
+      return { success: false, error: `Só há ${totalMatching} unidade(s) montada(s) com essa combinação de cor pra corrigir` }
+    }
+
+    // Só as chaves de ACESSÓRIO com irmãos de cor têm estoque físico
+    // separado por cor -- peça/componente-produto não aparecem aqui de
+    // propósito (tratadas pela reescrita do rótulo sozinha, ver comentário
+    // acima). Mapa id-antigo → id-novo (não mais por `key`): StockConsumption
+    // só guarda o resourceId consumido, nunca a chave do colorChoices que o
+    // originou.
+    const status = await getAssemblyStatus(productId)
+    const accessoryKeyIds = new Set(status.accessoryRequirements.filter((r) => r.colorOptions).map((r) => r.id))
+    changedOldToNewAccessoryId = new Map<string, string>()
+    for (const key of Object.keys(newColorChoices)) {
+      if (!accessoryKeyIds.has(key)) continue
+      const oldId = oldColorChoices[key]
+      const newId = newColorChoices[key]
+      if (oldId !== undefined && oldId !== newId) changedOldToNewAccessoryId.set(oldId, newId)
+    }
+
+    // Plano: tira `quantity` unidades das montagens mais ANTIGAS primeiro
+    // (mesmo critério de reverseExcessAssemblyForRun) -- cada montagem do
+    // plano contribui com `units` (até sua própria quantidade inteira).
+    let remaining = quantity
+    const plan: { assembly: (typeof matching)[number]; units: number }[] = []
+    for (const assembly of matching) {
+      if (remaining <= 0) break
+      const take = Math.min(remaining, assembly.quantity)
+      if (take <= 0) continue
+      plan.push({ assembly, units: take })
+      remaining -= take
+    }
+
     await prisma.$transaction(async (tx) => {
       let newCost = 0
       let hadCostSnapshot = false

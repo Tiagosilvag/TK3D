@@ -111,19 +111,31 @@ export function EditVariantColorsForm({
     }
     setSaving(true)
     setError('')
-    const fd = new FormData()
-    fd.set('productId', productId)
-    fd.set('oldComboKey', comboKey)
-    fd.set('colorChoicesJson', JSON.stringify(values))
-    fd.set('quantity', String(qty))
-    const result = await updateAssemblyColorChoices(fd)
-    setSaving(false)
-    if (!result.success) {
-      setError(result.error ?? 'Erro ao salvar')
-      return
+    // Bug "botão Salvar não funciona": se a server action lançar uma
+    // exceção não tratada (em vez de devolver { success: false, error }),
+    // o `await` abaixo rejeitava sem nunca chegar no `setSaving(false)` --
+    // botão ficava preso em "Salvando…" pra sempre, parecendo travado.
+    // try/catch garante que o botão volta ao normal e mostra um erro
+    // visível mesmo numa falha inesperada (ex.: timeout de conexão com o
+    // banco), nunca só "nada acontece".
+    try {
+      const fd = new FormData()
+      fd.set('productId', productId)
+      fd.set('oldComboKey', comboKey)
+      fd.set('colorChoicesJson', JSON.stringify(values))
+      fd.set('quantity', String(qty))
+      const result = await updateAssemblyColorChoices(fd)
+      if (!result.success) {
+        setError(result.error ?? 'Erro ao salvar')
+        return
+      }
+      router.refresh()
+      onSaved()
+    } catch {
+      setError('Erro ao salvar -- tente de novo em alguns segundos.')
+    } finally {
+      setSaving(false)
     }
-    router.refresh()
-    onSaved()
   }
 
   if (loading) {
