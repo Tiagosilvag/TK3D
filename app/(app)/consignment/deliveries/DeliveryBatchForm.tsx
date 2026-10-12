@@ -61,6 +61,48 @@ function yesterdayString(): string {
   return d.toISOString().slice(0, 10)
 }
 
+// Pedido "nome da variação em 2 níveis, sem cortar": título em destaque (1º
+// attr, maior hierarquia -- tier "produto" sempre vem primeiro, ver
+// VARIANT_ATTR_TIER_RANK em lib/reports.ts) + detalhe embaixo com o resto,
+// em vez da única linha corrida que `compactVariantLabel` gerava (cortava
+// com `truncate` quando a peça tinha muitos componentes).
+function variantTitleAndDetail(v: ProductVariantOption): { title: string; detail: string } {
+  if (v.attrs.length === 0) return { title: v.label, detail: '' }
+  const [first, ...rest] = v.attrs
+  return { title: first.shortValue, detail: rest.map((a) => a.shortValue).join(' · ') }
+}
+
+function totalAvailable(p: ProductOption): number {
+  return p.variants.reduce((s, v) => s + v.available, 0)
+}
+
+// Produto sem NENHUMA variante cadastrada (nunca produzido/montado em
+// nenhuma cor -- caso raro, legado) não entra no agrupamento "esgotado":
+// não há como saber se ele tem estoque ou não, então fica sempre na lista
+// principal com quantidade livre (mesmo comportamento de sempre).
+function isOutOfStock(p: ProductOption): boolean {
+  return p.variants.length > 0 && totalAvailable(p) === 0
+}
+
+// Selo de estoque por variante -- verde normalmente, âmbar quando resta
+// pouco (≤ 2) ou quando a quantidade já escolhida nesta entrega bateu no
+// máximo disponível (mesmo aviso visual que Montagem/Pedidos já usam pra
+// "não dá pra pedir mais disso").
+function StockBadge({ available, selected }: { available: number; selected: number }) {
+  const low = available <= 2 || selected >= available
+  return (
+    <span
+      className={`shrink-0 whitespace-nowrap rounded-full px-1.5 py-0.5 text-[11px] font-medium ${
+        low
+          ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300'
+          : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300'
+      }`}
+    >
+      {available} disp.
+    </span>
+  )
+}
+
 function QtyStepper({
   value,
   onDec,
@@ -129,6 +171,8 @@ export function DeliveryBatchForm({
   const [notesOpen, setNotesOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [expandedProductId, setExpandedProductId] = useState<string | null>(defaultProductId ?? null)
+  const [showOutOfStock, setShowOutOfStock] = useState(false)
+  const [showEsgotadasFor, setShowEsgotadasFor] = useState<Set<string>>(new Set())
   const [quantities, setQuantities] = useState<Record<string, number>>({})
   const [prices, setPrices] = useState<Record<string, number>>({})
   const [repeating, setRepeating] = useState(false)
@@ -275,6 +319,8 @@ export function DeliveryBatchForm({
     const term = search.trim().toLowerCase()
     return term ? products.filter((p) => p.productName.toLowerCase().includes(term)) : products
   }, [products, search])
+  const inStockProducts = useMemo(() => filteredProducts.filter((p) => !isOutOfStock(p)), [filteredProducts])
+  const outOfStockProducts = useMemo(() => filteredProducts.filter(isOutOfStock), [filteredProducts])
 
   async function action() {
     if (!partnerId) {
@@ -407,17 +453,36 @@ export function DeliveryBatchForm({
               placeholder="Buscar produto…"
               className="tk-input-full mt-2"
             />
+            {/* Pedido "priorizar o que tem estoque (esconder o esgotado)":
+                produto com estoque total 0 (em TODAS as cores, nunca o caso
+                "sem variação cadastrada" -- esse não tem como saber se tem
+                estoque, fica sempre na lista principal) sai da lista e vai
+                pro grupo recolhido no fim, separado da rolagem principal. */}
+            <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+              {inStockProducts.length} {inStockProducts.length === 1 ? 'produto' : 'produtos'} com estoque
+              {outOfStockProducts.length > 0 && ` · ${outOfStockProducts.length} esgotado${outOfStockProducts.length > 1 ? 's' : ''}${showOutOfStock ? '' : ' (ocultos)'}`}
+            </p>
             <div className="mt-2 max-h-96 space-y-1.5 overflow-y-auto pr-1">
-              {filteredProducts.length === 0 && (
+              {inStockProducts.length === 0 && outOfStockProducts.length === 0 && (
                 <p className="px-2 py-4 text-center text-sm text-slate-400 dark:text-slate-500">Nenhum produto encontrado.</p>
               )}
-              {filteredProducts.map((product) => {
-                const totalAvailable = product.variants.reduce((s, v) => s + v.available, 0)
+              {inStockProducts.map((product) => {
+                // Pedido "dentro de um produto, mostrar só as variações com
+                // estoque": esgotadas ficam atrás de "Mostrar N esgotadas"
+                // dentro do próprio produto, apagadas e sem −/+ (nunca dá
+                // pra entregar o que não existe).
+                const variantsInStock = product.variants.filter((v) => v.available > 0)
+                const variantsOut = product.variants.filter((v) => v.available === 0)
                 const addedForProduct = product.variants.reduce((s, v) => s + (quantities[lineKey(product.productId, v.key)] ?? 0), 0)
                   + (quantities[lineKey(product.productId, null)] ?? 0)
-                const multiVariant = product.variants.length > 1
-                const singleVariant = product.variants.length === 1 ? product.variants[0] : null
+                const noVariantTracking = product.variants.length === 0
+                // "1 variação só" (inline, sem expandir) exige não ter
+                // NENHUMA esgotada escondida também -- senão não haveria
+                // como ver o aviso "+N esgotadas".
+                const singleVariant = variantsInStock.length === 1 && variantsOut.length === 0 ? variantsInStock[0] : null
+                const multiVariant = !singleVariant && !noVariantTracking
                 const isExpanded = expandedProductId === product.productId
+                const showEsgotadas = showEsgotadasFor.has(product.productId)
 
                 return (
                   <div key={product.productId} className="rounded-lg border border-slate-200 dark:border-slate-700">
@@ -428,7 +493,7 @@ export function DeliveryBatchForm({
                       className={`flex items-center justify-between gap-2 px-3 py-2 ${multiVariant ? 'cursor-pointer' : ''}`}
                     >
                       <div className="min-w-0 flex-1">
-                        <p className="flex items-center gap-1.5 truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                        <p className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-slate-100">
                           {product.productName}
                           {addedForProduct > 0 && (
                             <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">
@@ -437,21 +502,26 @@ export function DeliveryBatchForm({
                           )}
                         </p>
                         <p className="text-xs text-slate-400 dark:text-slate-500">
-                          {product.variants.length === 0 ? 'sem variação cadastrada' : `${product.variants.length} ${product.variants.length === 1 ? 'variação' : 'variações'} · ${totalAvailable} em estoque`}
+                          {noVariantTracking
+                            ? 'sem variação cadastrada'
+                            : `${variantsInStock.length} ${variantsInStock.length === 1 ? 'variação' : 'variações'} com estoque · ${variantsInStock.reduce((s, v) => s + v.available, 0)} un${variantsOut.length > 0 ? ` · +${variantsOut.length} esgotada${variantsOut.length > 1 ? 's' : ''}` : ''}`}
                         </p>
                       </div>
                       <span className="shrink-0 text-sm text-slate-500 dark:text-slate-400">
                         {product.suggestedPrice != null ? formatCurrency(product.suggestedPrice) : '—'}
                       </span>
                       {singleVariant && (
-                        <QtyStepper
-                          value={quantities[lineKey(product.productId, singleVariant.key)] ?? 0}
-                          onDec={() => setQty(product.productId, singleVariant.key, (quantities[lineKey(product.productId, singleVariant.key)] ?? 0) - 1, singleVariant.available)}
-                          onInc={() => setQty(product.productId, singleVariant.key, (quantities[lineKey(product.productId, singleVariant.key)] ?? 0) + 1, singleVariant.available)}
-                          incDisabled={(quantities[lineKey(product.productId, singleVariant.key)] ?? 0) >= singleVariant.available}
-                        />
+                        <>
+                          <StockBadge available={singleVariant.available} selected={quantities[lineKey(product.productId, singleVariant.key)] ?? 0} />
+                          <QtyStepper
+                            value={quantities[lineKey(product.productId, singleVariant.key)] ?? 0}
+                            onDec={() => setQty(product.productId, singleVariant.key, (quantities[lineKey(product.productId, singleVariant.key)] ?? 0) - 1, singleVariant.available)}
+                            onInc={() => setQty(product.productId, singleVariant.key, (quantities[lineKey(product.productId, singleVariant.key)] ?? 0) + 1, singleVariant.available)}
+                            incDisabled={(quantities[lineKey(product.productId, singleVariant.key)] ?? 0) >= singleVariant.available}
+                          />
+                        </>
                       )}
-                      {product.variants.length === 0 && (
+                      {noVariantTracking && (
                         <QtyStepper
                           value={quantities[lineKey(product.productId, null)] ?? 0}
                           onDec={() => setQty(product.productId, null, (quantities[lineKey(product.productId, null)] ?? 0) - 1, null)}
@@ -463,27 +533,92 @@ export function DeliveryBatchForm({
                     </div>
 
                     {multiVariant && isExpanded && (
-                      <div className="space-y-1.5 border-t border-slate-100 px-3 py-2 dark:border-slate-800">
-                        {product.variants.map((v) => (
-                          <div key={v.key} className="flex items-center justify-between gap-2 text-sm">
-                            <span className="flex min-w-0 items-center gap-1.5">
-                              {v.colorHex && <span style={{ background: v.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-                              <span className="truncate">{compactVariantLabel(v)}</span>
-                              <span className="shrink-0 text-xs text-slate-400 dark:text-slate-500">{v.available} disp.</span>
-                            </span>
-                            <QtyStepper
-                              value={quantities[lineKey(product.productId, v.key)] ?? 0}
-                              onDec={() => setQty(product.productId, v.key, (quantities[lineKey(product.productId, v.key)] ?? 0) - 1, v.available)}
-                              onInc={() => setQty(product.productId, v.key, (quantities[lineKey(product.productId, v.key)] ?? 0) + 1, v.available)}
-                              incDisabled={(quantities[lineKey(product.productId, v.key)] ?? 0) >= v.available}
-                            />
-                          </div>
-                        ))}
+                      <div className="space-y-2 border-t border-slate-100 px-3 py-2 dark:border-slate-800">
+                        {variantsInStock.map((v) => {
+                          const { title, detail } = variantTitleAndDetail(v)
+                          return (
+                            <div key={v.key} className="flex items-center justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  {v.colorHex && <span style={{ background: v.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                                  <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{title}</p>
+                                </div>
+                                {detail && <p className="text-xs text-slate-400 dark:text-slate-500">{detail}</p>}
+                              </div>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <StockBadge available={v.available} selected={quantities[lineKey(product.productId, v.key)] ?? 0} />
+                                <QtyStepper
+                                  value={quantities[lineKey(product.productId, v.key)] ?? 0}
+                                  onDec={() => setQty(product.productId, v.key, (quantities[lineKey(product.productId, v.key)] ?? 0) - 1, v.available)}
+                                  onInc={() => setQty(product.productId, v.key, (quantities[lineKey(product.productId, v.key)] ?? 0) + 1, v.available)}
+                                  incDisabled={(quantities[lineKey(product.productId, v.key)] ?? 0) >= v.available}
+                                />
+                              </div>
+                            </div>
+                          )
+                        })}
+
+                        {variantsOut.length > 0 && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setShowEsgotadasFor((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(product.productId)) next.delete(product.productId)
+                                else next.add(product.productId)
+                                return next
+                              })}
+                              className="text-xs font-medium text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                            >
+                              {showEsgotadas ? '▴ Ocultar esgotadas' : `▾ Mostrar ${variantsOut.length} esgotada${variantsOut.length > 1 ? 's' : ''}`}
+                            </button>
+                            {showEsgotadas && variantsOut.map((v) => {
+                              const { title, detail } = variantTitleAndDetail(v)
+                              return (
+                                <div key={v.key} className="flex items-center justify-between gap-3 opacity-50">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5">
+                                      {v.colorHex && <span style={{ background: v.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
+                                      <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{title}</p>
+                                    </div>
+                                    {detail && <p className="text-xs text-slate-400 dark:text-slate-500">{detail}</p>}
+                                  </div>
+                                  <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                                    esgotado
+                                  </span>
+                                </div>
+                              )
+                            })}
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
                 )
               })}
+
+              {outOfStockProducts.length > 0 && (
+                <div className="rounded-lg border border-dashed border-slate-200 dark:border-slate-700">
+                  <button
+                    type="button"
+                    onClick={() => setShowOutOfStock((s) => !s)}
+                    className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium text-slate-500 dark:text-slate-400"
+                  >
+                    <span>Sem estoque · {outOfStockProducts.length} {outOfStockProducts.length === 1 ? 'produto' : 'produtos'}</span>
+                    <span aria-hidden>{showOutOfStock ? '▴ Ocultar' : '▾ Mostrar'}</span>
+                  </button>
+                  {showOutOfStock && (
+                    <div className="space-y-1 border-t border-slate-100 px-3 py-2 dark:border-slate-800">
+                      {outOfStockProducts.map((p) => (
+                        <div key={p.productId} className="flex items-center justify-between gap-2 py-1 opacity-50">
+                          <span className="text-sm text-slate-500 dark:text-slate-400">{p.productName}</span>
+                          <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">esgotado</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

@@ -3,7 +3,7 @@ import { DeliveriesExplorer, type DeliveryBatchRow } from './DeliveriesExplorer'
 import { resolveDateRange } from '@/lib/dateRange'
 import { getProductVariantStockOptions, getProductVariantBreakdown } from '@/lib/reports'
 import { productNeedsAssembly } from '@/lib/products'
-import { getProductAverageProductionCost } from '@/actions/products'
+import { getProductAverageProductionCost, getProductCostBreakdown } from '@/actions/products'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,9 +32,23 @@ export default async function ConsignmentDeliveriesPage({
   // produto -- mesmo padrão já usado pro card "Resultado das vendas" do
   // parceiro (lib/reports.ts#getConsignmentPartnerDetail) -- alimenta o
   // "custo de produção"/"lucro estimado" do novo modal de entrega em lote.
+  //
+  // Bug "valor unitário nunca zerado": Product.suggestedPrice é opcional
+  // (nem todo produto tem um preço manualmente cadastrado) -- o modal
+  // pré-preenchia o preço de cada produto com esse campo direto, caindo
+  // pra R$0,00 (e lucro negativo) pra qualquer produto sem ele. Pro
+  // fallback, usa o MESMO preço sugerido que a tela do produto
+  // (/products/:id) já calcula ao vivo a partir do custo+markup
+  // (getProductCostBreakdown -- nunca null, ao contrário do campo
+  // cadastrado), só quando o campo manual está vazio.
   const unitCostByProductId = new Map<string, number>()
+  const fallbackPriceByProductId = new Map<string, number>()
   await Promise.all(deliveryOptions.map(async (o) => {
     unitCostByProductId.set(o.productId, await getProductAverageProductionCost(o.productId))
+    if (o.suggestedPrice == null) {
+      const breakdown = await getProductCostBreakdown(o.productId)
+      fallbackPriceByProductId.set(o.productId, breakdown.suggestedPrice)
+    }
   }))
 
   // Melhoria "Entregas em consignação" §5: rótulo de cor de cada linha --
@@ -128,7 +142,11 @@ export default async function ConsignmentDeliveriesPage({
       <DeliveriesExplorer
         batches={batches}
         partners={partners.map((p) => ({ id: p.id, name: p.name, defaultCommissionPercent: p.defaultCommissionPercent.toNumber() }))}
-        products={deliveryOptions.map((o) => ({ ...o, unitCost: unitCostByProductId.get(o.productId) ?? 0 }))}
+        products={deliveryOptions.map((o) => ({
+          ...o,
+          suggestedPrice: o.suggestedPrice ?? fallbackPriceByProductId.get(o.productId) ?? null,
+          unitCost: unitCostByProductId.get(o.productId) ?? 0,
+        }))}
         defaultProductId={productId}
       />
     </div>
