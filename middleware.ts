@@ -28,9 +28,33 @@ function isWebhookPath(pathname: string): boolean {
   return pathname.startsWith('/api/webhooks/')
 }
 
+// Rotas chamadas pelo worker local do gerador de modelo 3D (processo
+// Python no PC do usuário, sem cookie de navegador -- autentica via
+// Authorization: Bearer, checado dentro de cada handler, ver
+// lib/meshJobs/auth.ts). Isenção por path EXATO/regex, não por prefixo
+// solto: /api/mesh-jobs/:id/download/:kind é usada pelo PRÓPRIO USUÁRIO
+// no navegador pra baixar o resultado e precisa continuar exigindo
+// sessão normal -- um prefixo genérico `/api/mesh-jobs/` isentaria essa
+// rota também, por engano.
+function isMeshWorkerPath(pathname: string): boolean {
+  return (
+    pathname === '/api/mesh-jobs/next' ||
+    /^\/api\/mesh-jobs\/[^/]+\/image$/.test(pathname) ||
+    /^\/api\/mesh-jobs\/[^/]+\/complete$/.test(pathname) ||
+    /^\/api\/mesh-jobs\/[^/]+\/fail$/.test(pathname)
+  )
+}
+
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
-  if (pathname.startsWith('/login') || pathname.startsWith('/api/login') || pathname.startsWith('/_next') || isPublicAsset(pathname) || isWebhookPath(pathname)) {
+  if (
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/api/login') ||
+    pathname.startsWith('/_next') ||
+    isPublicAsset(pathname) ||
+    isWebhookPath(pathname) ||
+    isMeshWorkerPath(pathname)
+  ) {
     return NextResponse.next()
   }
   const token = req.cookies.get('session')?.value ?? ''

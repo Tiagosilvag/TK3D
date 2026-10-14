@@ -46,4 +46,31 @@ describe('middleware', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('location')).toBeNull()
   })
+
+  it('deixa passar GET sem cookie de sessão em /api/mesh-jobs/next (worker usa Bearer, não cookie)', () => {
+    const req = new NextRequest('https://tk3d.coffetech.com.br/api/mesh-jobs/next', { method: 'GET' })
+    const res = middleware(req)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('location')).toBeNull()
+  })
+
+  it('deixa passar GET sem cookie de sessão em /api/mesh-jobs/:id/image', () => {
+    const req = new NextRequest('https://tk3d.coffetech.com.br/api/mesh-jobs/abc123/image', { method: 'GET' })
+    const res = middleware(req)
+    expect(res.status).toBe(200)
+  })
+
+  it('deixa passar POST sem cookie de sessão em /api/mesh-jobs/:id/complete e /fail', () => {
+    const complete = middleware(new NextRequest('https://tk3d.coffetech.com.br/api/mesh-jobs/abc123/complete', { method: 'POST' }))
+    const fail = middleware(new NextRequest('https://tk3d.coffetech.com.br/api/mesh-jobs/abc123/fail', { method: 'POST' }))
+    expect(complete.status).toBe(200)
+    expect(fail.status).toBe(200)
+  })
+
+  it('continua exigindo sessão pra baixar o resultado em /api/mesh-jobs/:id/download/:kind (rota do navegador, não do worker)', () => {
+    const req = new NextRequest('https://tk3d.coffetech.com.br/api/mesh-jobs/abc123/download/stl', { method: 'GET' })
+    const res = middleware(req)
+    expect(res.status).toBe(307)
+    expect(res.headers.get('location')).toContain('/login')
+  })
 })
