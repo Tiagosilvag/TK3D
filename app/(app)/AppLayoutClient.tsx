@@ -52,6 +52,10 @@ const PRODUCTION_NAV_LINKS: NavLink[] = [
   { href: '/monitor', label: 'Monitoramento', icon: NavProductionIcon },
   { href: '/bambu-history', label: 'Histórico Bambu', icon: NavProductionIcon },
   { href: '/anycubic-history', label: 'Histórico Anycubic', icon: NavProductionIcon },
+  // Gerador de modelo 3D (TripoSR, spec 2026-10-14): reaproveita
+  // NavProductionIcon por ora, mesmo padrão dos links acima -- ícone
+  // dedicado é ajuste cosmético que não bloqueia a task.
+  { href: '/3d-generator', label: 'Gerador 3D', icon: NavProductionIcon },
 ]
 
 const CONSIGNMENT_NAV_LINKS: NavLink[] = [
