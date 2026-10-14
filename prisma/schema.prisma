@@ -1551,3 +1551,32 @@ model PrinterCapture {
 
   @@index([printerId, finishedAt])
 }
+
+enum Model3DJobStatus {
+  PENDENTE
+  PROCESSANDO
+  CONCLUIDO
+  ERRO
+}
+
+// Gerador de modelo 3D a partir de imagem (TripoSR, worker local no PC do
+// usuário -- a VPS de produção não tem GPU, ver spec
+// docs/superpowers/specs/2026-10-14-gerador-3d-triposr-design.md). Mesmo
+// padrão de armazenamento de ProductPhoto (arquivo binário direto no
+// Postgres via Bytes, sem storage externo). claimedAt marca quando um
+// worker reivindicou o job -- usado só pra detectar job PROCESSANDO
+// abandonado (worker crashou sem chamar /fail) depois de
+// STALE_AFTER_MINUTES; nunca editado fora de lib/meshJobs/jobs.ts.
+model Model3DJob {
+  id               String           @id @default(cuid())
+  status           Model3DJobStatus @default(PENDENTE)
+  inputImage       Bytes
+  inputContentType String
+  inputSizeBytes   Int
+  outputObj        Bytes?
+  outputStl        Bytes?
+  errorMessage     String?
+  claimedAt        DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+}
