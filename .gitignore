@@ -42,3 +42,8 @@ prisma/dev.db-journal
 
 # claude code local settings
 .claude/settings.local.json
+
+# Worker local do gerador 3D (Python)
+worker/__pycache__/
+worker/*.pyc
+worker/.venv/
