@@ -1069,8 +1069,21 @@ export interface ConsignmentSaleableDelivery {
   groupKey: string
   productId: string
   productName: string
+  // Melhoria "Registrar venda -- redesign": categoria do cadastro do
+  // produto (Product.category, texto livre) -- agrupa/filtra em chips em
+  // vez de uma lista única sem estrutura nenhuma.
+  category: string
   colorLabel: string | null
   colorHex: string | null
+  // Peças desta variante em formato estruturado (mesmo VariantAttr de
+  // getProductVariantBreakdown) -- linha curta "ARGOLA ● prata" em vez do
+  // texto corrido único que `colorLabel` sozinho produzia pra composto.
+  attrs: VariantAttr[]
+  // Custo de produção ao vivo (mesmo padrão de unitCostByProduct em
+  // getConsignmentPartnerDetail) -- alimenta o rodapé "Custo"/"Meu lucro"
+  // calculado em tempo real no próprio modal, sem precisar registrar a
+  // venda pra saber quanto vai sobrar.
+  unitCost: number
   remaining: number
   // Preço da entrega mais antiga do grupo -- pré-preenche o campo editável
   // de preço unitário no modal "Registrar venda" (pedido "às vezes o valor
@@ -1195,8 +1208,10 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
   const saleableGroups = new Map<string, {
     productId: string
     productName: string
+    category: string
     colorLabel: string | null
     colorHex: string | null
+    attrs: VariantAttr[]
     entries: { deliveryId: string; deliveryDate: Date; remaining: number; unitPrice: number }[]
   }>()
 
@@ -1213,8 +1228,10 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
       const group = saleableGroups.get(groupKey) ?? {
         productId: delivery.productId,
         productName: delivery.product.name,
+        category: delivery.product.category,
         colorLabel,
         colorHex: variantInfo?.colorHex ?? null,
+        attrs: variantInfo?.attrs ?? [],
         entries: [],
       }
       group.entries.push({ deliveryId: delivery.id, deliveryDate: delivery.deliveryDate, remaining: deliveryRemaining, unitPrice: delivery.unitPrice.toNumber() })
@@ -1298,8 +1315,11 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
       groupKey,
       productId: group.productId,
       productName: group.productName,
+      category: group.category,
       colorLabel: group.colorLabel,
       colorHex: group.colorHex,
+      attrs: group.attrs,
+      unitCost: unitCostByProduct.get(group.productId) ?? 0,
       remaining: sortedEntries.reduce((sum, e) => sum + e.remaining, 0),
       unitPrice: sortedEntries[0].unitPrice,
       deliveryIds: sortedEntries.map((e) => e.deliveryId),
