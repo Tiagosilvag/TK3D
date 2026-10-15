@@ -205,9 +205,13 @@ export async function returnConsignmentDeliveryStock(id: string, formData: FormD
     return { success: false, error: `Não é possível devolver mais do que está com o parceiro (${remaining})` }
   }
 
-  await prisma.consignmentDelivery.update({ where: { id }, data: { returnedQuantity: { increment: quantityReturned } } })
+  await prisma.consignmentDelivery.update({
+    where: { id },
+    data: { returnedQuantity: { increment: quantityReturned }, lastReturnedAt: new Date() },
+  })
   revalidatePath('/consignment/deliveries')
   revalidatePath('/consignment/partners')
+  revalidatePath('/stock')
   return { success: true }
 }
 
@@ -231,8 +235,9 @@ export async function undoConsignmentDeliveryReturn(id: string): Promise<ActionR
     return { success: false, error: 'Esta entrega não está devolvida' }
   }
 
-  await prisma.consignmentDelivery.update({ where: { id }, data: { returnedQuantity: 0 } })
+  await prisma.consignmentDelivery.update({ where: { id }, data: { returnedQuantity: 0, lastReturnedAt: null } })
   revalidatePath('/consignment/deliveries')
+  revalidatePath('/stock')
   revalidatePath('/consignment/partners')
   return { success: true }
 }
