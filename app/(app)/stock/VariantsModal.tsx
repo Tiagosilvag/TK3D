@@ -9,39 +9,9 @@ import { UnitTrailDrawer, type DrawerTarget } from './UnitTrailDrawer'
 
 type LocationType = 'estoque' | 'devolvida' | 'parceiro' | 'vendida'
 type VariantRow = ProductUnitTrailResult['variantRows'][number]
-type Unit = ProductUnitTrailResult['units'][number]
-
-const VARIANT_TIER_RANK: Record<string, number> = { produto: 0, complemento: 1, acessorio: 2 }
-
-// Mesmo critério de pickTitleAttrNames/variantTitle de
-// app/(app)/consignment/partners/[id]/PartnerStockSection.tsx -- título
-// curto ("Corpo lavanda · Bolinha branca") a partir das 2 peças que mais
-// diferenciam as variações, em vez do rótulo corrido completo
-// (getProductVariantBreakdown#label, "PEÇA: Marca Cor (Material), ...").
-// Duplicado aqui de propósito (risco baixo, função pura e pequena) em vez
-// de mexer de novo no arquivo já publicado -- candidato a unificar numa
-// 3ª ocorrência futura.
-function pickTitleAttrNames(rows: VariantRow[]): string[] {
-  const names = Array.from(new Set(rows.flatMap((v) => v.attrs.map((a) => a.name))))
-  if (names.length <= 2) return names
-  const allAttrs = rows.flatMap((v) => v.attrs)
-  const scored = names.map((name) => {
-    const distinctValues = new Set(rows.map((v) => v.attrs.find((a) => a.name === name)?.shortValue).filter(Boolean))
-    const tier = allAttrs.find((a) => a.name === name)?.tier ?? 'complemento'
-    return { name, distinctCount: distinctValues.size, tierRank: VARIANT_TIER_RANK[tier] ?? 1 }
-  })
-  scored.sort((a, b) => b.distinctCount - a.distinctCount || a.tierRank - b.tierRank)
-  return scored.slice(0, 2).map((s) => s.name)
-}
-
-function variantTitle(row: VariantRow, titleAttrNames: string[]): string {
-  if (row.attrs.length === 0) return row.label
-  const parts = titleAttrNames
-    .map((name) => row.attrs.find((a) => a.name === name))
-    .filter((a): a is VariantRow['attrs'][number] => Boolean(a))
-    .map((a) => `${a.name} ${a.shortValue}`)
-  return parts.length > 0 ? parts.join(' · ') : row.label
-}
+type PlaceGroupT = ProductUnitTrailResult['placeGroups'][number]
+type PlaceGroupRowT = PlaceGroupT['rows'][number]
+type TitlePiece = PlaceGroupRowT['titlePieces'][number]
 
 function zeroOrDash(n: number): string {
   return n === 0 ? '–' : String(n)
@@ -66,27 +36,21 @@ const ACCENT_CLASSES: Record<string, { border: string; text: string; bg: string 
   slate: { border: 'border-slate-300 dark:border-slate-600', text: 'text-slate-500 dark:text-slate-400', bg: 'bg-slate-50 dark:bg-slate-800/40' },
 }
 
-const UNIT_DOT_CLASS: Record<LocationType, string> = {
+// Pedido "barra empilhada proporcional no lugar das N bolinhas": 1 bloco
+// por lugar, largura % do total montado -- substitui a faixa de 1
+// quadradinho por UNIDADE física (ilegível com 20+ montadas).
+const BAR_SEGMENT_CLASS: Record<LocationType, string> = {
   estoque: 'bg-sky-400',
   parceiro: 'bg-amber-400',
   vendida: 'bg-emerald-400',
   devolvida: 'bg-slate-400',
 }
 
-function locationValue(trail: ProductUnitTrailResult, type: LocationType): number {
-  if (type === 'estoque') return trail.locationCounts.inStock
-  if (type === 'parceiro') return trail.locationCounts.withPartners.reduce((s, p) => s + p.quantity, 0)
-  if (type === 'vendida') return trail.locationCounts.sold
-  return trail.locationCounts.returned
-}
-
-function statusPillForUnit(unit: Unit): { label: string; className: string } {
-  switch (unit.location.type) {
-    case 'estoque': return { label: 'Em estoque', className: 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300' }
-    case 'parceiro': return { label: `Com ${unit.location.partnerName}`, className: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300' }
-    case 'vendida': return { label: unit.location.partnerName ? `Vendida · ${unit.location.partnerName}` : 'Vendida', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300' }
-    case 'devolvida': return { label: 'Devolvida', className: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300' }
-  }
+const LINK_BADGE_CLASS: Record<LocationType, string> = {
+  estoque: '',
+  parceiro: 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-500/20 dark:text-amber-300 dark:hover:bg-amber-500/30',
+  vendida: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300 dark:hover:bg-emerald-500/30',
+  devolvida: '',
 }
 
 const HISTORY_KIND_CLASS: Record<string, string> = {
@@ -97,49 +61,87 @@ const HISTORY_KIND_CLASS: Record<string, string> = {
   Devolvido: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
 }
 
-function daysSince(iso: string): number {
-  const ms = Date.now() - new Date(iso).getTime()
-  return Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)))
+function locationValue(trail: ProductUnitTrailResult, type: LocationType): number {
+  if (type === 'estoque') return trail.locationCounts.inStock
+  if (type === 'parceiro') return trail.locationCounts.withPartners.reduce((s, p) => s + p.quantity, 0)
+  if (type === 'vendida') return trail.locationCounts.sold
+  return trail.locationCounts.returned
 }
 
 function dayKey(iso: string): string {
   return new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })
 }
 
-function UnitCard({ unit, onOpenDrawer }: { unit: Unit; onOpenDrawer: (target: DrawerTarget) => void }) {
-  const pill = statusPillForUnit(unit)
-  const lastStep = unit.steps[unit.steps.length - 1]
+// Bolinha de 1 peça do título -- gradiente meio-a-meio quando a peça em
+// si é multi-filamento (2 colorHexes, ex.: "Cara" com 2 cores na mesma
+// peça), sólida quando é 1 cor só, tracejada quando não resolve (combo
+// multi-filamento com 3+ cores -- raro, degradação aceita). Nunca 2
+// bolinhas sobrepostas pra 1 peça só (isso aqui é 1 bolinha POR PEÇA,
+// lado a lado com a bolinha da OUTRA peça do título -- ver TitlePieceDots).
+function PieceDot({ hexes, size = 'h-3 w-3' }: { hexes: string[]; size?: string }) {
+  if (hexes.length >= 2) {
+    return (
+      <span
+        className={`inline-block shrink-0 rounded-full border border-black/10 dark:border-white/10 ${size}`}
+        style={{ background: `linear-gradient(90deg, ${hexes[0]} 50%, ${hexes[1]} 50%)` }}
+      />
+    )
+  }
+  if (hexes.length === 1) {
+    return <span className={`inline-block shrink-0 rounded-full border border-black/10 dark:border-white/10 ${size}`} style={{ background: hexes[0] }} />
+  }
+  return <span className={`inline-block shrink-0 rounded-full border border-dashed border-slate-300 dark:border-slate-600 ${size}`} />
+}
+
+function TitlePieceDots({ pieces, size }: { pieces: TitlePiece[]; size?: string }) {
+  if (pieces.length === 0) return null
   return (
-    <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+    <span className="flex shrink-0 items-center gap-1">
+      {pieces.map((p, i) => <PieceDot key={i} hexes={p.colorHexes} size={size} />)}
+    </span>
+  )
+}
+
+// Pedido "1 linha por grupo = mesma variação + mesmo destino + mesma
+// entrega/venda, nunca 1 cartão por unidade": com 18 em estoque isso é a
+// diferença entre 18 cartões idênticos e 1 linha com "×18". "Ver N ▾"
+// (ou "Detalhes ▾" pra grupo de 1 unidade só) expande os chips #1 #2…
+// (rastreável até a unidade física) + a composição completa (todas as
+// peças, não só as 2 do título).
+function PlaceGroupRowCard({ place, row, onOpenDrawer }: { place: LocationType; row: PlaceGroupRowT; onOpenDrawer: (target: DrawerTarget) => void }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div className="rounded-lg border border-slate-200 p-2.5 dark:border-slate-700">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="flex items-center gap-2 text-sm font-medium text-slate-900 dark:text-slate-100">
-          <span className="text-xs text-slate-400 dark:text-slate-500">#{unit.n}</span>
-          <ChipDots hexes={unit.colorHexes} size="h-2.5 w-2.5" />
-          {unit.variantLabel}
-        </span>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${pill.className}`}>{pill.label}</span>
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-        {unit.steps.map((step, i) => (
-          <span key={i} className="flex items-center gap-2">
-            {i > 0 && <span className="text-slate-300 dark:text-slate-600">→</span>}
-            {step.link ? (
-              <button type="button" onClick={() => onOpenDrawer(step.link!)} className="font-medium text-violet-600 hover:underline dark:text-violet-400">
-                {step.label} {step.detail} ↗
-              </button>
-            ) : (
-              <span>{step.label} {step.detail}</span>
-            )}
-          </span>
-        ))}
-        {(unit.location.type === 'estoque' || unit.location.type === 'parceiro') && lastStep && (
-          <span className="flex items-center gap-2 border-l border-dashed border-slate-300 pl-2 text-slate-400 dark:border-slate-600 dark:text-slate-500">
-            {unit.location.type === 'parceiro'
-              ? `Ainda com ${unit.location.partnerName} há ${daysSince(unit.location.since)} dia(s)`
-              : `Parada no estoque há ${daysSince(lastStep.date)} dia(s)`}
-          </span>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-400 dark:text-slate-500">×{row.quantity}</span>
+          <TitlePieceDots pieces={row.titlePieces} />
+          <span className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">{row.shortTitle}</span>
+        </div>
+        {row.link && row.linkLabel && (
+          <button
+            type="button"
+            onClick={() => onOpenDrawer(row.link!)}
+            className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${LINK_BADGE_CLASS[place]}`}
+          >
+            {row.linkLabel} ↗
+          </button>
         )}
       </div>
+      <p className="mt-1 truncate text-xs text-slate-400 dark:text-slate-500">{row.statusLine}</p>
+      <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-1 text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+        {row.quantity === 1 ? (expanded ? 'Ocultar ▴' : 'Detalhes ▾') : (expanded ? 'Ocultar ▴' : `Ver ${row.quantity} ▾`)}
+      </button>
+      {expanded && (
+        <div className="mt-1.5 rounded-lg bg-slate-50 p-2 dark:bg-slate-800/40">
+          <div className="flex flex-wrap gap-1">
+            {row.unitNs.map((n) => (
+              <span key={n} className="rounded-full border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-500 dark:border-slate-600 dark:text-slate-400">#{n}</span>
+            ))}
+          </div>
+          <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">{row.fullComposition}</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -151,6 +153,7 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
   const [locationFilter, setLocationFilter] = useState<LocationType | null>(null)
   const [variantFilter, setVariantFilter] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'units' | 'history'>('units')
+  const [partsOpen, setPartsOpen] = useState(false)
   const [drawerStack, setDrawerStack] = useState<DrawerTarget[]>([])
 
   useEffect(() => {
@@ -168,6 +171,7 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
     setLocationFilter(null)
     setVariantFilter(null)
     setActiveTab('units')
+    setPartsOpen(false)
     setDrawerStack([])
     setTrail(undefined)
     if (!product) return
@@ -176,10 +180,17 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
     return () => { cancelled = true }
   }, [product])
 
-  const titleAttrNames = useMemo(() => (trail ? pickTitleAttrNames(trail.variantRows) : []), [trail])
-  const filteredUnits = useMemo(() => {
+  // Bug "cada card vira 1 linha por UNIDADE (21 pra 21 montadas)": os
+  // grupos já vêm prontos do servidor (placeGroups, ver lib/
+  // productUnitTrail.ts) -- 1 linha por (variação + destino + entrega/
+  // venda), não por unidade física. O filtro de local/variante só decide
+  // quais SEÇÕES/linhas aparecem, nunca recria o agrupamento no client.
+  const visiblePlaceGroups = useMemo(() => {
     if (!trail) return []
-    return trail.units.filter((u) => (!locationFilter || u.location.type === locationFilter) && (!variantFilter || u.comboKey === variantFilter))
+    return trail.placeGroups
+      .filter((g) => !locationFilter || g.place === locationFilter)
+      .map((g) => ({ ...g, rows: g.rows.filter((r) => !variantFilter || r.comboKey === variantFilter) }))
+      .filter((g) => g.rows.length > 0)
   }, [trail, locationFilter, variantFilter])
 
   function toggleLocationFilter(type: LocationType) {
@@ -190,6 +201,7 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
   }
 
   const drawerTarget = drawerStack[drawerStack.length - 1] ?? null
+  const partsWithLeftover = trail?.parts.filter((p) => p.available > 0) ?? []
 
   return (
     <dialog
@@ -199,8 +211,13 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
       className="w-full [--tk-dialog-cap:1000px] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/60 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
       {product && (
-        <div className="relative flex max-h-[85vh] flex-col">
-          <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+        // Bug "a tela inteira rola junto com o cabeçalho": cabeçalho fixo
+        // (shrink-0, fora do scroll), só o corpo rola -- min-h-0 no filho
+        // flex é obrigatório aqui, senão o flex item ignora max-height do
+        // pai e cresce livre em vez de ganhar scroll interno (gotcha
+        // clássico de flexbox).
+        <div className="flex max-h-[90vh] flex-col">
+          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Estoque · Variações</p>
               <h3 className="font-display text-base font-semibold">{product.productName}</h3>
@@ -222,7 +239,7 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
           {trail === null && <p className="px-5 py-10 text-center text-sm text-slate-400 dark:text-slate-500">Não foi possível carregar o rastreio deste produto.</p>}
 
           {trail && (
-            <div className="overflow-y-auto px-5 py-4">
+            <div className="relative min-h-0 flex-1 overflow-y-auto px-5 py-4">
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
                 Onde estão as {trail.totalCreated} {trail.needsAssembly ? 'montadas' : 'produzidas'}
               </p>
@@ -249,28 +266,47 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
                 })}
               </div>
 
+              {trail.totalCreated > 0 && (
+                <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                  {LOCATION_CARDS.map((card) => {
+                    const value = locationValue(trail, card.type)
+                    if (value === 0) return null
+                    return <span key={card.type} className={BAR_SEGMENT_CLASS[card.type]} style={{ width: `${(value / trail.totalCreated) * 100}%` }} />
+                  })}
+                </div>
+              )}
+
+              {/* Bug "Faltam 0 unidade(s)": reconciliationOk/reconciliationNote
+                  já vêm resolvidos do servidor (lib/productUnitTrail.ts) --
+                  só ✓ quando a igualdade bate de verdade, nunca "Faltam 0". */}
               <p className={`mt-2 text-xs ${trail.reconciliationOk ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                 {trail.reconciliationOk
-                  ? `✓ ${locationValue(trail, 'estoque')} + ${locationValue(trail, 'parceiro')} + ${locationValue(trail, 'vendida')} + ${locationValue(trail, 'devolvida')} = ${trail.totalCreated} · bate com o que foi ${trail.needsAssembly ? 'montado' : 'produzido'}`
+                  ? `✓ ${locationValue(trail, 'estoque')} + ${locationValue(trail, 'parceiro')} + ${locationValue(trail, 'vendida')} + ${locationValue(trail, 'devolvida')} = ${trail.totalCreated} · bate com o ${trail.needsAssembly ? 'montado' : 'produzido'}`
                   : `⚠ ${trail.reconciliationNote}`}
               </p>
 
               {trail.parts.length > 0 && (
-                <div className="mt-3 rounded-lg bg-slate-50 p-2.5 dark:bg-slate-800/40">
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Peças do lote (produzido → usado na montagem → sobrou)</p>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-slate-300">
-                    {trail.parts.map((p) => (
-                      <span key={p.name}><span className="font-medium">{p.name}</span> {p.produced} → {p.consumed} → {p.available}</span>
-                    ))}
+                <div className="mt-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                      {partsWithLeftover.length > 0
+                        ? `Sobraram ${partsWithLeftover.map((p) => `${p.available} ${p.available === 1 ? p.name.toLowerCase() : `${p.name.toLowerCase()}s`}`).join(', ')} prontas p/ montar`
+                        : 'Nenhuma peça sobrando pronta p/ montar'}
+                    </p>
+                    <button type="button" onClick={() => setPartsOpen((v) => !v)} className="shrink-0 text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                      Peças do lote {partsOpen ? '▴' : '▾'}
+                    </button>
                   </div>
-                </div>
-              )}
-
-              {trail.units.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1">
-                  {trail.units.map((u) => (
-                    <span key={u.n} title={`#${u.n} · ${statusPillForUnit(u).label}`} className={`inline-block h-3 w-3 rounded-sm ${UNIT_DOT_CLASS[u.location.type]}`} />
-                  ))}
+                  {partsOpen && (
+                    <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      {trail.parts.map((p) => (
+                        <div key={p.name} className="rounded-lg bg-slate-50 p-2 text-center dark:bg-slate-800/40">
+                          <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">{p.name}</p>
+                          <p className="text-xs tabular-nums text-slate-700 dark:text-slate-300">{p.produced} → {p.consumed} → {p.available}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -294,10 +330,11 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
                           onClick={() => toggleVariantFilter(row.comboKey)}
                           className={`tk-row cursor-pointer ${variantFilter === row.comboKey ? 'bg-violet-50 dark:bg-violet-500/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'}`}
                         >
-                          <td className="py-2">
+                          <td className="max-w-0 py-2">
                             <span className="flex items-center gap-2">
-                              <ChipDots hexes={row.colorHexes} size="h-3 w-3" />
-                              {variantTitle(row, titleAttrNames)}
+                              <TitlePieceDots pieces={row.titlePieces} size="h-3 w-3" />
+                              {row.titlePieces.length === 0 && <ChipDots hexes={row.colorHexes} size="h-3 w-3" />}
+                              <span className="truncate">{row.shortTitle}</span>
                             </span>
                           </td>
                           <td className="text-center tabular-nums">{zeroOrDash(row.inStock)}</td>
@@ -333,26 +370,41 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
                 </table>
               </div>
 
-              <div className="mt-4 flex items-center gap-4 border-b border-slate-200 text-sm dark:border-slate-800">
-                <button type="button" onClick={() => setActiveTab('units')} className={`border-b-2 px-1 pb-2 font-medium ${activeTab === 'units' ? 'border-violet-600 text-violet-600 dark:border-violet-400 dark:text-violet-400' : 'border-transparent text-slate-500 dark:text-slate-400'}`}>
-                  Rastrear unidades
+              <div className="mt-4 flex flex-nowrap items-center gap-4 border-b border-slate-200 text-sm dark:border-slate-800">
+                <button type="button" onClick={() => setActiveTab('units')} className={`shrink-0 whitespace-nowrap border-b-2 px-1 pb-2 font-medium ${activeTab === 'units' ? 'border-violet-600 text-violet-600 dark:border-violet-400 dark:text-violet-400' : 'border-transparent text-slate-500 dark:text-slate-400'}`}>
+                  Onde está cada um
                 </button>
-                <button type="button" onClick={() => setActiveTab('history')} className={`border-b-2 px-1 pb-2 font-medium ${activeTab === 'history' ? 'border-violet-600 text-violet-600 dark:border-violet-400 dark:text-violet-400' : 'border-transparent text-slate-500 dark:text-slate-400'}`}>
-                  Histórico completo
+                <button type="button" onClick={() => setActiveTab('history')} className={`shrink-0 whitespace-nowrap border-b-2 px-1 pb-2 font-medium ${activeTab === 'history' ? 'border-violet-600 text-violet-600 dark:border-violet-400 dark:text-violet-400' : 'border-transparent text-slate-500 dark:text-slate-400'}`}>
+                  Histórico
                 </button>
                 {(locationFilter || variantFilter) && activeTab === 'units' && (
-                  <button type="button" onClick={() => { setLocationFilter(null); setVariantFilter(null) }} className="ml-auto pb-2 text-xs text-slate-400 hover:text-violet-600 dark:text-slate-500 dark:hover:text-violet-400">
-                    Filtro: {[locationFilter && LOCATION_CARDS.find((c) => c.type === locationFilter)?.label, variantFilter && trail.variantRows.find((v) => v.comboKey === variantFilter)?.label].filter(Boolean).join(' · ')} · limpar ✕
+                  <button type="button" onClick={() => { setLocationFilter(null); setVariantFilter(null) }} className="ml-auto min-w-0 truncate pb-2 text-xs text-slate-400 hover:text-violet-600 dark:text-slate-500 dark:hover:text-violet-400">
+                    {[locationFilter && LOCATION_CARDS.find((c) => c.type === locationFilter)?.label, variantFilter && trail.variantRows.find((v) => v.comboKey === variantFilter)?.shortTitle].filter(Boolean).join(' · ')} · limpar ✕
                   </button>
                 )}
               </div>
 
               {activeTab === 'units' ? (
-                <div className="mt-3 space-y-2">
-                  {filteredUnits.length === 0 ? (
+                <div className="mt-3 space-y-4">
+                  {visiblePlaceGroups.length === 0 ? (
                     <p className="py-6 text-center text-sm text-slate-400 dark:text-slate-500">Nenhuma unidade nesse filtro.</p>
                   ) : (
-                    filteredUnits.map((u) => <UnitCard key={u.n} unit={u} onOpenDrawer={(target) => setDrawerStack([target])} />)
+                    visiblePlaceGroups.map((g) => {
+                      const accent = ACCENT_CLASSES[LOCATION_CARDS.find((c) => c.type === g.place)!.accent]
+                      return (
+                        <div key={g.place}>
+                          <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide">
+                            <span className={accent.text}>{g.label}</span>
+                            <span className="font-normal normal-case text-slate-400 dark:text-slate-500">{g.count} {g.subtitle}</span>
+                          </p>
+                          <div className="space-y-1.5">
+                            {g.rows.map((row) => (
+                              <PlaceGroupRowCard key={row.key} place={g.place} row={row} onOpenDrawer={(target) => setDrawerStack([target])} />
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })
                   )}
                 </div>
               ) : (
@@ -389,14 +441,14 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
                   ))}
                 </div>
               )}
+
+              <UnitTrailDrawer
+                target={drawerTarget}
+                onClose={() => setDrawerStack([])}
+                onNavigate={(target) => setDrawerStack((prev) => [...prev, target])}
+              />
             </div>
           )}
-
-          <UnitTrailDrawer
-            target={drawerTarget}
-            onClose={() => setDrawerStack([])}
-            onNavigate={(target) => setDrawerStack((prev) => [...prev, target])}
-          />
         </div>
       )}
     </dialog>

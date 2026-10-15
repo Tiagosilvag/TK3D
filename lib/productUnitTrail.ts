@@ -38,11 +38,84 @@
 // não guarda isso) -- entram só na nota de reconciliação, nunca viram
 // uma unidade virtual fake.
 import { prisma } from '@/lib/prisma'
-import { getProductVariantBreakdown, serializeColorChoices, type VariantAttr } from '@/lib/reports'
+import { getProductVariantBreakdown, serializeColorChoices, type ProductVariantBreakdownRow, type VariantAttr } from '@/lib/reports'
 import { productNeedsAssembly } from '@/lib/products'
 import { getAssemblyStatus } from '@/actions/assembly'
 import { getProductAverageProductionCost } from '@/actions/products'
 import { formatCurrency } from '@/lib/format'
+
+// Bug "nome da variação virou texto gigante em maiúsculas": o nome curto
+// (pickTitleAttrNames/buildShortTitle abaixo) só era calculado dentro do
+// VariantsModal.tsx, só pra tabela de variações -- os CARTÕES de unidade,
+// o chip de filtro e os painéis de entrega/venda (DeliveryDrillDown/
+// ConsignmentSaleDrillDown) continuavam lendo `label` cru
+// (getProductVariantBreakdown -- "PEÇA: Marca Cor (Material), ..."), já
+// que cada tela montava o nome do jeito dela. Agora é calculado AQUI, uma
+// vez só pro produto inteiro, e propagado pra tudo que mostra nome de
+// variação (unidade, tabela, chip, drawers) -- nunca mais recalculado
+// (ou esquecido) em cada tela.
+const VARIANT_TITLE_TIER_RANK: Record<string, number> = { produto: 0, complemento: 1, acessorio: 2 }
+
+function pickTitleAttrNames(rows: ProductVariantBreakdownRow[]): string[] {
+  const names = Array.from(new Set(rows.flatMap((v) => v.attrs.map((a) => a.name))))
+  if (names.length <= 2) return names
+  const allAttrs = rows.flatMap((v) => v.attrs)
+  const scored = names.map((name) => {
+    const distinctValues = new Set(rows.map((v) => v.attrs.find((a) => a.name === name)?.shortValue).filter(Boolean))
+    const tier = allAttrs.find((a) => a.name === name)?.tier ?? 'complemento'
+    return { name, distinctCount: distinctValues.size, tierRank: VARIANT_TITLE_TIER_RANK[tier] ?? 1 }
+  })
+  scored.sort((a, b) => b.distinctCount - a.distinctCount || a.tierRank - b.tierRank)
+  return scored.slice(0, 2).map((s) => s.name)
+}
+
+// "em maiúscula só na primeira letra": só o NOME DA PEÇA (ex.: "BOLINHA"
+// cadastrado em maiúsculas por quem criou o produto) -- a cor nunca é
+// tocada (convenção já estabelecida no catálogo é digitar cor em
+// minúsculas, ver comentário equivalente em PartnerStockSection.tsx).
+function toTitleCase(s: string): string {
+  if (!s) return s
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
+}
+
+export interface VariantTitlePiece {
+  name: string
+  shortValue: string
+  colorHexes: string[]
+}
+
+// Título curto ("Corpo rosa claro · Bolinha rosa pink") a partir das 2
+// peças que mais DIFERENCIAM as variações deste produto (não sempre as 2
+// primeiras) -- mesmo critério já usado no redesign do modal do parceiro
+// (PartnerStockSection.tsx#pickTitleAttrNames), agora com a fonte única
+// aqui. `titlePieces` carrega os hexes de CADA peça separados (não
+// achatados num array só) -- pra UI desenhar bolinha única (ou gradiente
+// meio-a-meio quando a peça em si é multi-filamento) por peça, nunca 2
+// bolinhas genéricas que poderiam ser 2 cores da MESMA peça.
+function buildShortTitle(row: ProductVariantBreakdownRow, titleAttrNames: string[]): { shortTitle: string; titlePieces: VariantTitlePiece[] } {
+  if (row.attrs.length === 0) return { shortTitle: row.label, titlePieces: [] }
+  const pieces = titleAttrNames
+    .map((name) => row.attrs.find((a) => a.name === name))
+    .filter((a): a is VariantAttr => Boolean(a))
+    .map((a) => ({ name: toTitleCase(a.name), shortValue: a.shortValue, colorHexes: a.colorHexes }))
+  if (pieces.length === 0) return { shortTitle: row.label, titlePieces: [] }
+  return { shortTitle: pieces.map((p) => `${p.name} ${p.shortValue}`).join(' · '), titlePieces: pieces }
+}
+
+// Composição completa (todas as peças, não só as 2 do título) -- só
+// aparece dentro de "Detalhes"/"Ver N", texto pequeno. Marca entra (por
+// cor, `colors[].manufacturer`), material nunca (pedido explícito "sem
+// (PLA)").
+function buildFullComposition(row: ProductVariantBreakdownRow): string {
+  if (row.attrs.length === 0) return row.label
+  return row.attrs
+    .map((a) => {
+      const name = toTitleCase(a.name)
+      const colorsText = a.colors.map((c) => (c.manufacturer ? `${c.manufacturer} ${c.name}` : c.name)).join(' + ')
+      return name ? `${name} ${colorsText}` : colorsText
+    })
+    .join(' · ')
+}
 
 export type UnitLocationType = 'estoque' | 'devolvida' | 'parceiro' | 'vendida'
 
@@ -68,7 +141,12 @@ export interface UnitTrailStep {
 export interface ProductUnit {
   n: number
   comboKey: string
-  variantLabel: string
+  // Nome curto ("Corpo rosa claro · Bolinha rosa pink") -- o único que
+  // qualquer tela deve mostrar em destaque. `fullComposition` (todas as
+  // peças) só aparece atrás de um "Detalhes"/"Ver N".
+  shortTitle: string
+  titlePieces: VariantTitlePiece[]
+  fullComposition: string
   colorHexes: string[]
   location: UnitLocation
   steps: UnitTrailStep[]
@@ -82,7 +160,9 @@ export interface VariantPartnerCount {
 
 export interface VariantTrailRow {
   comboKey: string
-  label: string
+  shortTitle: string
+  titlePieces: VariantTitlePiece[]
+  fullComposition: string
   colorHexes: string[]
   attrs: VariantAttr[]
   inStock: number
@@ -105,6 +185,33 @@ export interface HistoryEntry {
   link: UnitStepLink | null
 }
 
+// Melhoria "rastreio total v2": "Onde está cada um" deixou de ser 1
+// cartão por UNIDADE (21 cartões pra 21 montadas, ilegível) e virou 4
+// seções por LUGAR (estoque/parceiro/vendida/devolvida), cada uma com 1
+// LINHA por grupo (mesma variação + mesmo destino + mesma entrega/
+// venda) -- várias unidades idênticas (mesma cor, mesmo destino) somam
+// numa linha só com quantidade, nunca uma linha por unidade física.
+export interface PlaceGroupRow {
+  key: string
+  comboKey: string
+  shortTitle: string
+  titlePieces: VariantTitlePiece[]
+  fullComposition: string
+  quantity: number
+  statusLine: string
+  linkLabel: string | null
+  link: UnitStepLink | null
+  unitNs: number[]
+}
+
+export interface PlaceGroup {
+  place: UnitLocationType
+  label: string
+  count: number
+  subtitle: string
+  rows: PlaceGroupRow[]
+}
+
 export interface ProductUnitTrailResult {
   productId: string
   productName: string
@@ -120,6 +227,7 @@ export interface ProductUnitTrailResult {
   reconciliationOk: boolean
   reconciliationNote: string | null
   units: ProductUnit[]
+  placeGroups: PlaceGroup[]
   variantRows: VariantTrailRow[]
   parts: PartLotSummary[]
   history: HistoryEntry[]
@@ -248,10 +356,22 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
   const soldUnits: QueueUnit[] = []
   const history: HistoryEntry[] = []
   let nextN = 1
-  let shortfall = 0
 
-  function variantLabel(comboKey: string): string {
-    return variantInfoByKey.get(comboKey)?.label ?? comboKey
+  // Nome curto calculado 1x pro produto inteiro (compara TODAS as
+  // variações pra achar quais 2 peças mais diferenciam -- ver comentário
+  // de pickTitleAttrNames acima) -- nunca por variação isolada.
+  const titleAttrNames = pickTitleAttrNames(variantBreakdown)
+  const shortTitleInfoByKey = new Map(variantBreakdown.map((v) => [v.key, buildShortTitle(v, titleAttrNames)]))
+  const fullCompositionByKey = new Map(variantBreakdown.map((v) => [v.key, buildFullComposition(v)]))
+
+  function variantShortTitle(comboKey: string): string {
+    return shortTitleInfoByKey.get(comboKey)?.shortTitle ?? comboKey
+  }
+  function variantTitlePieces(comboKey: string): VariantTitlePiece[] {
+    return shortTitleInfoByKey.get(comboKey)?.titlePieces ?? []
+  }
+  function variantFullComposition(comboKey: string): string {
+    return fullCompositionByKey.get(comboKey) ?? comboKey
   }
   function variantColorHexes(comboKey: string): string[] {
     const info = variantInfoByKey.get(comboKey)
@@ -276,7 +396,7 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
       history.push({
         date: ev.date.toISOString(),
         kind: needsAssembly ? 'Montado' : 'Produzido',
-        detail: `${ev.qty}x ${variantLabel(ev.comboKey)}`,
+        detail: `${ev.qty}x ${variantShortTitle(ev.comboKey)}`,
         link: null,
       })
       continue
@@ -285,7 +405,6 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
     if (ev.kind === 'DELIVERED') {
       const queue = stockQueueByCombo.get(ev.comboKey) ?? []
       const taken = takeOldest(queue, ev.qty)
-      if (taken.length < ev.qty) shortfall += ev.qty - taken.length
       const dq = deliveryQueue.get(ev.deliveryId) ?? []
       for (const unit of taken) {
         unit.location = { type: 'parceiro', partnerId: ev.partnerId, partnerName: ev.partnerName, since: ev.date.toISOString() }
@@ -302,7 +421,7 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
       history.push({
         date: ev.date.toISOString(),
         kind: 'Entregue',
-        detail: `${ev.qty}x ${variantLabel(ev.comboKey)} → ${ev.partnerName}`,
+        detail: `${ev.qty}x ${variantShortTitle(ev.comboKey)} → ${ev.partnerName}`,
         link: { type: 'delivery', deliveryId: ev.deliveryId },
       })
       continue
@@ -311,7 +430,6 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
     if (ev.kind === 'RETURNED') {
       const dq = deliveryQueue.get(ev.deliveryId) ?? []
       const taken = takeOldest(dq, ev.qty)
-      if (taken.length < ev.qty) shortfall += ev.qty - taken.length
       for (const unit of taken) {
         unit.everReturned = true
         unit.location = { type: 'devolvida' }
@@ -329,7 +447,6 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
     if (ev.kind === 'SOLD_CONSIGNED') {
       const dq = deliveryQueue.get(ev.deliveryId) ?? []
       const taken = takeOldest(dq, ev.qty)
-      if (taken.length < ev.qty) shortfall += ev.qty - taken.length
       for (const unit of taken) {
         unit.location = { type: 'vendida', via: 'consignado', partnerName: ev.partnerName, date: ev.date.toISOString(), unitPrice: ev.unitPrice }
         unit.steps.push({
@@ -355,7 +472,6 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
     // SOLD_DIRECT
     const queue = stockQueueByCombo.get(ev.comboKey) ?? []
     const taken = takeOldest(queue, ev.qty)
-    if (taken.length < ev.qty) shortfall += ev.qty - taken.length
     for (const unit of taken) {
       unit.location = { type: 'vendida', via: 'direta', partnerName: null, date: ev.date.toISOString(), unitPrice: ev.unitPrice }
       unit.steps.push({
@@ -406,11 +522,24 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
   let inStock = 0
   let returned = 0
 
+  function pushUnit(unit: QueueUnit) {
+    units.push({
+      n: unit.n,
+      comboKey: unit.comboKey,
+      shortTitle: variantShortTitle(unit.comboKey),
+      titlePieces: variantTitlePieces(unit.comboKey),
+      fullComposition: variantFullComposition(unit.comboKey),
+      colorHexes: variantColorHexes(unit.comboKey),
+      location: unit.location,
+      steps: unit.steps,
+    })
+  }
+
   for (const queue of stockQueueByCombo.values()) {
     for (const unit of queue) {
       if (unit.everReturned) returned++
       else inStock++
-      units.push({ n: unit.n, comboKey: unit.comboKey, variantLabel: variantLabel(unit.comboKey), colorHexes: variantColorHexes(unit.comboKey), location: unit.location, steps: unit.steps })
+      pushUnit(unit)
     }
   }
   for (const [deliveryId, dq] of deliveryQueue) {
@@ -421,20 +550,30 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
         entry.quantity += 1
         withPartnersMap.set(delivery.partnerId, entry)
       }
-      units.push({ n: unit.n, comboKey: unit.comboKey, variantLabel: variantLabel(unit.comboKey), colorHexes: variantColorHexes(unit.comboKey), location: unit.location, steps: unit.steps })
+      pushUnit(unit)
     }
   }
   for (const unit of soldUnits) {
-    units.push({ n: unit.n, comboKey: unit.comboKey, variantLabel: variantLabel(unit.comboKey), colorHexes: variantColorHexes(unit.comboKey), location: unit.location, steps: unit.steps })
+    pushUnit(unit)
   }
   units.sort((a, b) => a.n - b.n)
 
   const totalCreated = nextN - 1
   const actualTotal = inStock + returned + [...withPartnersMap.values()].reduce((s, p) => s + p.quantity, 0) + soldUnits.length
-  const reconciliationOk = shortfall === 0 && actualTotal === totalCreated
+  // Bug "Faltam 0 unidade(s)": `shortfall` conta um desencontro TRANSIENTE
+  // durante o processamento (ex.: uma entrega tentou consumir mais do que
+  // havia na fila naquele instante) -- não significa necessariamente que
+  // o total FINAL não fecha (uma devolução/re-entrega depois pode ter
+  // reequilibrado). A reconciliação mostrada na tela é só sobre o total
+  // final: `montadas = estoque + parceiros + vendidas + devolvidas`.
+  // Nunca mistura os dois -- só a igualdade final decide o ✓/⚠.
+  const diff = totalCreated - actualTotal
+  const reconciliationOk = diff === 0
   const reconciliationNote = reconciliationOk
     ? null
-    : `Faltam ${totalCreated - actualTotal} unidade(s) pra fechar a conta -- provavelmente um ajuste manual de estoque ou uma entrega/venda com data anterior à montagem. Confira o Histórico.`
+    : diff > 0
+      ? `Faltam ${diff} unidade(s) pra fechar a conta -- provavelmente um ajuste manual de estoque ou uma entrega/venda com data anterior à montagem. Confira o Histórico.`
+      : `Sobram ${-diff} unidade(s) além do que foi ${needsAssembly ? 'montado' : 'produzido'} -- provavelmente um ajuste manual de estoque. Confira o Histórico.`
 
   // Tabela compacta de variações (seção 2): "Estoque" aqui soma devolvida
   // + nunca-entregue junto (a tabela não tem coluna "Devolvidas" própria,
@@ -455,7 +594,9 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
     }
     return {
       comboKey: v.key,
-      label: v.label,
+      shortTitle: variantShortTitle(v.key),
+      titlePieces: variantTitlePieces(v.key),
+      fullComposition: variantFullComposition(v.key),
       colorHexes: variantColorHexes(v.key),
       attrs: v.attrs,
       inStock: stockUnits,
@@ -471,6 +612,135 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
     parts = status.parts.map((p) => ({ name: p.name, produced: p.produced, consumed: p.consumed, available: p.available }))
   }
 
+  function daysSince(iso: string): number {
+    return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60 * 24)))
+  }
+  function shortId(id: string): string {
+    return id.slice(-4).toUpperCase()
+  }
+  function lastStepWithLinkType(unit: ProductUnit, linkType: UnitStepLink['type']): UnitTrailStep | undefined {
+    return [...unit.steps].reverse().find((s) => s.link?.type === linkType)
+  }
+
+  // Melhoria "rastreio total v2": 1 linha por GRUPO (mesma variação +
+  // mesmo destino + mesma entrega/venda), não 1 cartão por unidade física
+  // -- com 21 montadas isso é a diferença entre 21 cartões e ~8 linhas.
+  const placeGroups: PlaceGroup[] = []
+
+  function buildStockLikeGroup(place: 'estoque' | 'devolvida', label: string, subtitleSuffix: string, count: number) {
+    const groupUnits = units.filter((u) => u.location.type === place)
+    if (groupUnits.length === 0) return
+    const byCombo = new Map<string, ProductUnit[]>()
+    for (const u of groupUnits) {
+      const list = byCombo.get(u.comboKey) ?? []
+      list.push(u)
+      byCombo.set(u.comboKey, list)
+    }
+    const rows: PlaceGroupRow[] = [...byCombo.entries()].map(([comboKey, list]) => {
+      // A mais antiga primeiro -- destaca o que está encalhado há mais
+      // tempo, mesmo critério de reverseExcessAssemblyForRun (consome/
+      // mostra o mais antigo primeiro).
+      const oldest = list.reduce((a, b) => (new Date(a.steps[a.steps.length - 1].date) < new Date(b.steps[b.steps.length - 1].date) ? a : b))
+      const lastStep = oldest.steps[oldest.steps.length - 1]
+      return {
+        key: comboKey,
+        comboKey,
+        shortTitle: list[0].shortTitle,
+        titlePieces: list[0].titlePieces,
+        fullComposition: list[0].fullComposition,
+        quantity: list.length,
+        statusLine: `${lastStep.label} ${lastStep.detail ?? ''} · parada há ${daysSince(lastStep.date)} dia(s)`.replace(/\s+/g, ' ').trim(),
+        linkLabel: null,
+        link: null,
+        unitNs: list.map((u) => u.n).sort((a, b) => a - b),
+      }
+    }).sort((a, b) => b.quantity - a.quantity)
+    placeGroups.push({ place, label, count, subtitle: `${count} ${subtitleSuffix}`, rows })
+  }
+
+  buildStockLikeGroup('estoque', 'Em estoque', `disponíve${inStock === 1 ? 'l' : 'is'} para entregar`, inStock)
+
+  const partnerUnits = units.filter((u) => u.location.type === 'parceiro')
+  if (partnerUnits.length > 0) {
+    const byGroup = new Map<string, ProductUnit[]>()
+    for (const u of partnerUnits) {
+      const deliveryStep = lastStepWithLinkType(u, 'delivery')
+      const deliveryId = deliveryStep?.link?.type === 'delivery' ? deliveryStep.link.deliveryId : 'desconhecida'
+      const key = `${u.comboKey}::${deliveryId}`
+      const list = byGroup.get(key) ?? []
+      list.push(u)
+      byGroup.set(key, list)
+    }
+    const rows: PlaceGroupRow[] = [...byGroup.values()].map((list) => {
+      const first = list[0]
+      const loc = first.location
+      if (loc.type !== 'parceiro') throw new Error('invariante: unidade com parceiro sem location.parceiro')
+      const deliveryStep = lastStepWithLinkType(first, 'delivery')
+      const deliveryId = deliveryStep?.link?.type === 'delivery' ? deliveryStep.link.deliveryId : null
+      return {
+        key: `${first.comboKey}::${deliveryId ?? 'desconhecida'}`,
+        comboKey: first.comboKey,
+        shortTitle: first.shortTitle,
+        titlePieces: first.titlePieces,
+        fullComposition: first.fullComposition,
+        quantity: list.length,
+        statusLine: `Entregue ${deliveryStep?.detail ?? ''} · com ${loc.partnerName} há ${daysSince(loc.since)} dia(s)`.replace(/\s+/g, ' ').trim(),
+        linkLabel: deliveryId ? `Entrega #${shortId(deliveryId)}` : null,
+        link: deliveryId ? ({ type: 'delivery', deliveryId } as const) : null,
+        unitNs: list.map((u) => u.n).sort((a, b) => a - b),
+      }
+    }).sort((a, b) => b.quantity - a.quantity)
+    placeGroups.push({
+      place: 'parceiro',
+      label: 'Com parceiro',
+      count: partnerUnits.length,
+      subtitle: `entregue${partnerUnits.length === 1 ? '' : 's'} e ainda não vendida${partnerUnits.length === 1 ? '' : 's'}`,
+      rows,
+    })
+  }
+
+  const soldUnitsForGroups = units.filter((u) => u.location.type === 'vendida')
+  if (soldUnitsForGroups.length > 0) {
+    const byGroup = new Map<string, ProductUnit[]>()
+    for (const u of soldUnitsForGroups) {
+      const saleStep = lastStepWithLinkType(u, 'consignmentSale') ?? lastStepWithLinkType(u, 'directSale')
+      const saleKey = saleStep?.link?.type === 'consignmentSale' ? saleStep.link.saleReportId : saleStep?.link?.type === 'directSale' ? saleStep.link.saleId : 'desconhecida'
+      const key = `${u.comboKey}::${saleKey}`
+      const list = byGroup.get(key) ?? []
+      list.push(u)
+      byGroup.set(key, list)
+    }
+    const rows: PlaceGroupRow[] = [...byGroup.values()].map((list) => {
+      const first = list[0]
+      const loc = first.location
+      if (loc.type !== 'vendida') throw new Error('invariante: unidade vendida sem location.vendida')
+      const saleStep = lastStepWithLinkType(first, 'consignmentSale') ?? lastStepWithLinkType(first, 'directSale')
+      const link = saleStep?.link ?? null
+      const linkLabel = link?.type === 'consignmentSale' ? `Venda #${shortId(link.saleReportId)}` : link?.type === 'directSale' ? `Venda #${shortId(link.saleId)}` : null
+      return {
+        key: `${first.comboKey}::${link ? (link.type === 'consignmentSale' ? link.saleReportId : link.type === 'directSale' ? link.saleId : '') : 'desconhecida'}`,
+        comboKey: first.comboKey,
+        shortTitle: first.shortTitle,
+        titlePieces: first.titlePieces,
+        fullComposition: first.fullComposition,
+        quantity: list.length,
+        statusLine: `Vendida ${formatDiaMes(new Date(loc.date))}${loc.partnerName ? ` · ${loc.partnerName}` : ''} · ${formatCurrency(loc.unitPrice)}`,
+        linkLabel,
+        link,
+        unitNs: list.map((u) => u.n).sort((a, b) => a - b),
+      }
+    }).sort((a, b) => b.quantity - a.quantity)
+    placeGroups.push({
+      place: 'vendida',
+      label: 'Vendidas',
+      count: soldUnitsForGroups.length,
+      subtitle: `já vira${soldUnitsForGroups.length === 1 ? 'ou' : 'ram'} venda`,
+      rows,
+    })
+  }
+
+  buildStockLikeGroup('devolvida', 'Devolvidas', `${returned === 1 ? 'voltou' : 'voltaram'} ao estoque`, returned)
+
   return {
     productId,
     productName: product.name,
@@ -481,6 +751,7 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
     reconciliationOk,
     reconciliationNote,
     units,
+    placeGroups,
     variantRows,
     parts,
     history,
@@ -489,7 +760,7 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
 
 export interface DeliveryDrillDownItem {
   n: number
-  variantLabel: string
+  shortTitle: string
   colorHexes: string[]
   status: 'vendida' | 'com_parceiro' | 'devolvida'
   soldDetail: { saleReportId: string; unitPrice: number; date: string } | null
@@ -525,7 +796,7 @@ export async function getDeliveryDrillDown(deliveryId: string): Promise<Delivery
       const status: DeliveryDrillDownItem['status'] = u.location.type === 'vendida' ? 'vendida' : u.location.type === 'devolvida' ? 'devolvida' : 'com_parceiro'
       return {
         n: u.n,
-        variantLabel: u.variantLabel,
+        shortTitle: u.shortTitle,
         colorHexes: u.colorHexes,
         status,
         soldDetail: soldStep && soldStep.link?.type === 'consignmentSale'
@@ -561,7 +832,7 @@ export interface ConsignmentSaleDrillDown {
   partnerName: string
   productId: string
   productName: string
-  variantLabel: string
+  shortTitle: string
   reportDate: string
   quantitySold: number
   unitPrice: number
@@ -585,13 +856,13 @@ export async function getConsignmentSaleDrillDown(saleReportId: string): Promise
   const commissionValue = saleValue * commissionPercent
   const costValue = report.quantitySold * unitCost
 
-  // Reaproveita getProductUnitTrail (já resolve rótulo de variante certo
-  // pra composto/simples) em vez de duplicar a lógica de needsAssembly +
+  // Reaproveita getProductUnitTrail (já resolve o nome curto certo pra
+  // composto/simples) em vez de duplicar a lógica de needsAssembly +
   // getProductVariantBreakdown aqui.
-  let variantLabel = report.delivery.colorComboKey ?? '—'
+  let shortTitle = report.delivery.colorComboKey ?? '—'
   if (report.delivery.colorComboKey) {
     const trail = await getProductUnitTrail(report.delivery.productId)
-    variantLabel = trail.variantRows.find((v) => v.comboKey === report.delivery.colorComboKey)?.label ?? variantLabel
+    shortTitle = trail.variantRows.find((v) => v.comboKey === report.delivery.colorComboKey)?.shortTitle ?? shortTitle
   }
 
   return {
@@ -601,7 +872,7 @@ export async function getConsignmentSaleDrillDown(saleReportId: string): Promise
     partnerName: report.delivery.partner.name,
     productId: report.delivery.productId,
     productName: report.delivery.product.name,
-    variantLabel,
+    shortTitle,
     reportDate: report.reportDate.toISOString(),
     quantitySold: report.quantitySold,
     unitPrice,

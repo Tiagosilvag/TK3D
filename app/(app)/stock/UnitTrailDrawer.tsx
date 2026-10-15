@@ -66,7 +66,7 @@ function DeliveryPanel({ deliveryId, onOpenSale }: { deliveryId: string; onOpenS
                 <span className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
                   <span className="text-xs text-slate-400 dark:text-slate-500">#{item.n}</span>
                   {item.colorHexes.map((hex, i) => <span key={i} style={{ background: hex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-black/10 dark:border-white/10" />)}
-                  <span className="truncate">{item.variantLabel}</span>
+                  <span className="truncate">{item.shortTitle}</span>
                 </span>
                 {item.status === 'vendida' && item.soldDetail ? (
                   <button type="button" onClick={() => onOpenSale(item.soldDetail!.saleReportId)} className="shrink-0 text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
@@ -125,7 +125,7 @@ function ConsignmentSalePanel({ saleReportId, onBackToDelivery }: { saleReportId
 
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         <div className="rounded-lg border border-slate-200 p-2.5 text-sm dark:border-slate-700">
-          <p className="text-slate-700 dark:text-slate-300">{data.quantitySold}x {data.productName} · {data.variantLabel}</p>
+          <p className="text-slate-700 dark:text-slate-300">{data.quantitySold}x {data.productName} · {data.shortTitle}</p>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{formatCurrency(data.unitPrice)} cada</p>
         </div>
 

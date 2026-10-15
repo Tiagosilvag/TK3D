@@ -30,12 +30,23 @@ function pickTitleAttrNames(allVariants: ConsignmentVariantBreakdown[]): string[
   return scored.slice(0, 2).map((s) => s.name)
 }
 
+// Bug "nome da variação em maiúsculas" (relatado na tela de rastreio de
+// /stock, mesma causa aqui): ProductPart.name pode ter sido cadastrado
+// todo em maiúsculas ("BOLINHA") por quem criou o produto -- título curto
+// nunca deveria herdar isso. Só o NOME DA PEÇA é normalizado (1ª letra
+// maiúscula, resto minúsculo); a cor nunca é tocada (já digitada em
+// minúsculas por convenção do catálogo).
+function toTitleCase(s: string): string {
+  if (!s) return s
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
+}
+
 function variantTitle(variant: ConsignmentVariantBreakdown, titleAttrNames: string[]): string {
   if (variant.attrs.length === 0) return variant.label ?? 'Sem cor registrada'
   const parts = titleAttrNames
     .map((name) => variant.attrs.find((a) => a.name === name))
     .filter((a): a is VariantAttr => Boolean(a))
-    .map((a) => `${a.name} ${a.shortValue}`)
+    .map((a) => `${toTitleCase(a.name)} ${a.shortValue}`)
   return parts.length > 0 ? parts.join(' · ') : (variant.label ?? 'Sem cor registrada')
 }
 
