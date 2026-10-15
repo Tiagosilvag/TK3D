@@ -409,7 +409,17 @@ export interface VariantAttr {
   // é a versão pareada, 1 elemento por filamento/acessório do combo, na
   // ordem do cadastro, pro componente VariacaoPecas renderizar bolinha+nome
   // intercalados sem depender de zipar dois arrays separados.
-  colors: { hex: string | null; name: string }[]
+  //
+  // Melhoria "Modal do produto com o parceiro": `manufacturer` (opcional,
+  // Elegoo/Multfila/Masterprint…) por ENTRADA (não 1 só pro attr inteiro,
+  // como `material` acima) -- um combo multi-filamento (ex.: peça "Cara"
+  // com 3 cores) pode ter marca DIFERENTE por componente, então só faz
+  // sentido por cor individual, nunca resumido num texto só pro attr
+  // inteiro. Opcional (não todo call site/tela precisa preencher) --
+  // ausente/undefined em vez de null nos pontos que não resolvem marca
+  // (acessório não tem campo de marca cadastrado; opções de Montagem/
+  // Pedidos que só carregam `colors` sem refazer o lookup de Filament).
+  colors: { hex: string | null; name: string; manufacturer?: string | null }[]
 }
 
 const VARIANT_ATTR_TIER_RANK: Record<VariantAttrTier, number> = { produto: 0, complemento: 1, acessorio: 2 }
@@ -491,7 +501,7 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
             colorHexes: f?.colorHex ? [f.colorHex] : [],
             shortValue: f?.colorName ?? label,
             material: f?.material ?? null,
-            colors: f ? [{ hex: f.colorHex ?? null, name: f.colorName }] : [],
+            colors: f ? [{ hex: f.colorHex ?? null, name: f.colorName, manufacturer: f.manufacturer }] : [],
           }],
           filamentIds: [r.filamentId],
         }
@@ -582,10 +592,10 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
   // Redesign "Variação de peças em Pedidos": versão pareada de
   // filamentComboHexes/filamentComboShort -- 1 elemento por filamento do
   // combo, na ordem do cadastro (ver VariantAttr.colors acima).
-  function filamentComboColors(rawKey: string): { hex: string | null; name: string }[] {
+  function filamentComboColors(rawKey: string): { hex: string | null; name: string; manufacturer?: string | null }[] {
     return rawKey.split(',').map((id) => {
       const f = filamentById.get(id)
-      return { hex: f?.colorHex ?? null, name: f?.colorName ?? id }
+      return { hex: f?.colorHex ?? null, name: f?.colorName ?? id, manufacturer: f?.manufacturer ?? null }
     })
   }
 
@@ -963,6 +973,18 @@ export interface ConsignmentVariantBreakdown {
   delivered: number
   sold: number
   remaining: number
+  // Melhoria "Modal do produto com o parceiro": antes só entrava no cálculo
+  // de `remaining` (delivered - sold - returned) -- precisa aparecer na UI
+  // pra separar "Devolvido" de "Com ela agora" nos 4 totais/cards (os 2
+  // juntos zerados em `remaining` não distinguem "tudo vendido" de
+  // "tudo devolvido", daí também o status do card de variação).
+  returned: number
+  // Chips por peça/componente/acessório desta variante (BOLINHA/CARA/
+  // CORPO/PATA…), mesma estrutura que VariantsModal (/stock) já usa --
+  // alimenta o título curto ("Bolinha branca · Corpo lavanda") e a grade
+  // de 4 colunas do card de variação. Vazio só no caso legado sem
+  // colorChoices rastreado (mesmo caso em que `label` cai pro raw key).
+  attrs: VariantAttr[]
   accessories: ConsignmentAccessoryChip[]
   deliveries: ConsignmentDeliveryLine[]
 }
@@ -988,6 +1010,9 @@ export interface ConsignmentProductBreakdown {
   delivered: number
   sold: number
   remaining: number
+  // Mesmo campo de ConsignmentVariantBreakdown.returned, mas somado pro
+  // produto inteiro -- card "Devolvido" dos 4 totais do modal.
+  returned: number
   variants: ConsignmentVariantBreakdown[]
   unitPrice: number
   unitCost: number
@@ -1104,7 +1129,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
     where: { id: { in: productIds } },
     include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
   }) : []
-  const variantInfoByProductAndKey = new Map<string, { label: string; colorHex: string | null }>()
+  const variantInfoByProductAndKey = new Map<string, { label: string; colorHex: string | null; attrs: VariantAttr[] }>()
   await Promise.all(products.map(async (p) => {
     const needsAssembly = productNeedsAssembly({
       isComposite: p.isComposite,
@@ -1113,7 +1138,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
       componentUsagesCount: p._count.componentUsages,
     })
     const breakdown = await getProductVariantBreakdown(p.id, needsAssembly)
-    for (const v of breakdown) variantInfoByProductAndKey.set(`${p.id}::${v.key}`, { label: v.label, colorHex: v.colorHex })
+    for (const v of breakdown) variantInfoByProductAndKey.set(`${p.id}::${v.key}`, { label: v.label, colorHex: v.colorHex, attrs: v.attrs })
   }))
 
   // Melhoria "Resultado das vendas": custo de produção de cada produto,
@@ -1295,6 +1320,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
       delivered,
       sold,
       remaining,
+      returned,
       variants: [...variants.values()].map((v) => ({
         key: v.key,
         label: v.key ? (variantInfoByProductAndKey.get(`${productId}::${v.key}`)?.label ?? v.key) : null,
@@ -1302,6 +1328,8 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
         delivered: v.delivered,
         sold: v.sold,
         remaining: Math.max(0, v.delivered - v.sold - v.returned),
+        returned: v.returned,
+        attrs: v.key ? (variantInfoByProductAndKey.get(`${productId}::${v.key}`)?.attrs ?? []) : [],
         accessories: v.key ? (accessoriesByComboPair.get(`${productId}::${v.key}`) ?? []) : [],
         deliveries: v.deliveries,
       })),
