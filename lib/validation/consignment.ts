@@ -95,3 +95,30 @@ export const consignmentSaleReportBatchSchema = z.object({
 })
 
 export type ConsignmentSaleReportInput = z.infer<typeof consignmentSaleReportSchema>
+
+// Melhoria "Detalhe da entrega em consignação": edição em lote do modal de
+// detalhe (DeliveriesExplorer) -- quantidade/preço de itens já existentes
+// (`changes`) + produtos novos adicionados a este MESMO lote (`newItems`),
+// 1 sessão só gravada no clique de "Salvar alterações" (mesmo padrão de
+// updateOrderDraft/orderDraftItemUpdateSchema em actions/orders.ts, nunca
+// 1 submissão por item). Preço mínimo 0 aqui (regra nova, pedido
+// explícito) -- diferente de consignmentDeliveryBatchItemSchema acima
+// (criação de entrega nova continua exigindo preço > 0).
+export const consignmentDeliveryBatchItemChangeSchema = z.object({
+  id: z.string().min(1),
+  quantityDelivered: z.coerce.number().int('Quantidade deve ser um número inteiro').min(1, 'Quantidade mínima é 1'),
+  unitPrice: z.coerce.number().min(0, 'Preço não pode ser negativo'),
+  removed: z.boolean(),
+})
+
+export const consignmentDeliveryBatchNewItemSchema = z.object({
+  productId: z.string().min(1, 'Selecione um produto'),
+  colorComboKey: z.string().optional().nullable(),
+  quantityDelivered: z.coerce.number().int('Quantidade deve ser um número inteiro').positive('Quantidade deve ser maior que zero'),
+  unitPrice: z.coerce.number().min(0, 'Preço não pode ser negativo'),
+})
+
+export const consignmentDeliveryBatchEditSchema = z.object({
+  changes: z.array(consignmentDeliveryBatchItemChangeSchema),
+  newItems: z.array(consignmentDeliveryBatchNewItemSchema),
+}).refine((data) => data.changes.length > 0 || data.newItems.length > 0, { message: 'Nenhuma alteração para salvar' })
