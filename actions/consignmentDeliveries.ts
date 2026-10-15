@@ -2,7 +2,7 @@
 import { randomUUID } from 'crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { consignmentDeliverySchema, consignmentDeliveryBatchSchema } from '@/lib/validation/consignment'
+import { consignmentDeliverySchema, consignmentDeliveryBatchSchema, consignmentDeliveryBatchEditSchema } from '@/lib/validation/consignment'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult = { success: boolean; error?: string }
@@ -105,6 +105,30 @@ export async function deleteConsignmentDelivery(id: string): Promise<ActionResul
   return { success: true }
 }
 
+// Melhoria "Detalhe da entrega em consignação": "Excluir entrega" no
+// rodapé do modal -- exclui o LOTE inteiro (todo item do mesmo batchId),
+// não 1 item só (ver deleteConsignmentDelivery acima, que continua
+// existindo pra esse caso -- usado por outras telas/testes). Mesmo
+// cascade de relatório de venda, só que por todos os itens do lote de
+// uma vez.
+export async function deleteConsignmentDeliveryBatch(batchId: string): Promise<ActionResult> {
+  try {
+    await prisma.$transaction([
+      prisma.consignmentSaleReport.deleteMany({ where: { delivery: { batchId } } }),
+      prisma.consignmentDelivery.deleteMany({ where: { batchId } }),
+    ])
+  } catch (err) {
+    if (isForeignKeyConstraintError(err)) {
+      return { success: false, error: 'Não foi possível excluir esta entrega porque um relatório de venda foi registrado nesse meio-tempo. Tente novamente.' }
+    }
+    throw err
+  }
+  revalidatePath('/consignment/deliveries')
+  revalidatePath('/consignment/reports')
+  revalidatePath('/consignment/partners')
+  return { success: true }
+}
+
 // Melhoria "ajustar a quantidade" (mesmo pedido do bug acima): corrige uma
 // entrega já registrada (quantidade errada) sem precisar apagar e recriar
 // -- min de `quantitySold + returnedQuantity` (não dá pra baixar pra menos
@@ -181,9 +205,13 @@ export async function returnConsignmentDeliveryStock(id: string, formData: FormD
     return { success: false, error: `Não é possível devolver mais do que está com o parceiro (${remaining})` }
   }
 
-  await prisma.consignmentDelivery.update({ where: { id }, data: { returnedQuantity: { increment: quantityReturned } } })
+  await prisma.consignmentDelivery.update({
+    where: { id },
+    data: { returnedQuantity: { increment: quantityReturned }, lastReturnedAt: new Date() },
+  })
   revalidatePath('/consignment/deliveries')
   revalidatePath('/consignment/partners')
+  revalidatePath('/stock')
   return { success: true }
 }
 
@@ -207,8 +235,9 @@ export async function undoConsignmentDeliveryReturn(id: string): Promise<ActionR
     return { success: false, error: 'Esta entrega não está devolvida' }
   }
 
-  await prisma.consignmentDelivery.update({ where: { id }, data: { returnedQuantity: 0 } })
+  await prisma.consignmentDelivery.update({ where: { id }, data: { returnedQuantity: 0, lastReturnedAt: null } })
   revalidatePath('/consignment/deliveries')
+  revalidatePath('/stock')
   revalidatePath('/consignment/partners')
   return { success: true }
 }
@@ -246,4 +275,99 @@ export async function getLastConsignmentDeliveryItems(partnerId: string): Promis
     quantity: i.quantityDelivered,
     unitPrice: i.unitPrice.toNumber(),
   }))
+}
+
+// Melhoria "Detalhe da entrega em consignação": redesign do modal --
+// antes cada item linha tinha 2 campos (Qtd./Preço) com seu próprio
+// "Salvar" (10 cliques pra editar 5 itens), sem jeito de ver o que mudou
+// antes de gravar. Agora o modal inteiro é um RASCUNHO local (mesmo
+// padrão de updateOrderDraft em actions/orders.ts) -- quantidade/preço de
+// item existente (`changes`) + produto novo adicionado a este lote
+// (`newItems`), tudo aplicado numa transação só no clique de "Salvar
+// alterações". Um try/catch único cobre da 1ª query até o fim da
+// transação (mesma classe de bug já corrigida em
+// actions/assembly.ts#updateAssemblyColorChoices -- erro inesperado vira
+// { success: false, error } em vez de propagar cru pro cliente).
+export async function updateConsignmentDeliveryBatchItems(batchId: string, formData: FormData): Promise<ActionResult> {
+  const raw = Object.fromEntries(formData)
+  let changesRaw: unknown = []
+  let newItemsRaw: unknown = []
+  try {
+    changesRaw = JSON.parse(String(raw.changesJson ?? '[]'))
+    newItemsRaw = JSON.parse(String(raw.newItemsJson ?? '[]'))
+  } catch {
+    return { success: false, error: 'Dados de edição inválidos' }
+  }
+  const parsed = consignmentDeliveryBatchEditSchema.safeParse({ changes: changesRaw, newItems: newItemsRaw })
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+  const { changes, newItems } = parsed.data
+
+  try {
+    const existing = await prisma.consignmentDelivery.findMany({
+      where: { batchId },
+      include: { saleReports: true, product: true },
+    })
+    if (existing.length === 0) return { success: false, error: 'Entrega não encontrada (pode já ter sido excluída)' }
+    const byId = new Map(existing.map((d) => [d.id, d]))
+    const { partnerId, deliveryDate, notes } = existing[0]
+
+    // Regra "respeitar o já vendido/devolvido": mesmo floor de
+    // updateConsignmentDeliveryQuantity, só que validado pra TODOS os
+    // itens do rascunho ANTES de escrever qualquer um (tudo ou nada --
+    // uma sessão inteira falha junto se um item alvo encolheu demais).
+    for (const change of changes) {
+      if (change.removed) continue
+      const delivery = byId.get(change.id)
+      if (!delivery) return { success: false, error: 'Um item editado não foi encontrado (pode já ter sido removido por outra sessão)' }
+      const alreadySold = delivery.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
+      const floor = alreadySold + delivery.returnedQuantity
+      if (change.quantityDelivered < floor) {
+        return { success: false, error: `Quantidade de "${delivery.product.name}" não pode ser menor que o já vendido/devolvido (${floor})` }
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const change of changes) {
+        if (change.removed) {
+          await tx.consignmentSaleReport.deleteMany({ where: { deliveryId: change.id } })
+          await tx.consignmentDelivery.delete({ where: { id: change.id } })
+          continue
+        }
+        const delivery = byId.get(change.id)!
+        // Só escreve (e só então o @updatedAt avança, alimentando o selo
+        // "Editada hoje") quando algo de fato mudou -- nunca um UPDATE
+        // vazio só por o item estar na mesma sessão de edição.
+        if (change.quantityDelivered !== delivery.quantityDelivered || change.unitPrice !== delivery.unitPrice.toNumber()) {
+          await tx.consignmentDelivery.update({
+            where: { id: change.id },
+            data: { quantityDelivered: change.quantityDelivered, unitPrice: change.unitPrice },
+          })
+        }
+      }
+      if (newItems.length > 0) {
+        await tx.consignmentDelivery.createMany({
+          data: newItems.map((item) => ({
+            batchId,
+            partnerId,
+            deliveryDate,
+            notes,
+            productId: item.productId,
+            colorComboKey: item.colorComboKey ?? null,
+            quantityDelivered: item.quantityDelivered,
+            unitPrice: item.unitPrice,
+          })),
+        })
+      }
+    })
+  } catch (err) {
+    if (isForeignKeyConstraintError(err)) {
+      return { success: false, error: 'Não foi possível salvar porque um relatório de venda foi registrado pra um item removido nesse meio-tempo. Tente novamente.' }
+    }
+    return { success: false, error: err instanceof Error ? err.message : 'Erro ao salvar alterações' }
+  }
+
+  revalidatePath('/consignment/deliveries')
+  revalidatePath('/consignment/reports')
+  revalidatePath('/consignment/partners')
+  return { success: true }
 }

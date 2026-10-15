@@ -1382,6 +1382,17 @@ model ConsignmentDelivery {
   colorComboKey     String?
   notes             String?
   createdAt         DateTime                @default(now())
+  // Melhoria "Detalhe da entrega em consignação" (redesign do modal de
+  // edição em lote): selo "✎ Editada hoje" no cabeçalho -- só avança numa
+  // escrita de verdade (updateConsignmentDeliveryBatchItems só chama
+  // .update() pra item cujo valor realmente mudou, nunca em toda a leva
+  // só por estar na mesma sessão), nunca em CRIAÇÃO (createdAt/updatedAt
+  // nascem iguais) nem em devolução/desfazer devolução (campos próprios,
+  // não fazem parte da "edição" que o modal mostra). "Editada hoje" =
+  // algum item do lote tem updatedAt > createdAt E essa diferença cai no
+  // dia de hoje -- nunca um log de alterações à parte (OrderEditLog tem
+  // esse detalhe pra Pedidos; aqui só o selo é pedido, não um histórico).
+  updatedAt         DateTime                @updatedAt
   // Melhoria "editar tudo no consignado" (revisão): quanto já voltou pro
   // próprio estoque desta entrega (returnConsignmentDeliveryStock,
   // actions/consignmentDeliveries.ts) -- NUNCA decrementa quantityDelivered
@@ -1397,6 +1408,17 @@ model ConsignmentDelivery {
   // pedido explícito aqui) e "Apagar" (delete físico definitivo, sem volta,
   // só some da tela quando já está devolvida).
   returnedQuantity  Int                     @default(0)
+  // Melhoria "Rastreio por unidade" (/stock, modal Variações): data da
+  // devolução, pro passo "Devolvida dd/mm" da trilha por unidade --
+  // returnedQuantity sozinho é só um contador, sem data nenhuma gravada.
+  // Reescrita a cada returnConsignmentDeliveryStock (não um log por
+  // devolução parcial -- várias devoluções parciais da MESMA entrega
+  // compartilham a data da ÚLTIMA, simplificação aceita, documentada em
+  // lib/productUnitTrail.ts), zerada de volta a null por
+  // undoConsignmentDeliveryReturn (mesmo momento em que returnedQuantity
+  // zera). Nulo em toda devolução anterior a este campo -- nunca inventa
+  // uma data retroativa (trilha mostra o passo sem data nesse caso).
+  lastReturnedAt    DateTime?
   saleReports       ConsignmentSaleReport[]
   // Pedido do usuário "criar pedidos de encomendas de consignados
   // também" -- lado oposto de OrderItem.consignmentDeliveryId (1:1,

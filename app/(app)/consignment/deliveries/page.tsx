@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { DeliveriesExplorer, type DeliveryBatchRow } from './DeliveriesExplorer'
 import { resolveDateRange } from '@/lib/dateRange'
-import { getProductVariantStockOptions, getProductVariantBreakdown } from '@/lib/reports'
+import { getProductVariantStockOptions, getProductVariantBreakdown, type VariantAttr } from '@/lib/reports'
 import { productNeedsAssembly } from '@/lib/products'
 import { getProductAverageProductionCost, getProductCostBreakdown } from '@/actions/products'
 
@@ -82,9 +82,9 @@ export default async function ConsignmentDeliveriesPage({
   // getProductDeliveryOptions (só ativos) -- calcula à parte pra não perder
   // o rótulo de uma entrega histórica de um produto já removido.
   const productIdsInDeliveries = [...new Set(deliveries.map((d) => d.productId))]
-  const labelByProductAndKey = new Map<string, { label: string; colorHex: string | null }>()
+  const labelByProductAndKey = new Map<string, { label: string; colorHex: string | null; attrs: VariantAttr[] }>()
   for (const opt of deliveryOptions) {
-    for (const v of opt.variants) labelByProductAndKey.set(`${opt.productId}::${v.key}`, { label: v.label, colorHex: v.colorHex })
+    for (const v of opt.variants) labelByProductAndKey.set(`${opt.productId}::${v.key}`, { label: v.label, colorHex: v.colorHex, attrs: v.attrs })
   }
   const missingProductIds = productIdsInDeliveries.filter((id) => !deliveryOptions.some((o) => o.productId === id))
   if (missingProductIds.length > 0) {
@@ -100,7 +100,7 @@ export default async function ConsignmentDeliveriesPage({
         componentUsagesCount: p._count.componentUsages,
       })
       const breakdown = await getProductVariantBreakdown(p.id, needsAssembly)
-      for (const v of breakdown) labelByProductAndKey.set(`${p.id}::${v.key}`, { label: v.label, colorHex: v.colorHex })
+      for (const v of breakdown) labelByProductAndKey.set(`${p.id}::${v.key}`, { label: v.label, colorHex: v.colorHex, attrs: v.attrs })
     }))
   }
 
@@ -111,19 +111,34 @@ export default async function ConsignmentDeliveriesPage({
       batchId: d.batchId,
       partnerName: d.partner.name,
       deliveryDate: d.deliveryDate.toISOString(),
+      // Melhoria "Detalhe da entrega em consignação": selo "✎ Editada
+      // hoje" -- MAX(updatedAt) entre os itens do lote, só quando esse
+      // item de fato avançou (updatedAt !== createdAt, ver comentário de
+      // ConsignmentDelivery.updatedAt no schema). Criação do lote inteiro
+      // nunca conta como "edição" (todo item nasce com os dois campos
+      // iguais).
+      editedAt: null as string | null,
       items: [],
     }
     const variantInfo = d.colorComboKey ? labelByProductAndKey.get(`${d.productId}::${d.colorComboKey}`) : undefined
     batch.items.push({
       id: d.id,
+      productId: d.productId,
+      colorComboKey: d.colorComboKey,
       productName: d.product.name,
       colorLabel: variantInfo?.label ?? (d.colorComboKey ? d.colorComboKey : null),
       colorHex: variantInfo?.colorHex ?? null,
+      attrs: variantInfo?.attrs ?? [],
       quantityDelivered: d.quantityDelivered,
       unitPrice: d.unitPrice.toNumber(),
       quantitySold: d.saleReports.reduce((sum, r) => sum + r.quantitySold, 0),
+      returnedQuantity: d.returnedQuantity,
       saleReportsCount: d.saleReports.length,
     })
+    if (d.updatedAt.getTime() !== d.createdAt.getTime()) {
+      const iso = d.updatedAt.toISOString()
+      if (!batch.editedAt || iso > batch.editedAt) batch.editedAt = iso
+    }
     batchesMap.set(d.batchId, batch)
   }
   // findMany já veio ordenado por deliveryDate desc -- Map preserva a ordem
