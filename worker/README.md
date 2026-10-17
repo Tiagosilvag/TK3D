@@ -20,6 +20,7 @@ cd ~/Hunyuan3D-2.1
 pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 pip install -r hy3dshape/requirements.txt
 pip install diffusers==0.30.0 transformers==4.46.0
+pip install timm
 ```
 
 O `hy3dshape/requirements.txt` do próprio repo não fixa a versão do
@@ -29,7 +30,12 @@ puxa uma versão nova demais do `diffusers` (que já usa a API
 `AttributeError: module 'torch' has no attribute 'accelerator'` ao
 importar `hy3dshape`. As versões acima são as mesmas fixadas no
 `requirements.txt` da raiz do repo, testadas pelo próprio Tencent junto
-com o PyTorch 2.5.1.
+com o PyTorch 2.5.1. O `hy3dshape/requirements.txt` também não lista o
+`timm` (usado pelos blocos de atenção do modelo em
+`hy3dshape/models/denoisers/moe_layers.py`) -- sem ele, quebra com
+`ModuleNotFoundError: No module named 'timm'` ao carregar os pesos
+(confirmado em instalação real; o `requirements.txt` da raiz do repo
+lista `timm`, o `hy3dshape/requirements.txt` não).
 
 Confirme que o pipeline de forma carrega e gera algo antes de seguir —
 ex. rodando `python3 hy3dshape/minimal_demo.py` de dentro do clone (ele
