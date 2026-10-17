@@ -13,7 +13,7 @@ const STATUS_LABEL: Record<MeshJobSummary['status'], string> = {
 }
 
 function pillClass(active: boolean): string {
-  return `flex-1 rounded-lg border px-2 py-1.5 text-sm transition-colors ${
+  return `tk-pill ${
     active
       ? 'border-violet-600 bg-violet-600 text-white dark:border-violet-500 dark:bg-violet-500 dark:text-slate-950'
       : 'border-slate-300 bg-white text-slate-700 hover:border-violet-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200'
@@ -101,9 +101,13 @@ export function MeshJobsExplorer({ initialJobs }: { initialJobs: MeshJobSummary[
         <div className="tk-panel flex flex-col gap-4 p-4">
           <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Imagem</h2>
 
+          {/* Borda tracejada aqui é intencional (sinaliza "área de
+              upload/clicável", convenção estabelecida) -- diferente da
+              caixa de preview ao lado, que não precisa de borda própria
+              por já estar dentro do tk-panel. */}
           <label
             htmlFor="mesh-file-input"
-            className="flex aspect-square cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-950"
+            className="flex aspect-square max-h-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-950"
           >
             {promptImageSrc ? (
               // eslint-disable-next-line @next/next/no-img-element -- preview vem de blob: local ou de uma rota própria, next/image não ajuda aqui
@@ -128,7 +132,13 @@ export function MeshJobsExplorer({ initialJobs }: { initialJobs: MeshJobSummary[
             <span className="text-sm">Resolução da malha</span>
             <div className="mt-1 flex gap-2">
               {MESH_OCTREE_RESOLUTIONS.map((r) => (
-                <button key={r} type="button" onClick={() => setOctreeResolution(r)} className={pillClass(octreeResolution === r)}>
+                <button
+                  key={r}
+                  type="button"
+                  aria-pressed={octreeResolution === r}
+                  onClick={() => setOctreeResolution(r)}
+                  className={pillClass(octreeResolution === r)}
+                >
                   {r}
                 </button>
               ))}
@@ -197,6 +207,7 @@ export function MeshJobsExplorer({ initialJobs }: { initialJobs: MeshJobSummary[
                     <button
                       key={r}
                       type="button"
+                      aria-pressed={textureResolution === r}
                       onClick={() => setTextureResolution(r)}
                       className={pillClass(textureResolution === r)}
                     >
@@ -209,7 +220,7 @@ export function MeshJobsExplorer({ initialJobs }: { initialJobs: MeshJobSummary[
             )}
           </div>
 
-          <button type="submit" className="tk-btn-primary">
+          <button type="submit" className="tk-btn-primary w-full">
             Gerar modelo 3D
           </button>
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
@@ -217,7 +228,7 @@ export function MeshJobsExplorer({ initialJobs }: { initialJobs: MeshJobSummary[
 
         <div className="tk-panel flex flex-col gap-3 p-4">
           <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Preview</h2>
-          <div className="flex aspect-square items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex aspect-square max-h-[480px] items-center justify-center overflow-hidden rounded-lg bg-slate-50 dark:bg-slate-950">
             {!activeJob && (
               <span className="px-4 text-center text-sm text-slate-400 dark:text-slate-500">
                 Envie uma imagem e gere um modelo
@@ -287,7 +298,12 @@ export function MeshJobsExplorer({ initialJobs }: { initialJobs: MeshJobSummary[
             <tbody>
               {jobs.map((job) => (
                 <tr key={job.id} className={job.id === activeJobId ? 'tk-row bg-violet-50 dark:bg-violet-500/10' : 'tk-row'}>
-                  <td className="py-2">{new Date(job.createdAt).toLocaleString('pt-BR')}</td>
+                  <td className="py-2">
+                    {job.id === activeJobId && (
+                      <span className="mr-1.5 text-xs font-medium text-violet-600 dark:text-violet-400">▸</span>
+                    )}
+                    {new Date(job.createdAt).toLocaleString('pt-BR')}
+                  </td>
                   <td>
                     {STATUS_LABEL[job.status]}
                     {job.status === 'ERRO' && job.errorMessage && (
