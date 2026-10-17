@@ -29,12 +29,18 @@ export async function createMeshJob(formData: FormData): Promise<ActionResult> {
   const seed = randomizeSeed ? Math.floor(Math.random() * 2147483647) : seedRaw ? Number(seedRaw) : null
 
   const simplifyRaw = formData.get('simplifyTarget')
+  // O <select> de resolução de textura só existe no DOM quando "Gerar
+  // textura" está marcado (ver MeshJobsExplorer.tsx) -- com o checkbox
+  // desmarcado o campo nem é enviado no form, então cai aqui como null.
+  // Nesse caso o valor é irrelevante (textura não vai ser gerada), mas a
+  // coluna no banco não aceita nulo -- usa o próprio default do schema.
+  const textureResolutionRaw = formData.get('textureResolution')
 
   const parsed = meshJobGenerationSchema.safeParse({
     generateTexture: formData.get('generateTexture') === 'on',
     seed,
     octreeResolution: formData.get('octreeResolution'),
-    textureResolution: formData.get('textureResolution'),
+    textureResolution: textureResolutionRaw ?? 512,
     simplifyTarget: simplifyRaw && simplifyRaw !== '' ? simplifyRaw : null,
   })
   if (!parsed.success) {
