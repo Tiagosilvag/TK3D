@@ -16,6 +16,7 @@ import os
 import sys
 import tempfile
 import time
+import traceback
 
 import requests
 import torch
@@ -201,6 +202,7 @@ def process_job(job: dict) -> None:
                 f'de marcar "Gerar textura". Detalhe: {err}'
             )
             print(f"[worker] job {job_id} falhou: {message}")
+            print(traceback.format_exc())
             fail_job(job_id, message)
         except Exception as err:  # qualquer outra falha vira ERRO no job, nunca trava o loop
             message = str(err)
@@ -210,6 +212,11 @@ def process_job(job: dict) -> None:
                     f"marcado, ou tente numa GPU com mais VRAM. Detalhe: {message}"
                 )
             print(f"[worker] job {job_id} falhou: {message}")
+            # Mensagem curta vai pro job (aparece na tela); o traceback
+            # completo só no terminal do worker -- essencial pra
+            # diagnosticar erros genéricos do Windows (ex. WinError 267)
+            # que não dizem em qual chamada realmente estouraram.
+            print(traceback.format_exc())
             fail_job(job_id, message)
 
 
