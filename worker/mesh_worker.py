@@ -165,14 +165,24 @@ def finalize_outputs(glb_path: str, simplify_target) -> tuple[str, str, str]:
 
 
 def complete_job(job_id: str, obj_path: str, stl_path: str, glb_path: str) -> None:
-    with open(obj_path, "rb") as obj_file, open(stl_path, "rb") as stl_file, open(glb_path, "rb") as glb_file:
-        files = {
-            "obj": ("mesh.obj", obj_file, "model/obj"),
-            "stl": ("mesh.stl", stl_file, "model/stl"),
-            "glb": ("mesh.glb", glb_file, "model/gltf-binary"),
-        }
-        resp = requests.post(f"{TK3D_URL}/api/mesh-jobs/{job_id}/complete", headers=HEADERS, files=files, timeout=180)
-    resp.raise_for_status()
+    """Manda os 3 arquivos em requisições SEPARADAS -- mandar tudo junto
+    num multipart só estourava 413 Payload Too Large no proxy de produção
+    (o .obj em ASCII sozinho já é grande pra uma malha de resolução
+    média, e os 3 juntos passavam do limite). O servidor acumula cada
+    parte e só marca o job como concluído quando os 3 já chegaram (ver
+    saveJobOutputPart em lib/meshJobs/jobs.ts)."""
+    parts = (("obj", obj_path, "model/obj"), ("stl", stl_path, "model/stl"), ("glb", glb_path, "model/gltf-binary"))
+    for kind, path, content_type in parts:
+        with open(path, "rb") as f:
+            files = {"file": (os.path.basename(path), f, content_type)}
+            resp = requests.post(
+                f"{TK3D_URL}/api/mesh-jobs/{job_id}/complete",
+                headers=HEADERS,
+                files=files,
+                data={"kind": kind},
+                timeout=180,
+            )
+        resp.raise_for_status()
 
 
 def fail_job(job_id: str, message: str) -> None:

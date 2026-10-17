@@ -6,7 +6,15 @@ import { GET as imageHandler } from '@/app/api/mesh-jobs/[id]/image/route'
 import { POST as completeHandler } from '@/app/api/mesh-jobs/[id]/complete/route'
 import { POST as failHandler } from '@/app/api/mesh-jobs/[id]/fail/route'
 import { GET as downloadHandler } from '@/app/api/mesh-jobs/[id]/download/[kind]/route'
-import { createJob, completeJob } from '@/lib/meshJobs/jobs'
+import { createJob, saveJobOutputPart } from '@/lib/meshJobs/jobs'
+
+// Helper de teste -- equivalente a completar o job via as 3 chamadas
+// separadas que o worker de verdade faz (ver worker/mesh_worker.py).
+async function completeJob(id: string, obj: Buffer, stl: Buffer, glb: Buffer) {
+  await saveJobOutputPart(id, 'obj', obj)
+  await saveJobOutputPart(id, 'stl', stl)
+  await saveJobOutputPart(id, 'glb', glb)
+}
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -69,17 +77,32 @@ describe('GET /api/mesh-jobs/:id/image', () => {
 })
 
 describe('POST /api/mesh-jobs/:id/complete', () => {
-  it('grava os arquivos e marca CONCLUIDO', async () => {
+  it('grava um arquivo por chamada e só marca CONCLUIDO depois dos 3', async () => {
     const job = await createJob(makeJobInput())
-    const formData = new FormData()
-    formData.set('obj', new File([Buffer.from('obj-data')], 'mesh.obj'))
-    formData.set('stl', new File([Buffer.from('stl-data')], 'mesh.stl'))
-    formData.set('glb', new File([Buffer.from('glb-data')], 'mesh.glb'))
-    const req = authedReq(`https://x/api/mesh-jobs/${job.id}/complete`, { method: 'POST', body: formData })
-    const res = await completeHandler(req, { params: Promise.resolve({ id: job.id }) })
-    expect(res.status).toBe(200)
+    for (const kind of ['obj', 'stl', 'glb'] as const) {
+      const formData = new FormData()
+      formData.set('kind', kind)
+      formData.set('file', new File([Buffer.from(`${kind}-data`)], `mesh.${kind}`))
+      const req = authedReq(`https://x/api/mesh-jobs/${job.id}/complete`, { method: 'POST', body: formData })
+      const res = await completeHandler(req, { params: Promise.resolve({ id: job.id }) })
+      expect(res.status).toBe(200)
+      if (kind !== 'glb') {
+        const midway = await prisma.model3DJob.findUniqueOrThrow({ where: { id: job.id } })
+        expect(midway.status).not.toBe('CONCLUIDO')
+      }
+    }
     const updated = await prisma.model3DJob.findUniqueOrThrow({ where: { id: job.id } })
     expect(updated.status).toBe('CONCLUIDO')
+  })
+
+  it('rejeita kind inválido', async () => {
+    const job = await createJob(makeJobInput())
+    const formData = new FormData()
+    formData.set('kind', 'png')
+    formData.set('file', new File([Buffer.from('x')], 'mesh.png'))
+    const req = authedReq(`https://x/api/mesh-jobs/${job.id}/complete`, { method: 'POST', body: formData })
+    const res = await completeHandler(req, { params: Promise.resolve({ id: job.id }) })
+    expect(res.status).toBe(400)
   })
 })
 

@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createJob, claimNextJob, completeJob, failJob, listRecentJobs, getJobImage, getJobOutput, deleteJob } from '@/lib/meshJobs/jobs'
+import { createJob, claimNextJob, saveJobOutputPart, failJob, listRecentJobs, getJobImage, getJobOutput, deleteJob } from '@/lib/meshJobs/jobs'
+
+// Helper de teste -- em produção o worker manda os 3 arquivos em
+// requisições HTTP separadas (ver worker/mesh_worker.py), mas pra testar
+// o resultado final isso equivale a chamar saveJobOutputPart 3x seguidas.
+async function completeJob(id: string, obj: Buffer, stl: Buffer, glb: Buffer) {
+  await saveJobOutputPart(id, 'obj', obj)
+  await saveJobOutputPart(id, 'stl', stl)
+  await saveJobOutputPart(id, 'glb', glb)
+}
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -64,6 +73,21 @@ describe('meshJobs', () => {
     expect(obj?.toString()).toBe('obj-data')
     expect(stl?.toString()).toBe('stl-data')
     expect(glb?.toString()).toBe('glb-data')
+    const updated = await prisma.model3DJob.findUniqueOrThrow({ where: { id: job.id } })
+    expect(updated.status).toBe('CONCLUIDO')
+  })
+
+  it('saveJobOutputPart só marca CONCLUIDO quando os 3 arquivos já chegaram', async () => {
+    const job = await createJob(makeJobInput())
+    await saveJobOutputPart(job.id, 'obj', Buffer.from('obj-data'))
+    let updated = await prisma.model3DJob.findUniqueOrThrow({ where: { id: job.id } })
+    expect(updated.status).toBe('PENDENTE')
+    await saveJobOutputPart(job.id, 'stl', Buffer.from('stl-data'))
+    updated = await prisma.model3DJob.findUniqueOrThrow({ where: { id: job.id } })
+    expect(updated.status).toBe('PENDENTE')
+    await saveJobOutputPart(job.id, 'glb', Buffer.from('glb-data'))
+    updated = await prisma.model3DJob.findUniqueOrThrow({ where: { id: job.id } })
+    expect(updated.status).toBe('CONCLUIDO')
   })
 
   it('failJob marca ERRO com a mensagem', async () => {

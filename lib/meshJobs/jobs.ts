@@ -62,11 +62,23 @@ export async function claimNextJob(): Promise<Model3DJob | null> {
   return null
 }
 
-export async function completeJob(id: string, obj: Buffer, stl: Buffer, glb: Buffer): Promise<void> {
-  await prisma.model3DJob.update({
+// Grava UM arquivo de saída por vez (não os 3 juntos) -- o worker manda
+// obj/stl/glb em requisições HTTP separadas (ver worker/mesh_worker.py)
+// porque o proxy de produção rejeita com 413 Payload Too Large quando os
+// 3 vão juntos num multipart só (o .obj em ASCII sozinho já é grande pra
+// uma malha de resolução média). Marca CONCLUIDO só quando os 3 já
+// chegaram -- enquanto isso o job continua aparecendo como PROCESSANDO,
+// sem problema (é exatamente o que a tela já mostra durante a geração).
+export async function saveJobOutputPart(id: string, kind: 'obj' | 'stl' | 'glb', data: Buffer): Promise<void> {
+  const partial = kind === 'obj' ? { outputObj: data } : kind === 'stl' ? { outputStl: data } : { outputGlb: data }
+  const updated = await prisma.model3DJob.update({
     where: { id },
-    data: { status: 'CONCLUIDO', outputObj: obj, outputStl: stl, outputGlb: glb, errorMessage: null },
+    data: { ...partial, errorMessage: null },
+    select: { outputObj: true, outputStl: true, outputGlb: true },
   })
+  if (updated.outputObj && updated.outputStl && updated.outputGlb) {
+    await prisma.model3DJob.update({ where: { id }, data: { status: 'CONCLUIDO' } })
+  }
 }
 
 export async function failJob(id: string, message: string): Promise<void> {
