@@ -47,3 +47,4 @@ prisma/dev.db-journal
 worker/__pycache__/
 worker/*.pyc
 worker/.venv/
+worker/output/
