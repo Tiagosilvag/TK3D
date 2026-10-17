@@ -76,6 +76,7 @@ export TK3D_URL="https://tk3d.coffetech.com.br"
 export MESH_WORKER_SECRET="<o mesmo valor configurado em MESH_WORKER_SECRET no Coolify>"
 export HUNYUAN3D_DIR="$HOME/Hunyuan3D-2.1"   # opcional, esse é o default
 export TARGET_SIZE_MM="100"                  # opcional, esse é o default -- maior dimensão do modelo exportado, em mm
+export OUTPUT_DIR="./output"                 # opcional, esse é o default -- onde os arquivos finais ficam salvos
 
 python mesh_worker.py
 ```
@@ -84,6 +85,17 @@ Os demais parâmetros de geração (resolução da malha, seed, textura
 ligada/desligada, resolução de textura, decimação) não são mais
 variáveis de ambiente — ficam na tela (`/3d-generator`), escolhidos por
 job, e o worker lê isso de cada job que pega.
+
+## Onde ficam os arquivos gerados
+
+Cada job concluído (mesmo que o envio pro servidor falhe depois, ex.
+413 Payload Too Large) salva `final.obj`/`final.stl`/`final.glb` em
+`worker/output/<id do job>/` -- essa pasta **não é limpa
+automaticamente**, ao contrário dos arquivos intermediários (que ficam
+num diretório temporário do sistema e somem sozinhos). Se o site não
+mostrar o resultado por algum erro de rede/servidor, o arquivo ainda
+está aí. Como isso cresce com o tempo, apague o conteúdo de vez em
+quando se o espaço em disco importar.
 
 Deixe rodando enquanto quiser gerar modelos — pode fechar quando não
 precisar mais; os jobs enviados nesse período ficam `PENDENTE` até você

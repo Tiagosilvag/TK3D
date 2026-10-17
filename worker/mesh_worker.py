@@ -30,6 +30,14 @@ MESH_WORKER_SECRET = os.environ["MESH_WORKER_SECRET"]
 # pede -- ver get_paint_pipeline).
 HUNYUAN3D_DIR = os.environ.get("HUNYUAN3D_DIR", os.path.expanduser("~/Hunyuan3D-2.1"))
 POLL_INTERVAL_SECONDS = float(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
+# Pasta permanente (NÃO é limpa automaticamente, ao contrário do diretório
+# temporário usado pros arquivos intermediários) onde os 3 arquivos finais
+# de cada job ficam salvos -- um subdiretório por job_id. Existe pra: (1)
+# você conseguir pegar o resultado localmente mesmo se o envio pro
+# servidor falhar (ex. 413 Payload Too Large); (2) dar pra conferir o
+# tamanho de cada arquivo ao investigar esse tipo de erro. Cresce com o
+# tempo -- apague o conteúdo de vez em quando se o espaço em disco importar.
+OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "output"))
 # Hunyuan3D exporta a malha numa escala própria do modelo, sem noção de
 # tamanho real de impressão -- maior dimensão da caixa delimitadora vira
 # essa medida em mm antes de salvar o STL/OBJ finais.
@@ -138,14 +146,16 @@ def generate_texture(shape_glb_path: str, image_path: str, resolution: int, outp
     return glb_path if os.path.exists(glb_path) else result_path
 
 
-def finalize_outputs(glb_path: str, simplify_target) -> tuple[str, str, str]:
+def finalize_outputs(job_id: str, glb_path: str, simplify_target) -> tuple[str, str, str]:
     """A partir do .glb bruto (com ou sem textura), aplica escala pra
     tamanho de impressão e decimação opcional (simplify_target -- não é
     um parâmetro do Hunyuan3D, é pós-processamento nosso via trimesh), e
-    exporta as 3 saídas finais: .obj e .stl pro fluxo de impressão, .glb
-    pro preview na tela. decimação de malha com textura pode perder
-    precisão nas coordenadas de UV -- aceitável aqui, o arquivo que
-    importa pra impressão é o .stl (sem cor de qualquer forma)."""
+    exporta as 3 saídas finais pra OUTPUT_DIR/<job_id>/ (pasta permanente,
+    não o diretório temporário do job -- ver comentário de OUTPUT_DIR):
+    .obj e .stl pro fluxo de impressão, .glb pro preview na tela.
+    decimação de malha com textura pode perder precisão nas coordenadas
+    de UV -- aceitável aqui, o arquivo que importa pra impressão é o
+    .stl (sem cor de qualquer forma)."""
     # force='mesh' garante um único Trimesh concatenado (um .glb com
     # múltiplos materiais/nós viraria uma Scene, sem a mesma API de
     # escala/simplificação/export direto).
@@ -156,11 +166,14 @@ def finalize_outputs(glb_path: str, simplify_target) -> tuple[str, str, str]:
     if simplify_target and len(mesh.faces) > simplify_target:
         mesh = mesh.simplify_quadric_decimation(simplify_target)
 
-    base = os.path.join(os.path.dirname(glb_path), "final")
+    job_output_dir = os.path.join(OUTPUT_DIR, job_id)
+    os.makedirs(job_output_dir, exist_ok=True)
+    base = os.path.join(job_output_dir, "final")
     obj_path, stl_path, out_glb_path = base + ".obj", base + ".stl", base + ".glb"
     mesh.export(obj_path)
     mesh.export(stl_path)
     mesh.export(out_glb_path)
+    print(f"[worker] arquivos finais salvos em {job_output_dir}")
     return obj_path, stl_path, out_glb_path
 
 
@@ -173,6 +186,8 @@ def complete_job(job_id: str, obj_path: str, stl_path: str, glb_path: str) -> No
     saveJobOutputPart em lib/meshJobs/jobs.ts)."""
     parts = (("obj", obj_path, "model/obj"), ("stl", stl_path, "model/stl"), ("glb", glb_path, "model/gltf-binary"))
     for kind, path, content_type in parts:
+        size_mb = os.path.getsize(path) / (1024 * 1024)
+        print(f"[worker] enviando {kind} ({size_mb:.1f} MB)...")
         with open(path, "rb") as f:
             files = {"file": (os.path.basename(path), f, content_type)}
             resp = requests.post(
@@ -203,7 +218,7 @@ def process_job(job: dict) -> None:
             glb_path = generate_shape(image_path, tmp, job["octreeResolution"], job["seed"])
             if wants_texture:
                 glb_path = generate_texture(glb_path, image_path, job["textureResolution"], tmp)
-            obj_path, stl_path, final_glb_path = finalize_outputs(glb_path, job["simplifyTarget"])
+            obj_path, stl_path, final_glb_path = finalize_outputs(job_id, glb_path, job["simplifyTarget"])
             complete_job(job_id, obj_path, stl_path, final_glb_path)
             print(f"[worker] job {job_id} concluído")
         except (ImportError, ModuleNotFoundError) as err:
