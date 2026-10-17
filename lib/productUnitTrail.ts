@@ -120,7 +120,14 @@ function buildFullComposition(row: ProductVariantBreakdownRow): string {
 export type UnitLocationType = 'estoque' | 'devolvida' | 'parceiro' | 'vendida'
 
 export type UnitLocation =
-  | { type: 'estoque' }
+  // Bug "diz que tem estoque mas não tem disponível pra entregar":
+  // unidade fisicamente em estoque pode já estar RESERVADA por um
+  // Pedido não-terminal (OrderItem.reservedQuantity -- mesma reserva
+  // que getProductVariantStockOptions já desconta de "disponível" em
+  // Registrar entrega/venda, ver comentário de reservedUnitsFor abaixo)
+  // -- sem isso aqui, a tela de rastreio contava como "livre" uma
+  // unidade que o resto do app já sabia estar comprometida.
+  | { type: 'estoque'; reservedFor: { orderId: string; orderLabel: string } | null }
   | { type: 'devolvida' }
   | { type: 'parceiro'; partnerId: string; partnerName: string; since: string }
   | { type: 'vendida'; via: 'consignado' | 'direta'; partnerName: string | null; date: string; unitPrice: number }
@@ -202,6 +209,11 @@ export interface PlaceGroupRow {
   linkLabel: string | null
   link: UnitStepLink | null
   unitNs: number[]
+  // Bug "diz que tem estoque mas não tem disponível pra entregar": true
+  // só pra linhas de "Em estoque" que já estão reservadas por um Pedido
+  // não-terminal -- UI destaca essas linhas separado (nunca mistura com
+  // estoque de verdade livre pra entregar/vender).
+  reserved: boolean
 }
 
 export interface PlaceGroup {
@@ -390,7 +402,7 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
           detail: formatDiaMes(ev.date),
           link: null,
         }
-        queue.push({ n: nextN++, comboKey: ev.comboKey, everReturned: false, steps: [step], location: { type: 'estoque' } })
+        queue.push({ n: nextN++, comboKey: ev.comboKey, everReturned: false, steps: [step], location: { type: 'estoque', reservedFor: null } })
       }
       stockQueueByCombo.set(ev.comboKey, queue)
       history.push({
@@ -516,10 +528,39 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
 
   history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 
+  // Bug "diz que tem estoque mas não tem disponível pra entregar": a
+  // unidade pode estar fisicamente em estoque mas já RESERVADA por um
+  // Pedido não-terminal -- mesma reserva que getProductVariantStockOptions
+  // (lib/reports.ts, usada por Registrar entrega/venda) já desconta de
+  // "disponível". Sem isso, esta tela mostrava "1 em estoque" pra uma
+  // unidade que o resto do app já sabia estar comprometida com um
+  // pedido, parecendo um bug de dados divergentes quando na verdade
+  // só faltava esta tela saber da reserva. Aloca a mais antiga do
+  // pool de estoque primeiro (mesmo critério FIFO do resto do arquivo).
+  const reservations = await prisma.orderItem.findMany({
+    where: { productId, colorComboKey: { not: null }, reservedQuantity: { gt: 0 }, status: { notIn: ['ENTREGUE', 'CANCELADO'] } },
+    include: { order: { select: { orderNumber: true, buyerOrPlatform: true } } },
+    orderBy: { updatedAt: 'asc' },
+  })
+  for (const r of reservations) {
+    if (!r.colorComboKey) continue
+    const queue = stockQueueByCombo.get(r.colorComboKey)
+    if (!queue) continue
+    const orderLabel = r.order.buyerOrPlatform ?? (r.order.orderNumber ? `#${r.order.orderNumber}` : 'pedido sem comprador informado')
+    let remaining = r.reservedQuantity
+    for (const unit of queue) {
+      if (remaining <= 0) break
+      if (unit.everReturned || unit.location.type !== 'estoque' || unit.location.reservedFor) continue
+      unit.location = { type: 'estoque', reservedFor: { orderId: r.orderId, orderLabel } }
+      remaining -= 1
+    }
+  }
+
   // Monta as linhas finais: unidades que sobraram em cada pool.
   const units: ProductUnit[] = []
   const withPartnersMap = new Map<string, VariantPartnerCount>()
   let inStock = 0
+  let reservedInStock = 0
   let returned = 0
 
   function pushUnit(unit: QueueUnit) {
@@ -538,7 +579,10 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
   for (const queue of stockQueueByCombo.values()) {
     for (const unit of queue) {
       if (unit.everReturned) returned++
-      else inStock++
+      else {
+        inStock++
+        if (unit.location.type === 'estoque' && unit.location.reservedFor) reservedInStock++
+      }
       pushUnit(unit)
     }
   }
@@ -627,38 +671,56 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
   // -- com 21 montadas isso é a diferença entre 21 cartões e ~8 linhas.
   const placeGroups: PlaceGroup[] = []
 
-  function buildStockLikeGroup(place: 'estoque' | 'devolvida', label: string, subtitleSuffix: string, count: number) {
+  function buildStockLikeGroup(place: 'estoque' | 'devolvida', label: string, subtitle: string, count: number) {
     const groupUnits = units.filter((u) => u.location.type === place)
     if (groupUnits.length === 0) return
-    const byCombo = new Map<string, ProductUnit[]>()
+    // "Em estoque" separa reservada (por Pedido não-terminal) de livre --
+    // mesma variação, mas NUNCA a mesma linha (ver comentário de
+    // UnitLocation['estoque'].reservedFor acima): o grupo-chave inclui o
+    // pedido quando reservado.
+    const byGroup = new Map<string, ProductUnit[]>()
     for (const u of groupUnits) {
-      const list = byCombo.get(u.comboKey) ?? []
+      const reservedOrderId = u.location.type === 'estoque' ? u.location.reservedFor?.orderId : undefined
+      const key = reservedOrderId ? `${u.comboKey}::reservada::${reservedOrderId}` : u.comboKey
+      const list = byGroup.get(key) ?? []
       list.push(u)
-      byCombo.set(u.comboKey, list)
+      byGroup.set(key, list)
     }
-    const rows: PlaceGroupRow[] = [...byCombo.entries()].map(([comboKey, list]) => {
+    const rows: PlaceGroupRow[] = [...byGroup.entries()].map(([key, list]) => {
       // A mais antiga primeiro -- destaca o que está encalhado há mais
       // tempo, mesmo critério de reverseExcessAssemblyForRun (consome/
       // mostra o mais antigo primeiro).
       const oldest = list.reduce((a, b) => (new Date(a.steps[a.steps.length - 1].date) < new Date(b.steps[b.steps.length - 1].date) ? a : b))
       const lastStep = oldest.steps[oldest.steps.length - 1]
+      const reservedFor = oldest.location.type === 'estoque' ? oldest.location.reservedFor : null
+      const statusLine = reservedFor
+        ? `${lastStep.label} ${lastStep.detail ?? ''} · reservada pro pedido ${reservedFor.orderLabel}`.replace(/\s+/g, ' ').trim()
+        : `${lastStep.label} ${lastStep.detail ?? ''} · parada há ${daysSince(lastStep.date)} dia(s)`.replace(/\s+/g, ' ').trim()
       return {
-        key: comboKey,
-        comboKey,
+        key,
+        comboKey: list[0].comboKey,
         shortTitle: list[0].shortTitle,
         titlePieces: list[0].titlePieces,
         fullComposition: list[0].fullComposition,
         quantity: list.length,
-        statusLine: `${lastStep.label} ${lastStep.detail ?? ''} · parada há ${daysSince(lastStep.date)} dia(s)`.replace(/\s+/g, ' ').trim(),
+        statusLine,
         linkLabel: null,
         link: null,
         unitNs: list.map((u) => u.n).sort((a, b) => a - b),
+        reserved: Boolean(reservedFor),
       }
     }).sort((a, b) => b.quantity - a.quantity)
-    placeGroups.push({ place, label, count, subtitle: `${count} ${subtitleSuffix}`, rows })
+    placeGroups.push({ place, label, count, subtitle, rows })
   }
 
-  buildStockLikeGroup('estoque', 'Em estoque', `disponíve${inStock === 1 ? 'l' : 'is'} para entregar`, inStock)
+  buildStockLikeGroup(
+    'estoque',
+    'Em estoque',
+    reservedInStock > 0
+      ? `em estoque · ${reservedInStock} reservada${reservedInStock === 1 ? '' : 's'} pra pedido`
+      : `disponíve${inStock === 1 ? 'l' : 'is'} para entregar`,
+    inStock,
+  )
 
   const partnerUnits = units.filter((u) => u.location.type === 'parceiro')
   if (partnerUnits.length > 0) {
@@ -688,6 +750,7 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
         linkLabel: deliveryId ? `Entrega #${shortId(deliveryId)}` : null,
         link: deliveryId ? ({ type: 'delivery', deliveryId } as const) : null,
         unitNs: list.map((u) => u.n).sort((a, b) => a - b),
+        reserved: false,
       }
     }).sort((a, b) => b.quantity - a.quantity)
     placeGroups.push({
@@ -728,6 +791,7 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
         linkLabel,
         link,
         unitNs: list.map((u) => u.n).sort((a, b) => a - b),
+        reserved: false,
       }
     }).sort((a, b) => b.quantity - a.quantity)
     placeGroups.push({
