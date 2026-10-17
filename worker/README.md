@@ -40,3 +40,13 @@ python mesh_worker.py
 Deixe rodando enquanto quiser gerar modelos — pode fechar quando não
 precisar mais; os jobs enviados nesse período ficam `PENDENTE` até você
 rodar o worker de novo.
+
+## Atalho pra ligar depois de desligar o PC
+
+Desligar o PC não quebra nada — os pedidos feitos nesse meio tempo só
+ficam `PENDENTE` esperando. Pra não ter que digitar os passos 2-3 toda
+vez, `start_worker.bat` (nesta mesma pasta) já faz tudo de uma vez:
+ativa o venv, define as variáveis de ambiente e roda o worker. Edite os
+caminhos/valores dentro dele uma vez (Client ID/caminho do TripoSR
+mudam por máquina) e depois é só dar duplo-clique nele sempre que
+quiser gerar modelos.
