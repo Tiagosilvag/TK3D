@@ -19,7 +19,17 @@ git clone https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1 ~/Hunyuan3D-2.1
 cd ~/Hunyuan3D-2.1
 pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 pip install -r hy3dshape/requirements.txt
+pip install diffusers==0.30.0 transformers==4.46.0
 ```
+
+O `hy3dshape/requirements.txt` do próprio repo não fixa a versão do
+`diffusers`/`transformers` -- sem o `pip install` extra acima, o pip
+puxa uma versão nova demais do `diffusers` (que já usa a API
+`torch.accelerator`, só existe no PyTorch 2.6+) e quebra com
+`AttributeError: module 'torch' has no attribute 'accelerator'` ao
+importar `hy3dshape`. As versões acima são as mesmas fixadas no
+`requirements.txt` da raiz do repo, testadas pelo próprio Tencent junto
+com o PyTorch 2.5.1.
 
 Confirme que o pipeline de forma carrega e gera algo antes de seguir —
 ex. rodando `python3 hy3dshape/minimal_demo.py` de dentro do clone (ele
