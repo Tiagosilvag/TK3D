@@ -33,6 +33,8 @@ pip install -r requirements.txt
 export TK3D_URL="https://tk3d.coffetech.com.br"
 export MESH_WORKER_SECRET="<o mesmo valor configurado em MESH_WORKER_SECRET no Coolify>"
 export TRIPOSR_DIR="$HOME/TripoSR"   # opcional, esse é o default
+export MC_RESOLUTION="512"           # opcional, esse é o default -- resolução da malha (maior = mais detalhe, mais VRAM/tempo)
+export TARGET_SIZE_MM="100"          # opcional, esse é o default -- maior dimensão do modelo exportado, em mm
 
 python mesh_worker.py
 ```

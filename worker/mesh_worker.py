@@ -21,6 +21,16 @@ TK3D_URL = os.environ["TK3D_URL"].rstrip("/")
 MESH_WORKER_SECRET = os.environ["MESH_WORKER_SECRET"]
 TRIPOSR_DIR = os.environ.get("TRIPOSR_DIR", os.path.expanduser("~/TripoSR"))
 POLL_INTERVAL_SECONDS = float(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
+# Resolução do marching cubes que extrai a malha -- o padrão do run.py
+# (256) produz aquele aspecto "em degraus"/ondulado em superfícies
+# curvas. 512 custa mais VRAM/tempo, mas numa GPU como a RTX 4070 ainda
+# roda em segundos e o ganho de detalhe é grande.
+MC_RESOLUTION = os.environ.get("MC_RESOLUTION", "512")
+# TripoSR exporta a malha numa escala normalizada (~2 unidades de lado),
+# sem noção nenhuma de tamanho real -- todo modelo abre no fatiador como
+# "objeto muito pequeno" (~2mm). Escalamos pra que a maior dimensão da
+# caixa delimitadora vire essa medida em mm antes de salvar o STL.
+TARGET_SIZE_MM = float(os.environ.get("TARGET_SIZE_MM", "100"))
 
 HEADERS = {"Authorization": f"Bearer {MESH_WORKER_SECRET}"}
 
@@ -48,7 +58,7 @@ def run_triposr(image_path: str, output_dir: str) -> str:
     integração foi escrita (saída em <output_dir>/0/mesh.obj). Confira o
     README do TripoSR antes de rodar pela primeira vez."""
     subprocess.run(
-        [sys.executable, "run.py", image_path, "--output-dir", output_dir],
+        [sys.executable, "run.py", image_path, "--output-dir", output_dir, "--mc-resolution", MC_RESOLUTION],
         cwd=TRIPOSR_DIR,
         check=True,
     )
@@ -62,7 +72,13 @@ def run_triposr(image_path: str, output_dir: str) -> str:
 
 
 def convert_obj_to_stl(obj_path: str) -> str:
-    mesh = trimesh.load(obj_path)
+    # force='mesh' garante um único Trimesh concatenado mesmo se o OBJ
+    # vier como múltiplos grupos/materiais (trimesh devolveria uma Scene
+    # nesse caso, que não tem a mesma API de escala/export direto).
+    mesh = trimesh.load(obj_path, force="mesh")
+    largest_dimension = max(mesh.bounding_box.extents)
+    if largest_dimension > 0:
+        mesh.apply_scale(TARGET_SIZE_MM / largest_dimension)
     stl_path = obj_path.replace(".obj", ".stl")
     mesh.export(stl_path)
     return stl_path
