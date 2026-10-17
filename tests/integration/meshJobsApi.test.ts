@@ -137,4 +137,18 @@ describe('GET /api/mesh-jobs/:id/download/:kind', () => {
     const res = await downloadHandler(req, { params: Promise.resolve({ id: 'abc', kind: 'png' }) })
     expect(res.status).toBe(400)
   })
+
+  it('kind "input" devolve a imagem original enviada, com o content type dela', async () => {
+    const job = await createJob(makeJobInput({ data: Buffer.from('img-bytes'), contentType: 'image/jpeg', sizeBytes: 9 }))
+    const req = new NextRequest(`https://x/api/mesh-jobs/${job.id}/download/input`)
+    const res = await downloadHandler(req, { params: Promise.resolve({ id: job.id, kind: 'input' }) })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('image/jpeg')
+  })
+
+  it('kind "input" devolve 404 pra job inexistente', async () => {
+    const req = new NextRequest('https://x/api/mesh-jobs/nao-existe/download/input')
+    const res = await downloadHandler(req, { params: Promise.resolve({ id: 'nao-existe', kind: 'input' }) })
+    expect(res.status).toBe(404)
+  })
 })

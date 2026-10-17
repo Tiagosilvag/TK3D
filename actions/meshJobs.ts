@@ -3,7 +3,7 @@ import { revalidatePath } from 'next/cache'
 import { createJob, deleteJob, listRecentJobs, type MeshJobSummary } from '@/lib/meshJobs/jobs'
 import { meshJobGenerationSchema } from '@/lib/validation/meshJob'
 
-type ActionResult = { success: boolean; error?: string }
+type ActionResult = { success: boolean; error?: string; jobId?: string }
 
 // Mesmos limites/tipos aceitos de actions/productPhotos.ts, ajustados
 // pro tamanho de imagem de entrada do gerador (ver spec §3/§7).
@@ -48,7 +48,7 @@ export async function createMeshJob(formData: FormData): Promise<ActionResult> {
   }
 
   const data = Buffer.from(await file.arrayBuffer())
-  await createJob({
+  const job = await createJob({
     data,
     contentType: file.type,
     sizeBytes: file.size,
@@ -60,7 +60,7 @@ export async function createMeshJob(formData: FormData): Promise<ActionResult> {
   })
 
   revalidatePath('/3d-generator')
-  return { success: true }
+  return { success: true, jobId: job.id }
 }
 
 export async function deleteMeshJob(id: string): Promise<ActionResult> {
