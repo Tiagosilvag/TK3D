@@ -1,6 +1,7 @@
 'use server'
 import { revalidatePath } from 'next/cache'
 import { createJob, deleteJob, listRecentJobs, type MeshJobSummary } from '@/lib/meshJobs/jobs'
+import { meshJobGenerationSchema } from '@/lib/validation/meshJob'
 
 type ActionResult = { success: boolean; error?: string }
 
@@ -21,8 +22,36 @@ export async function createMeshJob(formData: FormData): Promise<ActionResult> {
     return { success: false, error: 'Imagem muito grande (máximo 10MB)' }
   }
 
+  const randomizeSeed = formData.get('randomizeSeed') === 'on'
+  const seedRaw = formData.get('seed')
+  // Seed aleatória gerada aqui (não no worker) pra já ficar gravada no
+  // job e aparecer na tela -- reprodutível mesmo com "aleatória" marcado.
+  const seed = randomizeSeed ? Math.floor(Math.random() * 2147483647) : seedRaw ? Number(seedRaw) : null
+
+  const simplifyRaw = formData.get('simplifyTarget')
+
+  const parsed = meshJobGenerationSchema.safeParse({
+    generateTexture: formData.get('generateTexture') === 'on',
+    seed,
+    octreeResolution: formData.get('octreeResolution'),
+    textureResolution: formData.get('textureResolution'),
+    simplifyTarget: simplifyRaw && simplifyRaw !== '' ? simplifyRaw : null,
+  })
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? 'Configuração inválida' }
+  }
+
   const data = Buffer.from(await file.arrayBuffer())
-  await createJob({ data, contentType: file.type, sizeBytes: file.size })
+  await createJob({
+    data,
+    contentType: file.type,
+    sizeBytes: file.size,
+    generateTexture: parsed.data.generateTexture,
+    seed: parsed.data.seed,
+    octreeResolution: parsed.data.octreeResolution,
+    textureResolution: parsed.data.textureResolution,
+    simplifyTarget: parsed.data.simplifyTarget,
+  })
 
   revalidatePath('/3d-generator')
   return { success: true }

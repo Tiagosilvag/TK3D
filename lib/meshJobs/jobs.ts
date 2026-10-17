@@ -7,6 +7,11 @@ export interface CreateJobInput {
   data: Buffer
   contentType: string
   sizeBytes: number
+  generateTexture: boolean
+  seed: number | null
+  octreeResolution: number
+  textureResolution: number
+  simplifyTarget: number | null
 }
 
 export async function createJob(input: CreateJobInput): Promise<Model3DJob> {
@@ -15,6 +20,11 @@ export async function createJob(input: CreateJobInput): Promise<Model3DJob> {
       inputImage: input.data,
       inputContentType: input.contentType,
       inputSizeBytes: input.sizeBytes,
+      generateTexture: input.generateTexture,
+      seed: input.seed,
+      octreeResolution: input.octreeResolution,
+      textureResolution: input.textureResolution,
+      simplifyTarget: input.simplifyTarget,
     },
   })
 }
@@ -52,10 +62,10 @@ export async function claimNextJob(): Promise<Model3DJob | null> {
   return null
 }
 
-export async function completeJob(id: string, obj: Buffer, stl: Buffer): Promise<void> {
+export async function completeJob(id: string, obj: Buffer, stl: Buffer, glb: Buffer): Promise<void> {
   await prisma.model3DJob.update({
     where: { id },
-    data: { status: 'CONCLUIDO', outputObj: obj, outputStl: stl, errorMessage: null },
+    data: { status: 'CONCLUIDO', outputObj: obj, outputStl: stl, outputGlb: glb, errorMessage: null },
   })
 }
 
@@ -75,13 +85,13 @@ export async function getJobImage(id: string): Promise<{ data: Buffer; contentTy
   return { data: Buffer.from(job.inputImage), contentType: job.inputContentType }
 }
 
-export async function getJobOutput(id: string, kind: 'obj' | 'stl'): Promise<Buffer | null> {
+export async function getJobOutput(id: string, kind: 'obj' | 'stl' | 'glb'): Promise<Buffer | null> {
   const job = await prisma.model3DJob.findUnique({
     where: { id },
-    select: { outputObj: true, outputStl: true },
+    select: { outputObj: true, outputStl: true, outputGlb: true },
   })
   if (!job) return null
-  const value = kind === 'obj' ? job.outputObj : job.outputStl
+  const value = kind === 'obj' ? job.outputObj : kind === 'stl' ? job.outputStl : job.outputGlb
   return value ? Buffer.from(value) : null
 }
 
@@ -95,13 +105,18 @@ export interface MeshJobSummary {
   inputContentType: string
   errorMessage: string | null
   createdAt: string
+  generateTexture: boolean
+  seed: number | null
   hasObj: boolean
   hasStl: boolean
+  hasGlb: boolean
 }
 
 // Lista pra tela -- nunca devolve os Bytes de entrada/saída pro caller,
-// só se existem (hasObj/hasStl), evitando carregar potencialmente vários
-// MB por job numa lista de até `limit` itens.
+// só se existem (hasObj/hasStl/hasGlb), evitando carregar potencialmente
+// vários MB por job numa lista de até `limit` itens. outputGlb some do
+// select por esse mesmo motivo -- quem precisa do conteúdo do .glb pro
+// preview usa a rota de download, não esta lista.
 export async function listRecentJobs(limit = 20): Promise<MeshJobSummary[]> {
   const rows = await prisma.model3DJob.findMany({
     orderBy: { createdAt: 'desc' },
@@ -112,8 +127,11 @@ export async function listRecentJobs(limit = 20): Promise<MeshJobSummary[]> {
       inputContentType: true,
       errorMessage: true,
       createdAt: true,
+      generateTexture: true,
+      seed: true,
       outputObj: true,
       outputStl: true,
+      outputGlb: true,
     },
   })
   return rows.map((r) => ({
@@ -122,7 +140,10 @@ export async function listRecentJobs(limit = 20): Promise<MeshJobSummary[]> {
     inputContentType: r.inputContentType,
     errorMessage: r.errorMessage,
     createdAt: r.createdAt.toISOString(),
+    generateTexture: r.generateTexture,
+    seed: r.seed,
     hasObj: r.outputObj !== null,
     hasStl: r.outputStl !== null,
+    hasGlb: r.outputGlb !== null,
   }))
 }

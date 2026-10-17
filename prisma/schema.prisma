@@ -1581,24 +1581,41 @@ enum Model3DJobStatus {
   ERRO
 }
 
-// Gerador de modelo 3D a partir de imagem (TripoSR, worker local no PC do
-// usuário -- a VPS de produção não tem GPU, ver spec
-// docs/superpowers/specs/2026-10-14-gerador-3d-triposr-design.md). Mesmo
+// Gerador de modelo 3D a partir de imagem (Hunyuan3D 2.1, worker local no
+// PC do usuário -- a VPS de produção não tem GPU, ver spec
+// docs/superpowers/specs/2026-10-17-gerador-3d-hunyuan3d-design.md). Mesmo
 // padrão de armazenamento de ProductPhoto (arquivo binário direto no
 // Postgres via Bytes, sem storage externo). claimedAt marca quando um
 // worker reivindicou o job -- usado só pra detectar job PROCESSANDO
 // abandonado (worker crashou sem chamar /fail) depois de
 // STALE_AFTER_MINUTES; nunca editado fora de lib/meshJobs/jobs.ts.
+// generateTexture/seed/octreeResolution/textureResolution/simplifyTarget
+// são parâmetros de geração escolhidos na tela por job (não mais env var
+// fixa do worker) -- o worker lê esses campos ao reivindicar o job.
+// generateTexture=true exige ~21GB de VRAM (fora do alcance do hardware
+// atual do usuário) -- fica disponível na tela e no worker mesmo assim,
+// pra já estar pronto numa troca futura de placa de vídeo; se faltar
+// VRAM ou o worker não tiver o estágio de textura instalado, o job vai
+// pra ERRO com mensagem clara, nunca trava o loop. outputGlb guarda o
+// .glb (com textura quando gerada, sem quando não) usado pro preview 3D
+// inline na tela via <model-viewer> -- outputObj/outputStl continuam
+// existindo pro fluxo de impressão (fatiador não lê .glb).
 model Model3DJob {
-  id               String           @id @default(cuid())
-  status           Model3DJobStatus @default(PENDENTE)
-  inputImage       Bytes
-  inputContentType String
-  inputSizeBytes   Int
-  outputObj        Bytes?
-  outputStl        Bytes?
-  errorMessage     String?
-  claimedAt        DateTime?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+  id                String           @id @default(cuid())
+  status            Model3DJobStatus @default(PENDENTE)
+  inputImage        Bytes
+  inputContentType  String
+  inputSizeBytes    Int
+  generateTexture   Boolean          @default(false)
+  seed              Int?
+  octreeResolution  Int              @default(384)
+  textureResolution Int              @default(512)
+  simplifyTarget    Int?
+  outputObj         Bytes?
+  outputStl         Bytes?
+  outputGlb         Bytes?
+  errorMessage      String?
+  claimedAt         DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 }

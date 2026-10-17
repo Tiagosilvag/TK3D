@@ -15,6 +15,18 @@ beforeEach(async () => {
   await prisma.model3DJob.deleteMany()
 })
 
+const DEFAULT_GENERATION_PARAMS = {
+  generateTexture: false,
+  seed: null,
+  octreeResolution: 384,
+  textureResolution: 512,
+  simplifyTarget: null,
+} as const
+
+function makeJobInput(overrides: Partial<Parameters<typeof createJob>[0]> = {}) {
+  return { data: Buffer.from('img'), contentType: 'image/png', sizeBytes: 3, ...DEFAULT_GENERATION_PARAMS, ...overrides }
+}
+
 function authedReq(url: string, init?: { method?: string; body?: BodyInit; headers?: HeadersInit }) {
   const headers = new Headers(init?.headers)
   headers.set('Authorization', 'Bearer segredo-teste')
@@ -34,7 +46,7 @@ describe('GET /api/mesh-jobs/next', () => {
   })
 
   it('reivindica e devolve o id do job pendente mais antigo', async () => {
-    const job = await createJob({ data: Buffer.from('img'), contentType: 'image/png', sizeBytes: 3 })
+    const job = await createJob(makeJobInput())
     const res = await nextHandler(authedReq('https://x/api/mesh-jobs/next'))
     expect(res.status).toBe(200)
     const body = await res.json()
@@ -44,7 +56,7 @@ describe('GET /api/mesh-jobs/next', () => {
 
 describe('GET /api/mesh-jobs/:id/image', () => {
   it('devolve a imagem com o content type certo', async () => {
-    const job = await createJob({ data: Buffer.from('img-bytes'), contentType: 'image/jpeg', sizeBytes: 9 })
+    const job = await createJob(makeJobInput({ data: Buffer.from('img-bytes'), contentType: 'image/jpeg', sizeBytes: 9 }))
     const res = await imageHandler(authedReq(`https://x/api/mesh-jobs/${job.id}/image`), { params: Promise.resolve({ id: job.id }) })
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('image/jpeg')
@@ -58,10 +70,11 @@ describe('GET /api/mesh-jobs/:id/image', () => {
 
 describe('POST /api/mesh-jobs/:id/complete', () => {
   it('grava os arquivos e marca CONCLUIDO', async () => {
-    const job = await createJob({ data: Buffer.from('img'), contentType: 'image/png', sizeBytes: 3 })
+    const job = await createJob(makeJobInput())
     const formData = new FormData()
     formData.set('obj', new File([Buffer.from('obj-data')], 'mesh.obj'))
     formData.set('stl', new File([Buffer.from('stl-data')], 'mesh.stl'))
+    formData.set('glb', new File([Buffer.from('glb-data')], 'mesh.glb'))
     const req = authedReq(`https://x/api/mesh-jobs/${job.id}/complete`, { method: 'POST', body: formData })
     const res = await completeHandler(req, { params: Promise.resolve({ id: job.id }) })
     expect(res.status).toBe(200)
@@ -72,7 +85,7 @@ describe('POST /api/mesh-jobs/:id/complete', () => {
 
 describe('POST /api/mesh-jobs/:id/fail', () => {
   it('marca ERRO com a mensagem enviada', async () => {
-    const job = await createJob({ data: Buffer.from('img'), contentType: 'image/png', sizeBytes: 3 })
+    const job = await createJob(makeJobInput())
     const req = authedReq(`https://x/api/mesh-jobs/${job.id}/fail`, {
       method: 'POST',
       body: JSON.stringify({ message: 'sem GPU disponível' }),
@@ -88,8 +101,8 @@ describe('POST /api/mesh-jobs/:id/fail', () => {
 
 describe('GET /api/mesh-jobs/:id/download/:kind', () => {
   it('devolve o STL concluído sem exigir bearer token (rota do navegador)', async () => {
-    const job = await createJob({ data: Buffer.from('img'), contentType: 'image/png', sizeBytes: 3 })
-    await completeJob(job.id, Buffer.from('obj-data'), Buffer.from('stl-data'))
+    const job = await createJob(makeJobInput())
+    await completeJob(job.id, Buffer.from('obj-data'), Buffer.from('stl-data'), Buffer.from('glb-data'))
     const req = new NextRequest(`https://x/api/mesh-jobs/${job.id}/download/stl`)
     const res = await downloadHandler(req, { params: Promise.resolve({ id: job.id, kind: 'stl' }) })
     expect(res.status).toBe(200)

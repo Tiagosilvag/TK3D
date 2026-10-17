@@ -10,11 +10,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const formData = await request.formData()
   const obj = formData.get('obj')
   const stl = formData.get('stl')
-  if (!(obj instanceof File) || !(stl instanceof File)) {
-    return NextResponse.json({ error: 'Faltou o arquivo .obj ou .stl' }, { status: 400 })
+  const glb = formData.get('glb')
+  if (!(obj instanceof File) || !(stl instanceof File) || !(glb instanceof File)) {
+    return NextResponse.json({ error: 'Faltou o arquivo .obj, .stl ou .glb' }, { status: 400 })
   }
   const objBuffer = Buffer.from(await obj.arrayBuffer())
   const stlBuffer = Buffer.from(await stl.arrayBuffer())
-  await completeJob(id, objBuffer, stlBuffer)
+  const glbBuffer = Buffer.from(await glb.arrayBuffer())
+  await completeJob(id, objBuffer, stlBuffer, glbBuffer)
   return NextResponse.json({ ok: true })
 }

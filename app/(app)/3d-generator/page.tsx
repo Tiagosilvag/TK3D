@@ -9,9 +9,11 @@ export default async function MeshGeneratorPage() {
     <div className="tk-page">
       <h1 className="tk-page-title">Gerador de modelo 3D</h1>
       <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-        Sobe uma imagem e gera um modelo 3D a partir dela usando o worker local (TripoSR, roda no seu PC com GPU —
-        a VPS do TK3D não processa isso). O resultado é um RASCUNHO de malha reconstruída a partir de 1 única foto:
-        normalmente precisa de limpeza numa ferramenta de modelagem antes de virar um arquivo pronto pra imprimir.
+        Sobe uma imagem e gera um modelo 3D a partir dela usando o worker local (Hunyuan3D 2.1, roda no seu PC com
+        GPU — a VPS do TK3D não processa isso). O resultado é um RASCUNHO de malha reconstruída a partir de 1 única
+        foto: normalmente precisa de limpeza numa ferramenta de modelagem antes de virar um arquivo pronto pra
+        imprimir. &ldquo;Gerar textura&rdquo; exige ~21GB de VRAM e não roda na sua placa atual — deixe desmarcado
+        pra gerar só a forma, que funciona hoje.
       </p>
       <MeshJobsExplorer initialJobs={jobs} />
     </div>

@@ -10,5 +10,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!job) {
     return new NextResponse(null, { status: 204 })
   }
-  return NextResponse.json({ id: job.id })
+  return NextResponse.json({
+    id: job.id,
+    generateTexture: job.generateTexture,
+    seed: job.seed,
+    octreeResolution: job.octreeResolution,
+    textureResolution: job.textureResolution,
+    simplifyTarget: job.simplifyTarget,
+  })
 }
