@@ -77,8 +77,12 @@ function computeChangeLines(
   drafts: Record<string, ItemDraft>,
   removedIds: Set<string>,
   newItems: NewItemDraft[],
+  draftDate: string,
 ): string[] {
   const lines: string[] = []
+  if (draftDate && draftDate !== batch.deliveryDate.slice(0, 10)) {
+    lines.push(`Data da entrega: ${new Date(batch.deliveryDate).toLocaleDateString('pt-BR')} → ${new Date(`${draftDate}T00:00:00`).toLocaleDateString('pt-BR')}`)
+  }
   for (const item of batch.items) {
     if (removedIds.has(item.id)) {
       lines.push(`Removeu ${item.productName}${item.colorLabel ? ` (${item.colorLabel})` : ''}`)
@@ -200,6 +204,11 @@ export function DeliveriesExplorer({
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set())
   const [newItems, setNewItems] = useState<NewItemDraft[]>([])
   const [addingProduct, setAddingProduct] = useState(false)
+  // Bug "entrega com data impossível (anterior à montagem que a
+  // abasteceu)": data do lote agora editável junto do resto do rascunho --
+  // string yyyy-mm-dd (mesmo formato de <input type="date">, ver
+  // DeliveryBatchForm.tsx#yesterdayString pro mesmo padrão de conversão).
+  const [draftDate, setDraftDate] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [savedMessage, setSavedMessage] = useState<string | null>(null)
 
@@ -208,6 +217,7 @@ export function DeliveriesExplorer({
     setDrafts(Object.fromEntries(batch.items.map((i) => [i.id, { quantity: i.quantityDelivered, unitPrice: i.unitPrice }])))
     setRemovedIds(new Set())
     setNewItems([])
+    setDraftDate(batch.deliveryDate.slice(0, 10))
     setAddingProduct(false)
     setError(null)
     setSavedMessage(null)
@@ -232,8 +242,8 @@ export function DeliveriesExplorer({
   }, [selected])
 
   const changeLines = useMemo(
-    () => (selected ? computeChangeLines(selected, drafts, removedIds, newItems) : []),
-    [selected, drafts, removedIds, newItems],
+    () => (selected ? computeChangeLines(selected, drafts, removedIds, newItems, draftDate) : []),
+    [selected, drafts, removedIds, newItems, draftDate],
   )
   const hasChanges = changeLines.length > 0
 
@@ -260,6 +270,7 @@ export function DeliveriesExplorer({
     setDrafts(Object.fromEntries(selected.items.map((i) => [i.id, { quantity: i.quantityDelivered, unitPrice: i.unitPrice }])))
     setRemovedIds(new Set())
     setNewItems([])
+    setDraftDate(selected.deliveryDate.slice(0, 10))
     setAddingProduct(false)
     setError(null)
   }
@@ -284,6 +295,7 @@ export function DeliveriesExplorer({
         quantityDelivered: n.quantity,
         unitPrice: n.unitPrice,
       }))))
+      if (draftDate && draftDate !== selected.deliveryDate.slice(0, 10)) fd.set('deliveryDate', draftDate)
       const changedCount = changeLines.length
       const result = await updateConsignmentDeliveryBatchItems(selected.batchId, fd)
       if (!result.success) return setError(result.error ?? 'Erro ao salvar alterações.')
@@ -367,7 +379,18 @@ export function DeliveriesExplorer({
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Entrega em consignação</p>
                 <div className="flex items-center gap-2">
-                  <h3 className="font-display text-base font-semibold">{selected.partnerName} · {new Date(selected.deliveryDate).toLocaleDateString('pt-BR')}</h3>
+                  <h3 className="font-display text-base font-semibold">{selected.partnerName}</h3>
+                  {/* Bug "entrega com data impossível": data do lote agora
+                      editável aqui mesmo -- único jeito de corrigir uma
+                      data digitada errada (ex.: entrega registrada com
+                      data ANTERIOR à montagem que a abasteceu, confundindo
+                      o modal de rastreio por unidade). */}
+                  <input
+                    type="date"
+                    value={draftDate}
+                    onChange={(e) => setDraftDate(e.target.value)}
+                    className="tk-input px-1.5 py-0.5 text-sm"
+                  />
                   {selected.editedAt && (
                     <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
                       ✎ Editada hoje

@@ -298,9 +298,9 @@ export async function updateConsignmentDeliveryBatchItems(batchId: string, formD
   } catch {
     return { success: false, error: 'Dados de edição inválidos' }
   }
-  const parsed = consignmentDeliveryBatchEditSchema.safeParse({ changes: changesRaw, newItems: newItemsRaw })
+  const parsed = consignmentDeliveryBatchEditSchema.safeParse({ changes: changesRaw, newItems: newItemsRaw, deliveryDate: raw.deliveryDate || undefined })
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
-  const { changes, newItems } = parsed.data
+  const { changes, newItems, deliveryDate: newDeliveryDate } = parsed.data
 
   try {
     const existing = await prisma.consignmentDelivery.findMany({
@@ -309,7 +309,15 @@ export async function updateConsignmentDeliveryBatchItems(batchId: string, formD
     })
     if (existing.length === 0) return { success: false, error: 'Entrega não encontrada (pode já ter sido excluída)' }
     const byId = new Map(existing.map((d) => [d.id, d]))
-    const { partnerId, deliveryDate, notes } = existing[0]
+    const { partnerId, notes } = existing[0]
+    // Bug "entrega com data impossível": a data do lote inteiro (repetida
+    // em cada linha, nunca uma tabela "evento" própria -- ver comentário
+    // de ConsignmentDelivery.batchId no schema) agora também é editável
+    // aqui, não só quantidade/preço por item -- mesmo UPDATE em lote (todo
+    // item do batchId de uma vez, nunca um por um) pra nunca deixar os
+    // itens de um mesmo lote com datas divergentes entre si.
+    const dateChanged = newDeliveryDate !== undefined && newDeliveryDate.getTime() !== existing[0].deliveryDate.getTime()
+    const deliveryDate = dateChanged ? newDeliveryDate : existing[0].deliveryDate
 
     // Regra "respeitar o já vendido/devolvido": mesmo floor de
     // updateConsignmentDeliveryQuantity, só que validado pra TODOS os
@@ -327,6 +335,9 @@ export async function updateConsignmentDeliveryBatchItems(batchId: string, formD
     }
 
     await prisma.$transaction(async (tx) => {
+      if (dateChanged) {
+        await tx.consignmentDelivery.updateMany({ where: { batchId }, data: { deliveryDate } })
+      }
       for (const change of changes) {
         if (change.removed) {
           await tx.consignmentSaleReport.deleteMany({ where: { deliveryId: change.id } })

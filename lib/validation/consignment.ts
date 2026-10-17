@@ -118,7 +118,19 @@ export const consignmentDeliveryBatchNewItemSchema = z.object({
   unitPrice: z.coerce.number().min(0, 'Preço não pode ser negativo'),
 })
 
+// Bug "entrega com data impossível (anterior à montagem que a abasteceu)":
+// o modal de detalhe só deixava corrigir quantidade/preço -- sem como
+// corrigir uma data digitada errada na hora de registrar, um erro desses
+// ficava pra sempre, fazendo o modal de rastreio por unidade (lib/
+// productUnitTrail.ts) processar a entrega ANTES da montagem que a
+// originou (fila de estoque ainda vazia nesse ponto -- a entrega "não
+// consome ninguém" na reconstrução por ordem cronológica, embora a conta
+// bruta de getProductVariantStockOptions, que não olha ordem nenhuma,
+// continue descontando corretamente -- daí o "diz que tem estoque mas tá
+// esgotado pra entregar"). `deliveryDate` opcional (omitido = sem mudança
+// nenhuma na data do lote) pro mesmo rascunho de edição já existente.
 export const consignmentDeliveryBatchEditSchema = z.object({
   changes: z.array(consignmentDeliveryBatchItemChangeSchema),
   newItems: z.array(consignmentDeliveryBatchNewItemSchema),
-}).refine((data) => data.changes.length > 0 || data.newItems.length > 0, { message: 'Nenhuma alteração para salvar' })
+  deliveryDate: z.coerce.date().optional(),
+}).refine((data) => data.changes.length > 0 || data.newItems.length > 0 || data.deliveryDate !== undefined, { message: 'Nenhuma alteração para salvar' })
