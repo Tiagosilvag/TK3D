@@ -111,12 +111,17 @@ function TitlePieceDots({ pieces, size }: { pieces: TitlePiece[]; size?: string 
 function PlaceGroupRowCard({ place, row, onOpenDrawer }: { place: LocationType; row: PlaceGroupRowT; onOpenDrawer: (target: DrawerTarget) => void }) {
   const [expanded, setExpanded] = useState(false)
   return (
-    <div className="rounded-lg border border-slate-200 p-2.5 dark:border-slate-700">
+    <div className={`rounded-lg border p-2.5 ${row.reserved ? 'border-amber-300 bg-amber-50/40 dark:border-amber-700 dark:bg-amber-500/5' : 'border-slate-200 dark:border-slate-700'}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-400 dark:text-slate-500">×{row.quantity}</span>
           <TitlePieceDots pieces={row.titlePieces} />
           <span className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">{row.shortTitle}</span>
+          {row.reserved && (
+            <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+              Reservada
+            </span>
+          )}
         </div>
         {row.link && row.linkLabel && (
           <button
