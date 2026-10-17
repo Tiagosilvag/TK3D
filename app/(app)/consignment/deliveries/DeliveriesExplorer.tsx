@@ -182,17 +182,23 @@ export function DeliveriesExplorer({
   partners,
   products,
   defaultProductId,
+  defaultBatchId,
 }: {
   batches: DeliveryBatchRow[]
   partners: PartnerOption[]
   products: ProductOption[]
   defaultProductId?: string
+  // Melhoria "Relatórios de venda": link "Entrega #XXXX ↗" chega aqui com
+  // ?batchId=... -- abre o modal de detalhe desse lote sozinho, sem o
+  // usuário precisar achar a linha na lista.
+  defaultBatchId?: string
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [selected, setSelected] = useState<DeliveryBatchRow | null>(null)
   const [newDeliveryOpen, setNewDeliveryOpen] = useState(!!defaultProductId)
+  const openedDefaultBatchRef = useRef(false)
 
   // Melhoria "Detalhe da entrega em consignação": modal inteiro vira um
   // RASCUNHO local (mesmo padrão de updateOrderDraft/OrderDetailDrawer.tsx
@@ -223,6 +229,15 @@ export function DeliveriesExplorer({
     setSavedMessage(null)
     dialogRef.current?.showModal()
   }
+
+  useEffect(() => {
+    if (!defaultBatchId || openedDefaultBatchRef.current) return
+    const batch = batches.find((b) => b.batchId === defaultBatchId)
+    if (!batch) return
+    openedDefaultBatchRef.current = true
+    openDetail(batch)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só na 1ª vez que o lote aparece em `batches`
+  }, [batches, defaultBatchId])
 
   // Bug fix: `selected` is a one-time snapshot taken in openDetail(). Removing
   // a line item calls router.refresh(), which updates the `batches` prop from

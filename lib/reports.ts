@@ -672,6 +672,71 @@ export async function getProductVariantBreakdown(productId: string, needsAssembl
     .sort((a, b) => b.quantity - a.quantity)
 }
 
+// Nome curto de variação ("Corpo lavanda · Bolinha branco" em vez do
+// `label` cru "BOLINHA: Marca Branco (PLA), CORPO: Marca Lavanda (PLA)")
+// -- originalmente só em lib/productUnitTrail.ts (rastreio por unidade em
+// /stock), movido pra cá (fonte única, junto de getProductVariantBreakdown
+// que produz o dado de entrada) pra Relatórios de venda (consignação)
+// também poder usar, sem duplicar a lógica numa 2ª tela. `toTitleCase` só
+// toca o NOME DA PEÇA (às vezes cadastrado em maiúsculas, ex. "BOLINHA"),
+// nunca a cor (convenção já estabelecida é cor em minúsculas no catálogo).
+const VARIANT_TITLE_TIER_RANK: Record<string, number> = { produto: 0, complemento: 1, acessorio: 2 }
+
+export function pickTitleAttrNames(rows: ProductVariantBreakdownRow[]): string[] {
+  const names = Array.from(new Set(rows.flatMap((v) => v.attrs.map((a) => a.name))))
+  if (names.length <= 2) return names
+  const allAttrs = rows.flatMap((v) => v.attrs)
+  const scored = names.map((name) => {
+    const distinctValues = new Set(rows.map((v) => v.attrs.find((a) => a.name === name)?.shortValue).filter(Boolean))
+    const tier = allAttrs.find((a) => a.name === name)?.tier ?? 'complemento'
+    return { name, distinctCount: distinctValues.size, tierRank: VARIANT_TITLE_TIER_RANK[tier] ?? 1 }
+  })
+  scored.sort((a, b) => b.distinctCount - a.distinctCount || a.tierRank - b.tierRank)
+  return scored.slice(0, 2).map((s) => s.name)
+}
+
+export function toTitleCase(s: string): string {
+  if (!s) return s
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
+}
+
+export interface VariantTitlePiece {
+  name: string
+  shortValue: string
+  colorHexes: string[]
+}
+
+// Título curto ("Corpo rosa claro · Bolinha rosa pink") a partir das 2
+// peças que mais DIFERENCIAM as variações deste produto (não sempre as 2
+// primeiras). `titlePieces` carrega os hexes de CADA peça separados (não
+// achatados num array só) -- pra UI desenhar bolinha única (ou gradiente
+// meio-a-meio quando a peça em si é multi-filamento) por peça, nunca 2
+// bolinhas genéricas que poderiam ser 2 cores da MESMA peça.
+export function buildShortTitle(row: ProductVariantBreakdownRow, titleAttrNames: string[]): { shortTitle: string; titlePieces: VariantTitlePiece[] } {
+  if (row.attrs.length === 0) return { shortTitle: row.label, titlePieces: [] }
+  const pieces = titleAttrNames
+    .map((name) => row.attrs.find((a) => a.name === name))
+    .filter((a): a is VariantAttr => Boolean(a))
+    .map((a) => ({ name: toTitleCase(a.name), shortValue: a.shortValue, colorHexes: a.colorHexes }))
+  if (pieces.length === 0) return { shortTitle: row.label, titlePieces: [] }
+  return { shortTitle: pieces.map((p) => `${p.name} ${p.shortValue}`).join(' · '), titlePieces: pieces }
+}
+
+// Composição completa (todas as peças, não só as 2 do título) -- só
+// aparece dentro de "Detalhes"/"Ver N", texto pequeno. Marca entra (por
+// cor, `colors[].manufacturer`), material nunca (pedido explícito "sem
+// (PLA)").
+export function buildFullComposition(row: ProductVariantBreakdownRow): string {
+  if (row.attrs.length === 0) return row.label
+  return row.attrs
+    .map((a) => {
+      const name = toTitleCase(a.name)
+      const colorsText = a.colors.map((c) => (c.manufacturer ? `${c.manufacturer} ${c.name}` : c.name)).join(' + ')
+      return name ? `${name} ${colorsText}` : colorsText
+    })
+    .join(' · ')
+}
+
 export interface ProductVariantStockOption {
   key: string
   label: string
@@ -1392,6 +1457,113 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
     saleableDeliveries,
     history,
   }
+}
+
+// Redesign "Relatórios de venda" (consignação): uma linha por
+// ConsignmentSaleReport já pronta pra filtro/busca/agrupamento no client
+// (mesmo padrão de DeliveryBatchForm.tsx em Entregas -- carrega tudo uma
+// vez, filtra em memória, sem endpoint de busca novo nem paginação
+// server-side). `shortTitle`/`titlePieces` reaproveitam a mesma função de
+// título curto que o rastreio por unidade (/stock) já usa (ver
+// pickTitleAttrNames/buildShortTitle acima) -- "Corpo lavanda · Bolinha
+// branco" em vez do `label` cru com marca+material. `unitCost`/`profit`
+// são sempre calculados AO VIVO (getProductAverageProductionCost) porque
+// ConsignmentSaleReport nunca gravou um costSnapshot próprio (diferente de
+// Sale/ProductionRun) -- então, ao contrário de Sale, aqui não existe um
+// valor "congelado" pra cair como fallback: todo lucro mostrado nesta tela
+// já é, por natureza, uma estimativa com o custo de hoje.
+export interface ConsignmentSaleReportRow {
+  id: string
+  deliveryId: string
+  // Melhoria "Relatórios de venda": link "Entrega #XXXX ↗" abre o LOTE
+  // inteiro (todo item do mesmo batchId) na tela de Entregas, não só esta
+  // linha -- mesma granularidade que DeliveriesExplorer já usa pra agrupar
+  // (ver comentário de ConsignmentDelivery.batchId no schema).
+  deliveryBatchId: string
+  reportDate: string
+  partnerId: string
+  partnerName: string
+  productId: string
+  productName: string
+  category: string
+  colorComboKey: string | null
+  shortTitle: string | null
+  titlePieces: VariantTitlePiece[]
+  quantitySold: number
+  unitPrice: number
+  commissionPercent: number
+  commissionAmount: number
+  repasse: number
+  unitCost: number
+  profit: number
+  notes: string | null
+}
+
+export async function getConsignmentSaleReportRows(): Promise<ConsignmentSaleReportRow[]> {
+  const reports = await prisma.consignmentSaleReport.findMany({
+    orderBy: { reportDate: 'desc' },
+    include: { delivery: { include: { partner: true, product: true } } },
+  })
+  if (reports.length === 0) return []
+
+  const productIds = [...new Set(reports.map((r) => r.delivery.productId))]
+  const products = await prisma.product.findMany({
+    where: { id: { in: productIds } },
+    include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
+  })
+
+  // Título curto por (productId, colorComboKey) -- mesmo critério de
+  // pickTitleAttrNames (as 2 peças que mais diferenciam as variações DO
+  // PRODUTO, calculado 1x por produto, nunca por linha).
+  const shortTitleByProductAndKey = new Map<string, { shortTitle: string; titlePieces: VariantTitlePiece[] }>()
+  const unitCostByProduct = new Map<string, number>()
+  await Promise.all(products.map(async (p) => {
+    const needsAssembly = productNeedsAssembly({
+      isComposite: p.isComposite,
+      accessoryUsagesCount: p._count.accessoryUsages,
+      supplyUsagesCount: p._count.supplyUsages,
+      componentUsagesCount: p._count.componentUsages,
+    })
+    const [breakdown, unitCost] = await Promise.all([
+      getProductVariantBreakdown(p.id, needsAssembly),
+      getProductAverageProductionCost(p.id),
+    ])
+    unitCostByProduct.set(p.id, unitCost)
+    const titleAttrNames = pickTitleAttrNames(breakdown)
+    for (const v of breakdown) shortTitleByProductAndKey.set(`${p.id}::${v.key}`, buildShortTitle(v, titleAttrNames))
+  }))
+
+  return reports.map((r) => {
+    const unitPrice = (r.unitPrice ?? r.delivery.unitPrice).toNumber()
+    const commissionPercent = r.commissionPercent.toNumber()
+    const gross = r.quantitySold * unitPrice
+    const commissionAmount = gross * commissionPercent
+    const repasse = gross - commissionAmount
+    const unitCost = unitCostByProduct.get(r.delivery.productId) ?? 0
+    const titleInfo = r.delivery.colorComboKey ? shortTitleByProductAndKey.get(`${r.delivery.productId}::${r.delivery.colorComboKey}`) : undefined
+    return {
+      id: r.id,
+      deliveryId: r.deliveryId,
+      deliveryBatchId: r.delivery.batchId,
+      reportDate: r.reportDate.toISOString(),
+      partnerId: r.delivery.partnerId,
+      partnerName: r.delivery.partner.name,
+      productId: r.delivery.productId,
+      productName: r.delivery.product.name,
+      category: r.delivery.product.category,
+      colorComboKey: r.delivery.colorComboKey,
+      shortTitle: titleInfo?.shortTitle ?? null,
+      titlePieces: titleInfo?.titlePieces ?? [],
+      quantitySold: r.quantitySold,
+      unitPrice,
+      commissionPercent,
+      commissionAmount,
+      repasse,
+      unitCost,
+      profit: repasse - unitCost * r.quantitySold,
+      notes: r.notes,
+    }
+  })
 }
 
 export async function getConsignmentStockSummary() {

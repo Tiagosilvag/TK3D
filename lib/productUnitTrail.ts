@@ -38,84 +38,19 @@
 // não guarda isso) -- entram só na nota de reconciliação, nunca viram
 // uma unidade virtual fake.
 import { prisma } from '@/lib/prisma'
-import { getProductVariantBreakdown, serializeColorChoices, type ProductVariantBreakdownRow, type VariantAttr } from '@/lib/reports'
+import {
+  getProductVariantBreakdown,
+  serializeColorChoices,
+  pickTitleAttrNames,
+  buildShortTitle,
+  buildFullComposition,
+  type VariantTitlePiece,
+  type VariantAttr,
+} from '@/lib/reports'
 import { productNeedsAssembly } from '@/lib/products'
 import { getAssemblyStatus } from '@/actions/assembly'
 import { getProductAverageProductionCost } from '@/actions/products'
 import { formatCurrency } from '@/lib/format'
-
-// Bug "nome da variação virou texto gigante em maiúsculas": o nome curto
-// (pickTitleAttrNames/buildShortTitle abaixo) só era calculado dentro do
-// VariantsModal.tsx, só pra tabela de variações -- os CARTÕES de unidade,
-// o chip de filtro e os painéis de entrega/venda (DeliveryDrillDown/
-// ConsignmentSaleDrillDown) continuavam lendo `label` cru
-// (getProductVariantBreakdown -- "PEÇA: Marca Cor (Material), ..."), já
-// que cada tela montava o nome do jeito dela. Agora é calculado AQUI, uma
-// vez só pro produto inteiro, e propagado pra tudo que mostra nome de
-// variação (unidade, tabela, chip, drawers) -- nunca mais recalculado
-// (ou esquecido) em cada tela.
-const VARIANT_TITLE_TIER_RANK: Record<string, number> = { produto: 0, complemento: 1, acessorio: 2 }
-
-function pickTitleAttrNames(rows: ProductVariantBreakdownRow[]): string[] {
-  const names = Array.from(new Set(rows.flatMap((v) => v.attrs.map((a) => a.name))))
-  if (names.length <= 2) return names
-  const allAttrs = rows.flatMap((v) => v.attrs)
-  const scored = names.map((name) => {
-    const distinctValues = new Set(rows.map((v) => v.attrs.find((a) => a.name === name)?.shortValue).filter(Boolean))
-    const tier = allAttrs.find((a) => a.name === name)?.tier ?? 'complemento'
-    return { name, distinctCount: distinctValues.size, tierRank: VARIANT_TITLE_TIER_RANK[tier] ?? 1 }
-  })
-  scored.sort((a, b) => b.distinctCount - a.distinctCount || a.tierRank - b.tierRank)
-  return scored.slice(0, 2).map((s) => s.name)
-}
-
-// "em maiúscula só na primeira letra": só o NOME DA PEÇA (ex.: "BOLINHA"
-// cadastrado em maiúsculas por quem criou o produto) -- a cor nunca é
-// tocada (convenção já estabelecida no catálogo é digitar cor em
-// minúsculas, ver comentário equivalente em PartnerStockSection.tsx).
-function toTitleCase(s: string): string {
-  if (!s) return s
-  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
-}
-
-export interface VariantTitlePiece {
-  name: string
-  shortValue: string
-  colorHexes: string[]
-}
-
-// Título curto ("Corpo rosa claro · Bolinha rosa pink") a partir das 2
-// peças que mais DIFERENCIAM as variações deste produto (não sempre as 2
-// primeiras) -- mesmo critério já usado no redesign do modal do parceiro
-// (PartnerStockSection.tsx#pickTitleAttrNames), agora com a fonte única
-// aqui. `titlePieces` carrega os hexes de CADA peça separados (não
-// achatados num array só) -- pra UI desenhar bolinha única (ou gradiente
-// meio-a-meio quando a peça em si é multi-filamento) por peça, nunca 2
-// bolinhas genéricas que poderiam ser 2 cores da MESMA peça.
-function buildShortTitle(row: ProductVariantBreakdownRow, titleAttrNames: string[]): { shortTitle: string; titlePieces: VariantTitlePiece[] } {
-  if (row.attrs.length === 0) return { shortTitle: row.label, titlePieces: [] }
-  const pieces = titleAttrNames
-    .map((name) => row.attrs.find((a) => a.name === name))
-    .filter((a): a is VariantAttr => Boolean(a))
-    .map((a) => ({ name: toTitleCase(a.name), shortValue: a.shortValue, colorHexes: a.colorHexes }))
-  if (pieces.length === 0) return { shortTitle: row.label, titlePieces: [] }
-  return { shortTitle: pieces.map((p) => `${p.name} ${p.shortValue}`).join(' · '), titlePieces: pieces }
-}
-
-// Composição completa (todas as peças, não só as 2 do título) -- só
-// aparece dentro de "Detalhes"/"Ver N", texto pequeno. Marca entra (por
-// cor, `colors[].manufacturer`), material nunca (pedido explícito "sem
-// (PLA)").
-function buildFullComposition(row: ProductVariantBreakdownRow): string {
-  if (row.attrs.length === 0) return row.label
-  return row.attrs
-    .map((a) => {
-      const name = toTitleCase(a.name)
-      const colorsText = a.colors.map((c) => (c.manufacturer ? `${c.manufacturer} ${c.name}` : c.name)).join(' + ')
-      return name ? `${name} ${colorsText}` : colorsText
-    })
-    .join(' · ')
-}
 
 export type UnitLocationType = 'estoque' | 'devolvida' | 'parceiro' | 'vendida'
 

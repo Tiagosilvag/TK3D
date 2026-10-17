@@ -10,15 +10,21 @@ export const dynamic = 'force-dynamic'
 export default async function ConsignmentDeliveriesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ productId?: string; partnerId?: string; from?: string; to?: string }>
+  searchParams: Promise<{ productId?: string; partnerId?: string; from?: string; to?: string; batchId?: string }>
 }) {
-  const { productId, partnerId, from, to } = await searchParams
+  const { productId, partnerId, from, to, batchId } = await searchParams
   const range = resolveDateRange({ from, to })
 
   const [deliveries, partners, deliveryOptions] = await Promise.all([
     prisma.consignmentDelivery.findMany({
       where: {
-        deliveryDate: { gte: range.gte, lte: range.lte },
+        // Link "Entrega #XXXX ↗" de Relatórios de venda pode apontar pra
+        // um lote fora do período padrão de 30 dias -- sem isso, o lote
+        // simplesmente não estaria na lista pro modal abrir sozinho.
+        OR: [
+          { deliveryDate: { gte: range.gte, lte: range.lte } },
+          ...(batchId ? [{ batchId }] : []),
+        ],
         ...(partnerId ? { partnerId } : {}),
       },
       orderBy: { deliveryDate: 'desc' },
@@ -187,6 +193,7 @@ export default async function ConsignmentDeliveriesPage({
           unitCost: unitCostByProductId.get(o.productId) ?? 0,
         }))}
         defaultProductId={productId}
+        defaultBatchId={batchId}
       />
     </div>
   )

@@ -1,4 +1,4 @@
-import type { VariantAttr, VariantAttrTier } from '@/lib/reports'
+import type { VariantAttr, VariantAttrTier, VariantTitlePiece } from '@/lib/reports'
 
 // Melhoria "Modal de variações -- chips por hierarquia" (originalmente em
 // app/(app)/stock/VariantsModal.tsx, extraído pra cá pra reuso em Vendas):
@@ -24,6 +24,40 @@ export function ChipDots({ hexes, size }: { hexes: string[]; size: string }) {
           style={{ background: second }}
         />
       )}
+    </span>
+  )
+}
+
+// Bolinha de 1 peça do título curto ("Corpo lavanda · Bolinha branco",
+// ver pickTitleAttrNames/buildShortTitle em lib/reports.ts) -- gradiente
+// meio-a-meio quando a peça em si é multi-filamento (2 colorHexes, ex.:
+// "Cara" com 2 cores na mesma peça), sólida quando é 1 cor só, tracejada
+// quando não resolve (combo multi-filamento com 3+ cores -- raro,
+// degradação aceita). Nunca 2 bolinhas sobrepostas pra 1 peça só (isso
+// aqui é 1 bolinha POR PEÇA, lado a lado com a bolinha da OUTRA peça do
+// título -- ver TitlePieceDots). Extraído do modal de rastreio (/stock)
+// pra Relatórios de venda (consignação) também poder usar o mesmo título
+// curto + bolinhas, sem duplicar o componente numa 2ª tela.
+export function PieceDot({ hexes, size = 'h-3 w-3' }: { hexes: string[]; size?: string }) {
+  if (hexes.length >= 2) {
+    return (
+      <span
+        className={`inline-block shrink-0 rounded-full border border-black/10 dark:border-white/10 ${size}`}
+        style={{ background: `linear-gradient(90deg, ${hexes[0]} 50%, ${hexes[1]} 50%)` }}
+      />
+    )
+  }
+  if (hexes.length === 1) {
+    return <span className={`inline-block shrink-0 rounded-full border border-black/10 dark:border-white/10 ${size}`} style={{ background: hexes[0] }} />
+  }
+  return <span className={`inline-block shrink-0 rounded-full border border-dashed border-slate-300 dark:border-slate-600 ${size}`} />
+}
+
+export function TitlePieceDots({ pieces, size }: { pieces: VariantTitlePiece[]; size?: string }) {
+  if (pieces.length === 0) return null
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      {pieces.map((p, i) => <PieceDot key={i} hexes={p.colorHexes} size={size} />)}
     </span>
   )
 }
