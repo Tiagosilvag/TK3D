@@ -51,6 +51,7 @@ import { productNeedsAssembly } from '@/lib/products'
 import { getAssemblyStatus } from '@/actions/assembly'
 import { getProductAverageProductionCost } from '@/actions/products'
 import { formatCurrency } from '@/lib/format'
+import { brasiliaDayKey, utcDayKey } from '@/lib/timezone'
 
 export type UnitLocationType = 'estoque' | 'devolvida' | 'parceiro' | 'vendida'
 
@@ -196,12 +197,16 @@ function takeOldest(queue: QueueUnit[], qty: number): QueueUnit[] {
   return queue.splice(0, Math.min(qty, queue.length))
 }
 
+// `dayKey` (não o `date` cru) é quem decide a ordem de processamento --
+// ver brasiliaDayKey/utcDayKey (lib/timezone.ts) pro porquê de precisar
+// de uma função diferente por tipo de campo (timestamp real vs. "só
+// data" sempre meia-noite UTC) pra computar esse valor.
 type RawEvent =
-  | { kind: 'ASSEMBLED'; date: Date; prio: number; comboKey: string; qty: number }
-  | { kind: 'DELIVERED'; date: Date; prio: number; comboKey: string; qty: number; deliveryId: string; partnerId: string; partnerName: string }
-  | { kind: 'RETURNED'; date: Date; prio: number; deliveryId: string; qty: number }
-  | { kind: 'SOLD_CONSIGNED'; date: Date; prio: number; deliveryId: string; qty: number; saleReportId: string; unitPrice: number; partnerName: string }
-  | { kind: 'SOLD_DIRECT'; date: Date; prio: number; comboKey: string; qty: number; saleId: string; unitPrice: number }
+  | { kind: 'ASSEMBLED'; date: Date; dayKey: number; prio: number; comboKey: string; qty: number }
+  | { kind: 'DELIVERED'; date: Date; dayKey: number; prio: number; comboKey: string; qty: number; deliveryId: string; partnerId: string; partnerName: string }
+  | { kind: 'RETURNED'; date: Date; dayKey: number; prio: number; deliveryId: string; qty: number }
+  | { kind: 'SOLD_CONSIGNED'; date: Date; dayKey: number; prio: number; deliveryId: string; qty: number; saleReportId: string; unitPrice: number; partnerName: string }
+  | { kind: 'SOLD_DIRECT'; date: Date; dayKey: number; prio: number; comboKey: string; qty: number; saleId: string; unitPrice: number }
 
 const KIND_PRIORITY: Record<RawEvent['kind'], number> = {
   ASSEMBLED: 0,
@@ -241,7 +246,7 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
     for (const a of assemblies) {
       const choices = a.colorChoices as Record<string, string> | null
       if (!choices || Object.keys(choices).length === 0) continue
-      events.push({ kind: 'ASSEMBLED', date: a.assembledAt, prio: KIND_PRIORITY.ASSEMBLED, comboKey: serializeColorChoices(choices), qty: a.quantity })
+      events.push({ kind: 'ASSEMBLED', date: a.assembledAt, dayKey: brasiliaDayKey(a.assembledAt), prio: KIND_PRIORITY.ASSEMBLED, comboKey: serializeColorChoices(choices), qty: a.quantity })
     }
   } else {
     const runs = await prisma.productionRun.findMany({
@@ -250,7 +255,7 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
     })
     for (const r of runs) {
       if (r.quantitySuccess <= 0) continue
-      events.push({ kind: 'ASSEMBLED', date: r.date, prio: KIND_PRIORITY.ASSEMBLED, comboKey: r.filamentId, qty: r.quantitySuccess })
+      events.push({ kind: 'ASSEMBLED', date: r.date, dayKey: utcDayKey(r.date), prio: KIND_PRIORITY.ASSEMBLED, comboKey: r.filamentId, qty: r.quantitySuccess })
     }
   }
 
@@ -259,6 +264,7 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
     events.push({
       kind: 'DELIVERED',
       date: d.deliveryDate,
+      dayKey: utcDayKey(d.deliveryDate),
       prio: KIND_PRIORITY.DELIVERED,
       comboKey: d.colorComboKey,
       qty: d.quantityDelivered,
@@ -267,12 +273,21 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
       partnerName: d.partner.name,
     })
     if (d.returnedQuantity > 0) {
-      events.push({ kind: 'RETURNED', date: d.lastReturnedAt ?? d.deliveryDate, prio: KIND_PRIORITY.RETURNED, deliveryId: d.id, qty: d.returnedQuantity })
+      const returnedDate = d.lastReturnedAt ?? d.deliveryDate
+      events.push({
+        kind: 'RETURNED',
+        date: returnedDate,
+        dayKey: d.lastReturnedAt ? brasiliaDayKey(returnedDate) : utcDayKey(returnedDate),
+        prio: KIND_PRIORITY.RETURNED,
+        deliveryId: d.id,
+        qty: d.returnedQuantity,
+      })
     }
     for (const r of d.saleReports) {
       events.push({
         kind: 'SOLD_CONSIGNED',
         date: r.reportDate,
+        dayKey: utcDayKey(r.reportDate),
         prio: KIND_PRIORITY.SOLD_CONSIGNED,
         deliveryId: d.id,
         qty: r.quantitySold,
@@ -288,6 +303,7 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
     events.push({
       kind: 'SOLD_DIRECT',
       date: s.saleDate,
+      dayKey: utcDayKey(s.saleDate),
       prio: KIND_PRIORITY.SOLD_DIRECT,
       comboKey: s.colorComboKey,
       qty: s.quantity,
@@ -296,7 +312,15 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
     })
   }
 
-  events.sort((a, b) => a.date.getTime() - b.date.getTime() || a.prio - b.prio)
+  // Bug "venda/entrega no mesmo dia da montagem desaparece do rastreio":
+  // ordena por `dayKey` (dia-calendário já calculado por evento com a
+  // função certa pro tipo do campo -- ver comentário de
+  // brasiliaDayKey/utcDayKey em lib/timezone.ts), nunca pelo timestamp
+  // exato. `prio` desempata dentro do mesmo dia (montagem < entrega <
+  // devolução < venda, a ordem física real); o timestamp exato só decide
+  // entre 2 eventos do MESMO dia E do MESMO tipo (ex.: 2 entregas no
+  // mesmo dia), preservando a ordem granular de sempre nesse caso.
+  events.sort((a, b) => a.dayKey - b.dayKey || a.prio - b.prio || a.date.getTime() - b.date.getTime())
 
   const stockQueueByCombo = new Map<string, QueueUnit[]>()
   const deliveryQueue = new Map<string, QueueUnit[]>()
