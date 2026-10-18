@@ -406,17 +406,23 @@ export async function addOrderItems(orderId: string, formData: FormData): Promis
   return { success: true, reallocations }
 }
 
-// Direta -> venda Direta; Shopee/Mercado Livre -> venda Marketplace (o
-// enum de Sale só distingue esses dois grandes grupos) -- o nome exato da
-// plataforma vai pro campo Comprador/Plataforma da Sale, então a
-// informação não se perde mesmo sem 4.1 (plataformas configuráveis) ainda
-// existir. `Exclude<OrderChannel, 'CONSIGNADO'>` (em vez de OrderChannel
-// puro) documenta no tipo que Consignado nunca passa por aqui -- vira
+// Bug "venda de pedido Shopee/Mercado Livre virava canal Marketplace
+// (antigo), sem taxa nenhuma calculada": este mapeamento é de antes da
+// melhoria 3.6 (SaleChannel ganhou SHOPEE/MERCADO_LIVRE como canais de
+// verdade, com taxa de plataforma configurável -- MARKETPLACE virou só
+// legado, "não oferecido em vendas novas desde 3.6") e nunca foi
+// atualizado -- continuava jogando todo pedido dessas duas plataformas
+// no balde legado, que resolveSalePlatformFee sempre trata como "sem
+// taxa" (não existe venda NOVA nesse canal pra ter taxa configurada).
+// Shopee/Mercado Livre têm o MESMO nome literal nos dois enums -- mapeia
+// direto pro canal de verdade, igual DIRETA já fazia.
+// `Exclude<OrderChannel, 'CONSIGNADO'>` (em vez de OrderChannel puro)
+// documenta no tipo que Consignado nunca passa por aqui -- vira
 // ConsignmentDelivery em updateOrderItemStatus, nunca Sale.
 const ORDER_CHANNEL_TO_SALE_CHANNEL: Record<Exclude<OrderChannel, 'CONSIGNADO'>, SaleChannel> = {
   DIRETA: 'DIRETA',
-  SHOPEE: 'MARKETPLACE',
-  MERCADO_LIVRE: 'MARKETPLACE',
+  SHOPEE: 'SHOPEE',
+  MERCADO_LIVRE: 'MERCADO_LIVRE',
 }
 const ORDER_CHANNEL_PLATFORM_LABEL: Record<Exclude<OrderChannel, 'CONSIGNADO'>, string> = {
   DIRETA: 'Direta',
