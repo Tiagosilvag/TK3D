@@ -1,5 +1,5 @@
 'use client'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { formatCurrency, getSaleChannelBadge, getMarginBadge } from '@/lib/format'
 import { VariantChip } from '@/components/VariantChip'
@@ -228,6 +228,19 @@ export function SalesExplorer({
   const [formOpen, setFormOpen] = useState(Boolean(editingSale) || Boolean(defaultProductId))
   const [taxasOpen, setTaxasOpen] = useState(false)
 
+  // Bug "clicar em Editar parece voltar pro início da tela": `formOpen`
+  // acima só usa `editingSale` como valor INICIAL do useState -- lido uma
+  // vez só, na montagem. Clicar em "Editar" num item (link pra
+  // /sales?editId=...) troca a prop `editingSale` numa navegação
+  // client-side pro MESMO componente já montado (não remonta), então
+  // esse useState nunca reabre o formulário sozinho -- a URL muda, o
+  // Next rola a página pro topo (comportamento padrão de <Link>), mas
+  // nada novo aparece ali, parecendo que "voltou pro índice". Reabre
+  // explicitamente sempre que a prop chegar preenchida.
+  useEffect(() => {
+    if (editingSale) setFormOpen(true)
+  }, [editingSale])
+
   const allBatchIds = useMemo(() => dayGroups.flatMap((d) => d.batches.map((b) => b.batchId)), [dayGroups])
   const allExpanded = allBatchIds.length > 0 && allBatchIds.every((id) => expanded.has(id))
 
@@ -283,7 +296,14 @@ export function SalesExplorer({
 
       {formOpen && (
         <div className="mt-3">
-          <SaleForm products={products} platforms={platforms} giftProducts={giftProducts} editingSale={editingSale} defaultProductId={defaultProductId} />
+          {/* Mesmo motivo do useEffect acima: os campos internos de
+              SaleForm (channel/unitPrice/quantity/...) também só lêem
+              `editingSale` como valor inicial do useState -- sem a
+              `key`, trocar de "editar venda A" pra "editar venda B" (ou
+              de "nova venda" pra "editar") manteria os campos da venda
+              anterior na tela. A key força o React a desmontar/remontar
+              o formulário do zero a cada alvo diferente. */}
+          <SaleForm key={editingSale?.id ?? 'new'} products={products} platforms={platforms} giftProducts={giftProducts} editingSale={editingSale} defaultProductId={defaultProductId} />
         </div>
       )}
 
