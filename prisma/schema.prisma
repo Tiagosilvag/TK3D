@@ -430,6 +430,40 @@ model Product {
   // anúncio-kit de OUTRO conjunto (ex.: Chaveiro X dentro do anúncio "Kit
   // Namorados") -- ver comentário completo em ListingKitItem abaixo.
   listingKitItems       ListingKitItem[]
+  // Melhoria "Preço por canal" (task-11 brief): substitui os 2 campos
+  // soltos acima (suggestedPrice/marketplacePrice, 1 valor "genérico" de
+  // marketplace pra ML e Shopee juntos) por 1 preço POR CANAL -- ver
+  // comentário completo em ProductChannelPrice abaixo.
+  channelPrices         ProductChannelPrice[]
+}
+
+// Melhoria "Preço por canal": preço aplicado (gravado só por ação
+// explícita, "Usar este preço"/"Usar estes preços em todos os canais" --
+// nunca recalculado sozinho, mesma filosofia de
+// Product.suggestedPrice/marketplacePrice que este modelo substitui) POR
+// CANAL de venda -- Direta/Mercado Livre/Shopee têm taxas bem diferentes
+// (Shopee cobra 20%+R$5, Mercado Livre 12%+R$0, por exemplo), então o
+// mesmo "preço de marketplace" genérico de antes nunca servia certo pra
+// nenhum dos dois. `channel` é um texto livre (não FK pra
+// MarketplacePlatformKind) porque cobre tanto plataformas cadastradas em
+// MarketplacePlatform (valor = MarketplacePlatformKind, ex. "SHOPEE")
+// quanto os 2 pseudo-canais sem linha própria em MarketplacePlatform:
+// "DIRETA" (sem taxa) e "CONSIGNADO" (taxa = comissão do parceiro, não
+// uma taxa de plataforma) -- generaliza automaticamente pra qualquer
+// plataforma nova cadastrada depois, sem migration.
+// `marginTarget` é só informativo (lembra qual % de lucro gerou esse
+// preço, pra reabrir a tela já com o mesmo alvo selecionado) -- nunca
+// usado em cálculo, preço gravado em `price` é sempre a fonte de verdade.
+model ProductChannelPrice {
+  id           String   @id @default(cuid())
+  productId    String
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  channel      String
+  price        Decimal  @db.Decimal(10, 2)
+  marginTarget Decimal? @db.Decimal(5, 4)
+  updatedAt    DateTime @updatedAt
+
+  @@unique([productId, channel])
 }
 
 // Composição de um Brinde (Product.isGift=true): peça/material de custo

@@ -444,6 +444,110 @@ export function calculateListingPriceForDesiredProfit(input: {
   return Math.max(0, priceForFee(input.flatFeePercent, input.flatFeeFixed))
 }
 
+// Melhoria "Preço por canal" (task-11 brief): preço mínimo pra cobrir
+// custo + taxa, sem lucro nenhum (lucro alvo = R$0) -- reaproveita
+// calculateListingPriceForDesiredProfit direto (mesma fórmula
+// P=(C+F+0)/(1-f), ponto fixo pra faixa de preço já embutido), só nomeado
+// pra deixar a intenção óbvia nos call sites deste módulo novo.
+export function calculateChannelMinPrice(input: {
+  cost: number
+  tiers: PlatformFeeTier[] | null
+  flatFeePercent: number
+  flatFeeFixed: number
+}): number {
+  return calculateListingPriceForDesiredProfit({
+    desiredProfit: 0,
+    productionCost: input.cost,
+    freightCost: 0,
+    giftCost: 0,
+    tiers: input.tiers,
+    flatFeePercent: input.flatFeePercent,
+    flatFeeFixed: input.flatFeeFixed,
+  })
+}
+
+// Melhoria "Preço por canal": preço que entrega uma MARGEM % alvo (sobre o
+// PREÇO, não sobre o custo -- "25% de margem" = de cada R$100 vendidos,
+// R$25 sobram de lucro) em vez de um lucro em R$ fixo --
+// calculateListingPriceForDesiredProfit (acima) já resolve a versão
+// "lucro em R$", mas a versão "margem %" tem incógnita ADICIONAL na
+// própria fórmula de preço (m entra dividindo o denominador junto da
+// taxa%, não é um valor absoluto somado no numerador como L) -- por isso
+// uma função própria, mesmo ponto fixo pra faixa de preço (Shopee) que
+// calculateListingPriceForDesiredProfit/calculateTieredPlatformPrice já
+// usam. Álgebra: lucro = m×preço ⟹ preço − preço×taxa% − taxa_fixo − custo
+// = m×preço ⟹ preço×(1−taxa%−m) = custo+taxa_fixo ⟹
+// preço = (custo+taxa_fixo)/(1−taxa%−m). `m` precisa ser < (1−taxa%), senão
+// o denominador zera/inverte (margem maior que o que sobra depois da
+// taxa) -- UI trava o seletor em no máx. 60% pra nunca chegar perto disso
+// na prática, mas a função não impõe o limite ela mesma (quem chama decide
+// o que fazer com um resultado negativo/infinito).
+export function calculateChannelPriceForMargin(input: {
+  cost: number
+  marginPercent: number
+  tiers: PlatformFeeTier[] | null
+  flatFeePercent: number
+  flatFeeFixed: number
+}): number {
+  function priceForFee(feePercent: number, feeFixed: number): number {
+    const denom = 1 - feePercent - input.marginPercent
+    if (denom <= 0) return Infinity
+    return (input.cost + feeFixed) / denom
+  }
+  if (input.tiers && input.tiers.length > 0) {
+    let price = priceForFee(input.tiers[0].feePercent, input.tiers[0].feeFixed)
+    for (let i = 0; i < 5; i++) {
+      const fee = resolveTieredPlatformFee(input.tiers, price)
+      const nextPrice = priceForFee(fee.feePercent, fee.feeFixed)
+      if (Math.abs(nextPrice - price) < 0.005) {
+        price = nextPrice
+        break
+      }
+      price = nextPrice
+    }
+    return Math.max(0, price)
+  }
+  return Math.max(0, priceForFee(input.flatFeePercent, input.flatFeeFixed))
+}
+
+// Melhoria "Preço por canal": decompõe um preço JÁ APLICADO num canal em
+// taxa/recebido/lucro/margem -- usado pra pílula "Hoje R$X · Y%" de cada
+// card (mostra se o preço cadastrado atualmente bate ou não com a meta de
+// margem escolhida). Mesma resolução de faixa que resolveListingFee já
+// faz (reaproveitada aqui), só que devolvendo o conjunto completo de
+// números que o card precisa, não só a taxa.
+export interface ChannelPriceEvaluation {
+  price: number
+  feeAmount: number
+  received: number
+  profit: number
+  marginPercent: number
+}
+
+export function evaluateChannelPrice(
+  price: number,
+  cost: number,
+  tiers: PlatformFeeTier[] | null,
+  flatFeePercent: number,
+  flatFeeFixed: number,
+): ChannelPriceEvaluation {
+  const { feeAmount } = resolveListingFee(price, tiers, flatFeePercent, flatFeeFixed)
+  const received = price - feeAmount
+  const profit = received - cost
+  return { price, feeAmount, received, profit, marginPercent: price > 0 ? profit / price : 0 }
+}
+
+// Melhoria "Preço por canal" -- toggle "Arredondar em ,90": sobe o preço
+// pro próximo final ,90 (nunca desce, pra nunca vender abaixo do preço
+// calculado) -- `r = floor(P) + 0,90; se r < P então r += 1` exatamente
+// como especificado (ex.: 11,14 -> 11,90; 11,95 -> 12,90, nunca 11,90
+// porque isso venderia abaixo do calculado).
+export function roundUpToNinety(price: number): number {
+  let r = Math.floor(price) + 0.9
+  if (r < price) r += 1
+  return Math.round(r * 100) / 100
+}
+
 export function combineProductCost(terms: ProductCostTerms, flags: ProductCostFlags, settings: Settings): ProductCostBreakdown {
   const subtotal =
     terms.filamentCost * on(flags.includeFilamentCost) +

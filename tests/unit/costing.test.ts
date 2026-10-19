@@ -26,6 +26,10 @@ import {
   resolveListingFee,
   calculateListingProfit,
   calculateListingPriceForDesiredProfit,
+  calculateChannelMinPrice,
+  calculateChannelPriceForMargin,
+  evaluateChannelPrice,
+  roundUpToNinety,
   type ProductionCostSnapshotInput,
   type ProductCostBreakdown,
   type ProductionCostSnapshot,
@@ -1528,5 +1532,89 @@ describe('calculateGiftProductCost', () => {
     expect(result.equipmentBreakdown.map((e) => e.name)).toEqual(['A', 'B'])
     expect(result.equipmentBreakdown[0].costPerUnit).toBeCloseTo(1, 6)
     expect(result.equipmentBreakdown[1].costPerUnit).toBeCloseTo(2, 6)
+  })
+})
+
+// Melhoria "Preço por canal" (task-11 brief): números de conferência do
+// próprio prompt -- custo C=R$7,02, margem alvo 25%. direta R$9,36 · ML
+// R$11,14 · Shopee R$21,85 · Consignado R$15,60; mínimos (lucro 0) R$7,02 ·
+// R$7,98 · R$15,02 · R$10,03. Confirma que a fórmula nova (P=(C+F)/(1-f-m),
+// nunca mistura imposto -- diferente de calculatePlatformPrice/
+// resolvePlatformPrice acima, que inflam o preço por taxa% + imposto
+// juntos e por isso "não fechavam" quando alguém conferia preço-menos-taxa
+// à mão) sempre reconcilia: preço − taxa − custo = exatamente o lucro
+// implícito na margem escolhida.
+describe('calculateChannelPriceForMargin / calculateChannelMinPrice (Preço por canal)', () => {
+  const cost = 7.02
+
+  it('Direta (sem taxa nenhuma): 25% de margem = R$9,36', () => {
+    const price = calculateChannelPriceForMargin({ cost, marginPercent: 0.25, tiers: null, flatFeePercent: 0, flatFeeFixed: 0 })
+    expect(price).toBeCloseTo(9.36, 2)
+  })
+
+  it('Mercado Livre (12% + R$0): 25% de margem = R$11,14', () => {
+    const price = calculateChannelPriceForMargin({ cost, marginPercent: 0.25, tiers: null, flatFeePercent: 0.12, flatFeeFixed: 0 })
+    expect(price).toBeCloseTo(11.14, 2)
+  })
+
+  it('Shopee (20% + R$5): 25% de margem = R$21,85', () => {
+    const price = calculateChannelPriceForMargin({ cost, marginPercent: 0.25, tiers: null, flatFeePercent: 0.2, flatFeeFixed: 5 })
+    expect(price).toBeCloseTo(21.85, 2)
+  })
+
+  it('Consignado (comissão 30%): 25% de margem = R$15,60', () => {
+    const price = calculateChannelPriceForMargin({ cost, marginPercent: 0.25, tiers: null, flatFeePercent: 0.3, flatFeeFixed: 0 })
+    expect(price).toBeCloseTo(15.6, 2)
+  })
+
+  it('mínimos (lucro zero) batem com o print: R$7,02 · R$7,98 · R$15,02 · R$10,03', () => {
+    expect(calculateChannelMinPrice({ cost, tiers: null, flatFeePercent: 0, flatFeeFixed: 0 })).toBeCloseTo(7.02, 2)
+    expect(calculateChannelMinPrice({ cost, tiers: null, flatFeePercent: 0.12, flatFeeFixed: 0 })).toBeCloseTo(7.98, 2)
+    expect(calculateChannelMinPrice({ cost, tiers: null, flatFeePercent: 0.2, flatFeeFixed: 5 })).toBeCloseTo(15.02, 2)
+    expect(calculateChannelMinPrice({ cost, tiers: null, flatFeePercent: 0.3, flatFeeFixed: 0 })).toBeCloseTo(10.03, 2)
+  })
+
+  it('resolve por faixa (Shopee com feeTiers) pelo mesmo ponto fixo de calculateTieredPlatformPrice', () => {
+    const tiers = [
+      { maxPrice: 79.99, feePercent: 0.2, feeFixed: 5 },
+      { maxPrice: null, feePercent: 0.14, feeFixed: 16 },
+    ]
+    const price = calculateChannelPriceForMargin({ cost, marginPercent: 0.25, tiers, flatFeePercent: 0.2, flatFeeFixed: 5 })
+    expect(price).toBeCloseTo(21.85, 2)
+  })
+})
+
+describe('evaluateChannelPrice (Preço por canal: pílula "Hoje")', () => {
+  it('reconcilia preço − taxa − custo = lucro, pra qualquer preço aplicado (não só o calculado)', () => {
+    const evalResult = evaluateChannelPrice(21.85, 7.02, null, 0.2, 5)
+    expect(evalResult.feeAmount).toBeCloseTo(21.85 * 0.2 + 5, 6)
+    expect(evalResult.received).toBeCloseTo(21.85 - (21.85 * 0.2 + 5), 6)
+    expect(evalResult.profit).toBeCloseTo(evalResult.received - 7.02, 6)
+    expect(evalResult.marginPercent).toBeCloseTo(0.25, 2)
+  })
+
+  it('preço abaixo do mínimo dá margem negativa (prejuízo), nunca trava/erro', () => {
+    const evalResult = evaluateChannelPrice(5, 7.02, null, 0.2, 5)
+    expect(evalResult.profit).toBeLessThan(0)
+  })
+})
+
+describe('roundUpToNinety (Preço por canal: toggle "Arredondar em ,90")', () => {
+  it('sobe pro ,90 do mesmo inteiro quando o preço já está abaixo dele', () => {
+    expect(roundUpToNinety(11.14)).toBeCloseTo(11.9, 2)
+  })
+
+  it('sobe pro ,90 do PRÓXIMO inteiro quando o preço já passou do ,90 deste', () => {
+    expect(roundUpToNinety(11.95)).toBeCloseTo(12.9, 2)
+  })
+
+  it('nunca arredonda pra baixo do preço original (não pode vender abaixo do calculado)', () => {
+    for (const price of [0.5, 3.33, 9.91, 100.01, 21.85]) {
+      expect(roundUpToNinety(price)).toBeGreaterThanOrEqual(price)
+    }
+  })
+
+  it('preço já terminando em ,90 fica igual (idempotente)', () => {
+    expect(roundUpToNinety(11.9)).toBeCloseTo(11.9, 2)
   })
 })

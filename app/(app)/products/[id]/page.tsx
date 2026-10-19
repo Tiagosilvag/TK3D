@@ -5,12 +5,11 @@ import { getProductionStatusBadge } from '@/lib/format'
 import { StatusBadge } from '@/components/StatusBadge'
 import {
   calculatePrinterDepreciationCostPerHour,
-  resolvePlatformPrice,
   type ProductCostFlags,
   type PlatformFeeTier,
 } from '@/lib/costing'
 import { ProductForm } from '../ProductForm'
-import { CostBreakdown, type MarketplacePlatformPrice } from '../CostBreakdown'
+import { ChannelPricing, type ChannelOption, type CostItem } from '../ChannelPricing'
 import { PriceSimulation } from '../PriceSimulation'
 import { ComponentsSection, type ComponentRow, type ProductOption } from '../ComponentsSection'
 import { PhotoGallery, PhotoUploadForm } from '../PhotoGallery'
@@ -66,7 +65,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     componentUsagesCount: product.componentUsages.length,
   })
 
-  const [printers, filamentOptions, packagingItems, supplies, accessories, breakdown, settings, platforms, partRuns, colorVariants, accessoryColorUsages, productCandidates] = await Promise.all([
+  const [printers, filamentOptions, packagingItems, supplies, accessories, breakdown, settings, platforms, channelPrices, consignmentPartners, partRuns, colorVariants, accessoryColorUsages, productCandidates] = await Promise.all([
     prisma.printer.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getEditableFilamentOptions(product.id),
     prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
@@ -75,6 +74,15 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     getProductCostBreakdown(product.id),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
     prisma.marketplacePlatform.findMany(),
+    // Melhoria "Preço por canal": preço já aplicado por canal (quando
+    // existir) -- alimenta a pílula "Hoje" de cada card.
+    prisma.productChannelPrice.findMany({ where: { productId: product.id } }),
+    // Melhoria "Preço por canal": comissão "padrão" do canal Consignado --
+    // não existe 1 valor global cadastrado em lugar nenhum (cada parceiro
+    // tem a sua, ConsignmentPartner.defaultCommissionPercent), então usa a
+    // MAIS COMUM entre os parceiros ativos (moda), com aviso na UI quando
+    // eles divergem -- exatamente o "usar a padrão e avisar" do prompt.
+    prisma.consignmentPartner.findMany({ where: { active: true }, select: { defaultCommissionPercent: true } }),
     product.parts.length > 0
       ? prisma.productionRun.findMany({
           where: { productPartId: { in: product.parts.map((p) => p.id) } },
@@ -191,24 +199,76 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     includePackagingCost: settings.includePackagingCost,
   }
 
-  // Melhoria "Produtos" §3: "Preço marketplace" genérico vira 1 valor por
-  // plataforma cadastrada (Mercado Livre, Shopee) -- mesmo helper de
-  // getPlatformSalePrice (actions/marketplacePlatforms.ts), calculado aqui
-  // direto porque já temos o breakdown carregado. Bug "preço Shopee sempre
-  // usava a 1ª faixa": chamava calculatePlatformPrice direto com
-  // feePercent/feeFixed achatados -- resolvePlatformPrice resolve a faixa
-  // certa quando platform.feeTiers existir (Shopee), mesmo helper
-  // reaproveitado na listagem de Produtos.
-  const marketplacePlatformPrices: MarketplacePlatformPrice[] = platforms.map((platform) => {
-    const resolved = resolvePlatformPrice(
-      breakdown.suggestedPrice,
-      settings.taxPercent.toNumber(),
-      platform.feePercent.toNumber(),
-      platform.feeFixed.toNumber(),
-      platform.feeTiers as unknown as PlatformFeeTier[] | null,
-    )
-    return { label: PLATFORM_LABELS[platform.platform] ?? platform.platform, ...resolved }
-  })
+  // Redesign "Preço por canal": lista de itens de custo ≠ 0, mesmos
+  // rótulos que o antigo CostBreakdown.tsx já usava -- só os que REALMENTE
+  // entram no Custo final (flag ligada), senão a lista de detalhe podia
+  // mostrar uma linha "desativada" que não bate com o total do chip ao
+  // lado (esta tela nova não tem o aviso "(desativado)" por linha que a
+  // antiga tinha, então nunca mostra o que não conta).
+  const costItemsAll: (CostItem & { flagKey: keyof ProductCostFlags })[] = [
+    { label: 'Filamento', value: breakdown.filamentCost, flagKey: 'includeFilamentCost' },
+    { label: 'Energia', value: breakdown.electricityCost, flagKey: 'includeEnergyCost' },
+    { label: 'Depreciação da impressora', value: breakdown.printerCost, flagKey: 'includeDepreciation' },
+    { label: 'Manutenção', value: breakdown.maintenanceCost, flagKey: 'includeMaintenance' },
+    { label: 'Mão de obra', value: breakdown.laborCost, flagKey: 'includeLaborCost' },
+    { label: 'Insumos', value: breakdown.suppliesCost, flagKey: 'includeSuppliesCost' },
+    { label: 'Embalagem', value: breakdown.packagingCost, flagKey: 'includePackagingCost' },
+    { label: 'Acessórios', value: breakdown.accessoryCost, flagKey: 'includeAccessoriesCost' },
+    { label: 'Componentes', value: breakdown.componentProductsCost, flagKey: 'includeAccessoriesCost' },
+    { label: 'Taxa de falha', value: breakdown.failureRateCost, flagKey: 'includeFailureRate' },
+  ]
+  const costItems: CostItem[] = costItemsAll.filter((i) => costFlags[i.flagKey]).map(({ label, value }) => ({ label, value }))
+
+  const channelPriceByKey = new Map(channelPrices.map((cp) => [cp.channel, cp.price.toNumber()]))
+
+  // Comissão "padrão" do Consignado: moda (valor mais comum) entre os
+  // parceiros ativos -- ver comentário completo na query acima. Sem
+  // nenhum parceiro ativo, cai num fallback razoável (30%, o valor mais
+  // comum observado no catálogo) só pra o card não ficar sem número.
+  const commissionCounts = new Map<number, number>()
+  for (const p of consignmentPartners) {
+    const pct = p.defaultCommissionPercent.toNumber()
+    commissionCounts.set(pct, (commissionCounts.get(pct) ?? 0) + 1)
+  }
+  const sortedCommissions = [...commissionCounts.entries()].sort((a, b) => b[1] - a[1])
+  const consignmentCommission = sortedCommissions[0]?.[0] ?? 0.3
+  const commissionVaries = commissionCounts.size > 1
+
+  const channels: ChannelOption[] = [
+    {
+      key: 'DIRETA',
+      label: 'Venda direta',
+      feePercent: 0,
+      feeFixed: 0,
+      feeTiers: null,
+      feeLabel: 'sem taxa',
+      currentPrice: channelPriceByKey.get('DIRETA') ?? null,
+    },
+    ...platforms.map((platform) => {
+      const feePercent = platform.feePercent.toNumber()
+      const feeFixed = platform.feeFixed.toNumber()
+      return {
+        key: platform.platform,
+        label: PLATFORM_LABELS[platform.platform] ?? platform.platform,
+        feePercent,
+        feeFixed,
+        feeTiers: platform.feeTiers as unknown as PlatformFeeTier[] | null,
+        feeLabel: `taxa ${Math.round(feePercent * 100)}% + R$ ${feeFixed.toFixed(2).replace('.', ',')}`,
+        currentPrice: channelPriceByKey.get(platform.platform) ?? null,
+      }
+    }),
+    {
+      key: 'CONSIGNADO',
+      label: 'Consignado',
+      feePercent: consignmentCommission,
+      feeFixed: 0,
+      feeTiers: null,
+      feeLabel: commissionVaries
+        ? `comissão do parceiro ${Math.round(consignmentCommission * 100)}% (parceiros variam)`
+        : `comissão do parceiro ${Math.round(consignmentCommission * 100)}%`,
+      currentPrice: channelPriceByKey.get('CONSIGNADO') ?? null,
+    },
+  ]
 
   return (
     <div className="tk-page">
@@ -421,21 +481,28 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
             do próprio ProductForm, junto da Composição/Equipamento. */}
         {!product.isGift && (
           <div>
-            <CostBreakdown breakdown={breakdown} flags={costFlags} marketplacePlatformPrices={marketplacePlatformPrices} />
-            <PriceSimulation
+            <ChannelPricing
               productId={product.id}
-              finalCost={breakdown.finalCost}
-              defaultMarkup={settings.defaultMarkup.toNumber()}
+              cost={breakdown.finalCost}
+              costItems={costItems}
+              channels={channels}
               defaultMarginPercent={settings.desiredMarginPercent.toNumber()}
-              defaultDiscountPercent={settings.defaultDiscountPercent.toNumber()}
-              marketplaceFeePercent={settings.marketplaceFeePercent.toNumber()}
-              taxPercent={settings.taxPercent.toNumber()}
-              marketplaceFixedFee={settings.marketplaceFixedFee.toNumber()}
-              roundingMode={settings.roundingMode}
-              roundingCustomCents={settings.roundingCustomCents}
-              currentSuggestedPrice={product.suggestedPrice?.toNumber() ?? null}
-              currentMarketplacePrice={product.marketplacePrice?.toNumber() ?? null}
-            />
+            >
+              <PriceSimulation
+                productId={product.id}
+                finalCost={breakdown.finalCost}
+                defaultMarkup={settings.defaultMarkup.toNumber()}
+                defaultMarginPercent={settings.desiredMarginPercent.toNumber()}
+                defaultDiscountPercent={settings.defaultDiscountPercent.toNumber()}
+                marketplaceFeePercent={settings.marketplaceFeePercent.toNumber()}
+                taxPercent={settings.taxPercent.toNumber()}
+                marketplaceFixedFee={settings.marketplaceFixedFee.toNumber()}
+                roundingMode={settings.roundingMode}
+                roundingCustomCents={settings.roundingCustomCents}
+                currentSuggestedPrice={product.suggestedPrice?.toNumber() ?? null}
+                currentMarketplacePrice={product.marketplacePrice?.toNumber() ?? null}
+              />
+            </ChannelPricing>
           </div>
         )}
       </div>

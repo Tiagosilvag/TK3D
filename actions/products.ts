@@ -997,3 +997,69 @@ export async function applyProductPrice(
   return { success: true }
 }
 
+// Melhoria "Preço por canal" (task-11 brief): substitui applyProductPrice
+// acima pra quem usa a tela nova -- 1 preço POR CANAL em vez de 1 valor
+// "sugerido" + 1 "marketplace" genérico pros dois marketplaces juntos.
+// `channel` é texto livre (nunca validado contra um enum fixo) de
+// propósito -- cobre tanto MarketplacePlatformKind cadastrado
+// (ex. "SHOPEE") quanto os 2 pseudo-canais sem linha própria em
+// MarketplacePlatform ("DIRETA"/"CONSIGNADO"), e qualquer plataforma nova
+// cadastrada depois sem precisar mexer aqui (ver comentário completo em
+// ProductChannelPrice, prisma/schema.prisma). Diferente de
+// applyProductPrice, NÃO aplica Settings.roundingMode -- esta tela tem seu
+// próprio toggle de arredondamento (,90, lib/costing.ts#roundUpToNinety),
+// já refletido no `price` recebido antes de chegar aqui; aplicar os dois
+// arredondamentos em cima um do outro desalinharia o que a tela mostrou do
+// que foi de fato gravado.
+const applyChannelPriceSchema = z.object({
+  productId: z.string().min(1),
+  channel: z.string().min(1),
+  price: z.coerce.number().positive('Preço deve ser maior que zero'),
+  marginTarget: z.coerce.number().min(0).max(1).optional().nullable(),
+})
+
+export async function applyProductChannelPrice(
+  productId: string,
+  channel: string,
+  price: number,
+  marginTarget: number | null,
+): Promise<ActionResult> {
+  const parsed = applyChannelPriceSchema.safeParse({ productId, channel, price, marginTarget })
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
+
+  await prisma.productChannelPrice.upsert({
+    where: { productId_channel: { productId: parsed.data.productId, channel: parsed.data.channel } },
+    create: { productId: parsed.data.productId, channel: parsed.data.channel, price: parsed.data.price, marginTarget: parsed.data.marginTarget ?? null },
+    update: { price: parsed.data.price, marginTarget: parsed.data.marginTarget ?? null },
+  })
+  revalidatePath('/products')
+  return { success: true }
+}
+
+// "Usar estes preços em todos os canais": mesma validação/upsert do botão
+// de 1 canal só, acima, só que pros 4 de uma vez, numa transação só (tudo
+// ou nada -- um canal com preço inválido não pode gravar os outros 3 e
+// deixar esse de fora silenciosamente).
+export async function applyProductChannelPrices(
+  productId: string,
+  items: { channel: string; price: number; marginTarget: number | null }[],
+): Promise<ActionResult> {
+  if (items.length === 0) return { success: false, error: 'Nenhum canal pra aplicar' }
+  for (const item of items) {
+    const parsed = applyChannelPriceSchema.safeParse({ productId, ...item })
+    if (!parsed.success) return { success: false, error: `${item.channel}: ${parsed.error.issues[0].message}` }
+  }
+
+  await prisma.$transaction(
+    items.map((item) =>
+      prisma.productChannelPrice.upsert({
+        where: { productId_channel: { productId, channel: item.channel } },
+        create: { productId, channel: item.channel, price: item.price, marginTarget: item.marginTarget },
+        update: { price: item.price, marginTarget: item.marginTarget },
+      }),
+    ),
+  )
+  revalidatePath('/products')
+  return { success: true }
+}
+
