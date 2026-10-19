@@ -9,7 +9,8 @@ import {
   type PlatformFeeTier,
 } from '@/lib/costing'
 import { ProductForm } from '../ProductForm'
-import { ChannelPricing, type ChannelOption, type CostItem } from '../ChannelPricing'
+import { CostBreakdown } from '../CostBreakdown'
+import { ChannelPricing, type ChannelOption } from '../ChannelPricing'
 import { PriceSimulation } from '../PriceSimulation'
 import { ComponentsSection, type ComponentRow, type ProductOption } from '../ComponentsSection'
 import { PhotoGallery, PhotoUploadForm } from '../PhotoGallery'
@@ -198,26 +199,6 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
     includeSuppliesCost: settings.includeSuppliesCost,
     includePackagingCost: settings.includePackagingCost,
   }
-
-  // Redesign "Preço por canal": lista de itens de custo ≠ 0, mesmos
-  // rótulos que o antigo CostBreakdown.tsx já usava -- só os que REALMENTE
-  // entram no Custo final (flag ligada), senão a lista de detalhe podia
-  // mostrar uma linha "desativada" que não bate com o total do chip ao
-  // lado (esta tela nova não tem o aviso "(desativado)" por linha que a
-  // antiga tinha, então nunca mostra o que não conta).
-  const costItemsAll: (CostItem & { flagKey: keyof ProductCostFlags })[] = [
-    { label: 'Filamento', value: breakdown.filamentCost, flagKey: 'includeFilamentCost' },
-    { label: 'Energia', value: breakdown.electricityCost, flagKey: 'includeEnergyCost' },
-    { label: 'Depreciação da impressora', value: breakdown.printerCost, flagKey: 'includeDepreciation' },
-    { label: 'Manutenção', value: breakdown.maintenanceCost, flagKey: 'includeMaintenance' },
-    { label: 'Mão de obra', value: breakdown.laborCost, flagKey: 'includeLaborCost' },
-    { label: 'Insumos', value: breakdown.suppliesCost, flagKey: 'includeSuppliesCost' },
-    { label: 'Embalagem', value: breakdown.packagingCost, flagKey: 'includePackagingCost' },
-    { label: 'Acessórios', value: breakdown.accessoryCost, flagKey: 'includeAccessoriesCost' },
-    { label: 'Componentes', value: breakdown.componentProductsCost, flagKey: 'includeAccessoriesCost' },
-    { label: 'Taxa de falha', value: breakdown.failureRateCost, flagKey: 'includeFailureRate' },
-  ]
-  const costItems: CostItem[] = costItemsAll.filter((i) => costFlags[i.flagKey]).map(({ label, value }) => ({ label, value }))
 
   const channelPriceByKey = new Map(channelPrices.map((cp) => [cp.channel, cp.price.toNumber()]))
 
@@ -481,10 +462,10 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
             do próprio ProductForm, junto da Composição/Equipamento. */}
         {!product.isGift && (
           <div>
+            <CostBreakdown breakdown={breakdown} flags={costFlags} />
             <ChannelPricing
               productId={product.id}
               cost={breakdown.finalCost}
-              costItems={costItems}
               channels={channels}
               defaultMarginPercent={settings.desiredMarginPercent.toNumber()}
             >

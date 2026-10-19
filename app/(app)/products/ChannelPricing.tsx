@@ -23,11 +23,6 @@ export interface ChannelOption {
   currentPrice: number | null
 }
 
-export interface CostItem {
-  label: string
-  value: number
-}
-
 type Mode = 'margem' | 'lucro'
 
 const MARGIN_PRESETS = [0.15, 0.2, 0.25, 0.3, 0.4]
@@ -38,13 +33,16 @@ function clampMargin(m: number): number {
   return Math.max(0, Math.min(MAX_MARGIN, m))
 }
 
-// Redesign "Produto › Preço por canal" (task-11 brief): substitui
-// CostBreakdown's linhas de "Preço marketplace"/"Preço sugerido" (1 valor
-// genérico pros dois marketplaces juntos, que nunca batia certo com
-// nenhum dos dois de verdade -- taxas bem diferentes) por 1 card por
-// canal de venda, cada um respondendo "quanto cobrar aqui pra uma margem
-// de X%", nunca "quanto sobra se eu cobrar o preço de outro canal". Toda
-// a matemática vem de lib/costing.ts#calculateChannelPriceForMargin/
+// Redesign "Produto › Preço por canal" (task-11 brief): seção NOVA,
+// separada do painel "Custo (ao vivo)" (CostBreakdown.tsx, continua
+// existindo exatamente como antes, sempre visível -- pedido explícito
+// "não tire o custo ao vivo") -- substitui só as antigas linhas "Preço
+// marketplace"/"Preço sugerido" (1 valor genérico pros dois marketplaces
+// juntos, que nunca batia certo com nenhum dos dois de verdade -- taxas
+// bem diferentes) por 1 card por canal de venda, cada um respondendo
+// "quanto cobrar aqui pra uma margem de X%", nunca "quanto sobra se eu
+// cobrar o preço de outro canal". Toda a matemática vem de
+// lib/costing.ts#calculateChannelPriceForMargin/
 // calculateListingPriceForDesiredProfit/calculateChannelMinPrice/
 // evaluateChannelPrice -- deliberadamente SEM imposto (diferente do
 // antigo calculatePlatformPrice, que misturava taxa% de plataforma com
@@ -57,14 +55,12 @@ function clampMargin(m: number): number {
 export function ChannelPricing({
   productId,
   cost,
-  costItems,
   channels,
   defaultMarginPercent,
   children,
 }: {
   productId: string
   cost: number
-  costItems: CostItem[]
   channels: ChannelOption[]
   defaultMarginPercent: number
   // Markup/desconto promocional (PriceSimulation.tsx) continuam existindo
@@ -78,7 +74,6 @@ export function ChannelPricing({
   const [marginPercent, setMarginPercent] = useState(clampMargin(defaultMarginPercent))
   const [profitValue, setProfitValue] = useState(5)
   const [roundTo90, setRoundTo90] = useState(false)
-  const [detailsOpen, setDetailsOpen] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [applyingKey, setApplyingKey] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
@@ -106,9 +101,6 @@ export function ChannelPricing({
     })
   }, [channels, cost, mode, marginPercent, profitValue, roundTo90])
 
-  const nonZeroCostItems = costItems.filter((i) => Math.abs(i.value) >= 0.005)
-  const zeroCostCount = costItems.length - nonZeroCostItems.length
-
   async function handleApplyOne(key: string, label: string, price: number) {
     setApplyingKey(key)
     const result = await applyProductChannelPrice(productId, key, price, mode === 'margem' ? marginPercent : null)
@@ -135,32 +127,11 @@ export function ChannelPricing({
   }
 
   return (
-    <div className="tk-panel p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Preço por canal</h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Escolha quanto quer lucrar e veja o preço certo em cada lugar que você vende.</p>
-        </div>
-        <div className="shrink-0 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-right dark:border-violet-800 dark:bg-violet-500/10">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-500 dark:text-violet-400">Custo final</p>
-          <p className="text-base font-bold tabular-nums text-violet-700 dark:text-violet-300">{formatCurrency(cost)}</p>
-          <button type="button" onClick={() => setDetailsOpen((v) => !v)} className="text-[11px] font-medium text-violet-600 hover:underline dark:text-violet-400">
-            {detailsOpen ? 'ocultar detalhes ▴' : 'ver detalhes ▾'}
-          </button>
-        </div>
+    <div className="mt-6 tk-panel p-4">
+      <div>
+        <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Preço por canal</h2>
+        <p className="text-xs text-slate-500 dark:text-slate-400">Escolha quanto quer lucrar e veja o preço certo em cada lugar que você vende. Custo final: {formatCurrency(cost)} (detalhado no painel &quot;Custo (ao vivo)&quot; acima).</p>
       </div>
-
-      {detailsOpen && (
-        <dl className="mt-2 space-y-0.5 rounded-lg border border-slate-200 p-2.5 text-xs dark:border-slate-700">
-          {nonZeroCostItems.map((item) => (
-            <div key={item.label} className="flex justify-between text-slate-600 dark:text-slate-400">
-              <dt>{item.label}</dt>
-              <dd>{formatCurrency(item.value)}</dd>
-            </div>
-          ))}
-          {zeroCostCount > 0 && <p className="pt-0.5 text-slate-400 dark:text-slate-500">{zeroCostCount} {zeroCostCount === 1 ? 'item' : 'itens'} com R$ 0,00</p>}
-        </dl>
-      )}
 
       <div className="mt-4 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Quero lucrar</p>
