@@ -259,6 +259,16 @@ export function VariantsModal({ product, onClose }: { product: StockRow | null; 
                   : `⚠ ${trail.reconciliationNote}`}
               </p>
 
+              {/* Bug "estoque mostra unidade que já foi vendida": venda
+                  direta sem cor escolhida nunca consome nenhum combo
+                  específico (nunca inventa qual cor foi) -- "Em estoque"
+                  pode estar contando unidade(s) que, na visão oficial do
+                  produto (Meu Estoque), já saíram. Ver comentário completo
+                  em unattributedSalesNote, lib/productUnitTrail.ts. */}
+              {trail.unattributedSalesNote && (
+                <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">⚠ {trail.unattributedSalesNote}</p>
+              )}
+
               {trail.parts.length > 0 && (
                 <div className="mt-3">
                   <div className="flex items-center justify-between gap-2">

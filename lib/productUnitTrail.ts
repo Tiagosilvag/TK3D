@@ -174,6 +174,20 @@ export interface ProductUnitTrailResult {
   }
   reconciliationOk: boolean
   reconciliationNote: string | null
+  // Bug "estoque mostra 2 unidades que já foram vendidas": reconciliationOk
+  // acima só confere consistência INTERNA (toda unidade criada cai em
+  // algum dos 4 baldes -- sempre bate por construção, nunca pega este
+  // caso). Venda DIRETA sem colorComboKey (produto com variante, mas a
+  // venda foi registrada sem escolher a cor -- único jeito disso
+  // acontecer hoje) não entra em NENHUM evento SOLD_DIRECT (loop abaixo
+  // pula sale sem colorComboKey de propósito, nunca inventa qual cor foi
+  // vendida) -- a unidade nunca sai da fila de "estoque" de nenhum combo,
+  // ficando "Em estoque" pra sempre mesmo já vendida. getOwnStockSummary
+  // (lib/reports.ts, autoridade do total do PRODUTO em /stock) já desconta
+  // essa venda corretamente (soma Sale.quantity sem filtrar por cor) --
+  // só o rastreio POR VARIANTE não consegue saber qual combo foi. Nulo
+  // quando não há nenhuma venda sem cor pra este produto.
+  unattributedSalesNote: string | null
   units: ProductUnit[]
   placeGroups: PlaceGroup[]
   variantRows: VariantTrailRow[]
@@ -578,6 +592,16 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
       ? `Faltam ${diff} unidade(s) pra fechar a conta -- provavelmente um ajuste manual de estoque ou uma entrega/venda com data anterior à montagem. Confira o Histórico.`
       : `Sobram ${-diff} unidade(s) além do que foi ${needsAssembly ? 'montado' : 'produzido'} -- provavelmente um ajuste manual de estoque. Confira o Histórico.`
 
+  // Ver comentário de unattributedSalesNote (ProductUnitTrailResult) --
+  // soma toda venda DIRETA deste produto sem colorComboKey (mesmo
+  // `sales` já carregado pro loop de SOLD_DIRECT acima, só filtrando o
+  // oposto do que aquele loop usa).
+  const unattributedSoldQty = sales.filter((s) => !s.colorComboKey).reduce((sum, s) => sum + s.quantity, 0)
+  const unattributedSalesNote =
+    unattributedSoldQty > 0
+      ? `${unattributedSoldQty} venda(s) direta(s) deste produto ${unattributedSoldQty === 1 ? 'foi registrada' : 'foram registradas'} sem escolher a cor -- o rastreio por unidade não sabe qual variante foi vendida, então pode mostrar "Em estoque" unidade(s) que já saíram. O total oficial (sem quebra por cor) está em Meu Estoque.`
+      : null
+
   // Tabela compacta de variações (seção 2): "Estoque" aqui soma devolvida
   // + nunca-entregue junto (a tabela não tem coluna "Devolvidas" própria,
   // só os 4 cards do topo distinguem isso).
@@ -773,6 +797,7 @@ export async function getProductUnitTrail(productId: string): Promise<ProductUni
     locationCounts: { inStock, withPartners: [...withPartnersMap.values()], sold: soldUnits.length, returned },
     reconciliationOk,
     reconciliationNote,
+    unattributedSalesNote,
     units,
     placeGroups,
     variantRows,
