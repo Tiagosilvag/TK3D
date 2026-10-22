@@ -1350,3 +1350,71 @@ export async function deliverOrderItem(id: string): Promise<{ success: boolean; 
   const profit = await getSaleProfit(done.saleId)
   return { success: true, profit: profit.profit, saleTotal: profit.saleTotal }
 }
+
+// Entrega PARCIAL: o item tem só parte reservada (ex.: 3 de 5 prontos). Divide
+// o item em dois -- o que está pronto vira um item novo (mesmo pedido, produto,
+// variação e preço) que é entregue, e o original fica só com o que falta. A
+// soma das quantidades do pedido não muda. Com tudo reservado, é a entrega
+// normal. `undoPartialOrderDelivery` junta os dois de volta.
+export async function deliverOrderItemPartial(
+  id: string,
+): Promise<{ success: boolean; error?: string; profit?: number; saleTotal?: number; deliveredItemId?: string; originalItemId?: string; quantity?: number }> {
+  const item = await prisma.orderItem.findUnique({ where: { id } })
+  if (!item) return { success: false, error: 'Item de pedido não encontrado.' }
+  if (item.status === 'ENTREGUE' || item.status === 'CANCELADO') return { success: false, error: 'Este item já foi encerrado.' }
+  if (item.reservedQuantity <= 0) return { success: false, error: 'Ainda não há nada pronto em estoque para este item.' }
+  if (item.reservedQuantity >= item.quantity) {
+    const full = await deliverOrderItem(id)
+    return { ...full, deliveredItemId: id, originalItemId: id, quantity: item.quantity }
+  }
+
+  const ready = item.reservedQuantity
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.orderItem.update({ where: { id }, data: { quantity: item.quantity - ready, reservedQuantity: 0 } })
+    return tx.orderItem.create({
+      data: {
+        orderId: item.orderId,
+        productId: item.productId,
+        colorComboKey: item.colorComboKey,
+        quantity: ready,
+        unitPrice: item.unitPrice,
+        reservedQuantity: ready,
+        status: 'PRONTO_RESERVADO',
+      },
+    })
+  })
+  const delivered = await deliverOrderItem(created.id)
+  if (!delivered.success) {
+    // volta o item ao que era antes da divisão
+    await prisma.$transaction([
+      prisma.orderItem.update({ where: { id }, data: { quantity: item.quantity, reservedQuantity: item.reservedQuantity } }),
+      prisma.orderItem.delete({ where: { id: created.id } }),
+    ])
+    await reconcileOrderReservations(item.productId, item.colorComboKey)
+    return delivered
+  }
+  await reconcileOrderReservations(item.productId, item.colorComboKey)
+  revalidatePath('/orders')
+  return { ...delivered, deliveredItemId: created.id, originalItemId: id, quantity: ready }
+}
+
+// Desfaz uma entrega feita por deliverOrderItemPartial: desfaz a entrega do item
+// novo e devolve a quantidade ao item original (que some se era o mesmo item).
+export async function undoPartialOrderDelivery(deliveredItemId: string, originalItemId: string): Promise<ActionResult> {
+  const result = await undoOrderItemDelivery(deliveredItemId)
+  if (!result.success) return result
+  if (deliveredItemId === originalItemId) return result
+  const [delivered, original] = await Promise.all([
+    prisma.orderItem.findUnique({ where: { id: deliveredItemId } }),
+    prisma.orderItem.findUnique({ where: { id: originalItemId } }),
+  ])
+  if (!delivered || !original) return result
+  await prisma.$transaction([
+    prisma.orderReallocation.deleteMany({ where: { OR: [{ fromOrderItemId: deliveredItemId }, { toOrderItemId: deliveredItemId }] } }),
+    prisma.orderItem.update({ where: { id: originalItemId }, data: { quantity: original.quantity + delivered.quantity } }),
+    prisma.orderItem.delete({ where: { id: deliveredItemId } }),
+  ])
+  await reconcileOrderReservations(original.productId, original.colorComboKey)
+  revalidatePath('/orders')
+  return { success: true }
+}

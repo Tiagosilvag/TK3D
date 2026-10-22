@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 import { createSale, updateSaleQuantityPrice, getSaleProfit } from '@/actions/sales'
-import { createOrder, deliverOrderItem, undoOrderItemDelivery } from '@/actions/orders'
+import { createOrder, deliverOrderItem, undoOrderItemDelivery, deliverOrderItemPartial, undoPartialOrderDelivery } from '@/actions/orders'
 import { createProductionRun } from '@/actions/productionRuns'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
@@ -102,5 +102,41 @@ describe('deliverOrderItem', () => {
     expect(await prisma.sale.count({ where: { productId: product.id } })).toBe(0)
     expect(await packagingStock(envelope.id)).toBe(100)
     expect((await prisma.orderItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe('PRONTO_RESERVADO')
+  })
+})
+
+describe('deliverOrderItemPartial', () => {
+  it('entrega só o que está pronto (3 de 5), o pedido segue com 2 e desfazer junta de volta', async () => {
+    const { printer, filament, product } = await setup()
+    await createOrder(fd({
+      channel: 'DIRETA', orderDate: '2026-10-01', deliveryDate: '2026-10-05',
+      itemsJson: JSON.stringify([{ productId: product.id, quantity: 5, unitPrice: 35 }]),
+    }))
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    expect((await deliverOrderItemPartial(item.id)).success).toBe(false) // nada pronto ainda
+
+    await createProductionRun(fd({
+      productId: product.id, printerId: printer.id, filamentId: filament.id, date: '2026-10-02',
+      quantityPlanned: '3', quantitySuccess: '3', quantityFailed: '0', gramsUsed: '30', gramsWasted: '0', timeWastedHours: '0',
+    }))
+    expect((await prisma.orderItem.findUniqueOrThrow({ where: { id: item.id } })).reservedQuantity).toBe(3)
+
+    const done = await deliverOrderItemPartial(item.id)
+    expect(done.success).toBe(true)
+    expect(done.quantity).toBe(3)
+    expect(done.saleTotal).toBe(105)
+    expect(done.deliveredItemId).not.toBe(item.id)
+    const original = await prisma.orderItem.findUniqueOrThrow({ where: { id: item.id } })
+    expect(original.quantity).toBe(2)
+    expect(original.reservedQuantity).toBe(0)
+    expect(await prisma.orderItem.count({ where: { orderId: item.orderId } })).toBe(2)
+    expect((await prisma.sale.findFirstOrThrow({ where: { productId: product.id } })).quantity).toBe(3)
+
+    expect((await undoPartialOrderDelivery(done.deliveredItemId!, done.originalItemId!)).success).toBe(true)
+    const back = await prisma.orderItem.findUniqueOrThrow({ where: { id: item.id } })
+    expect(back.quantity).toBe(5)
+    expect(back.reservedQuantity).toBe(3)
+    expect(await prisma.orderItem.count({ where: { orderId: item.orderId } })).toBe(1)
+    expect(await prisma.sale.count({ where: { productId: product.id } })).toBe(0)
   })
 })

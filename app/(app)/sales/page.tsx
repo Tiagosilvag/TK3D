@@ -253,7 +253,7 @@ export default async function SalesPage({
 
   // Pedidos prontos (variação reservada), exceto consignados -- "✓ Entregar".
   const readyOrderRecords = await prisma.orderItem.findMany({
-    where: { status: 'PRONTO_RESERVADO', order: { channel: { not: 'CONSIGNADO' } } },
+    where: { reservedQuantity: { gt: 0 }, status: { notIn: ['ENTREGUE', 'CANCELADO'] }, order: { channel: { not: 'CONSIGNADO' } } },
     include: { product: { select: { name: true } }, order: { select: { channel: true, buyerOrPlatform: true, deliveryDate: true } } },
     orderBy: { order: { deliveryDate: 'asc' } },
   })
@@ -261,7 +261,8 @@ export default async function SalesPage({
     readyOrderRecords.map(async (i) => ({
       id: i.id,
       productName: i.product.name,
-      quantity: i.quantity,
+      quantity: i.reservedQuantity,
+      ofTotal: i.quantity,
       unitPrice: i.unitPrice.toNumber(),
       buyer: i.order.buyerOrPlatform,
       channelLabel: ORDER_CHANNEL_LABELS[i.order.channel],

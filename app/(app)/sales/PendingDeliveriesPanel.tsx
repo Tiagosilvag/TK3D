@@ -1,14 +1,16 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { deliverOrderItem, undoOrderItemDelivery } from '@/actions/orders'
+import { deliverOrderItemPartial, undoPartialOrderDelivery } from '@/actions/orders'
 import { UndoToast } from '@/components/UndoToast'
 import { formatCurrency } from '@/lib/format'
 
 export interface ReadyOrderRow {
   id: string
   productName: string
+  // Quantidade pronta para entregar agora; `ofTotal` > quantity = entrega parcial.
   quantity: number
+  ofTotal?: number
   unitPrice: number
   buyer: string | null
   channelLabel: string
@@ -34,17 +36,17 @@ export function PendingDeliveriesPanel({
   const router = useRouter()
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [toast, setToast] = useState<{ message: string; itemId: string } | null>(null)
+  const [toast, setToast] = useState<{ message: string; deliveredId: string; originalId: string } | null>(null)
 
   async function deliver(row: ReadyOrderRow) {
     if (busyId) return
     setBusyId(row.id)
     setError(null)
-    const result = await deliverOrderItem(row.id)
+    const result = await deliverOrderItemPartial(row.id)
     setBusyId(null)
     if (!result.success) return setError(result.error ?? 'Não foi possível entregar.')
     const profit = result.profit !== undefined ? ` Lucro ${formatCurrency(result.profit)}.` : ''
-    setToast({ message: `${doneLabel}: ${row.productName}.${profit}`, itemId: row.id })
+    setToast({ message: `${doneLabel}: ${row.productName}${result.quantity && result.quantity !== (row.ofTotal ?? row.quantity) ? ` (${result.quantity} de ${row.ofTotal})` : ''}.${profit}`, deliveredId: result.deliveredItemId ?? row.id, originalId: result.originalItemId ?? row.id })
     router.refresh()
   }
 
@@ -52,7 +54,7 @@ export function PendingDeliveriesPanel({
     const t = toast
     setToast(null)
     if (!t) return
-    const result = await undoOrderItemDelivery(t.itemId)
+    const result = await undoPartialOrderDelivery(t.deliveredId, t.originalId)
     if (!result.success) setError(result.error ?? 'Não foi possível desfazer.')
     router.refresh()
   }
@@ -76,15 +78,15 @@ export function PendingDeliveriesPanel({
               <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
                 {r.productName}
                 <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">
-                  × {r.quantity} · {formatCurrency(r.unitPrice)}{r.buyer ? ` · ${r.buyer}` : ''} · {r.channelLabel} · entrega {r.deliveryLabel}
+                  × {r.quantity}{r.ofTotal && r.ofTotal > r.quantity ? ` de ${r.ofTotal}` : ''} · {formatCurrency(r.unitPrice)}{r.buyer ? ` · ${r.buyer}` : ''} · {r.channelLabel} · entrega {r.deliveryLabel}
                 </span>
               </p>
               <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                Reservado em estoque{r.variation ? ` · ${r.variation}` : ''}
+                {r.ofTotal && r.ofTotal > r.quantity ? `Dá para entregar ${r.quantity} de ${r.ofTotal} · o resto segue no pedido` : 'Reservado em estoque'}{r.variation ? ` · ${r.variation}` : ''}
               </p>
             </div>
             <button type="button" disabled={busyId !== null} onClick={() => void deliver(r)} className="tk-btn-primary px-3 py-1.5 text-xs disabled:opacity-60">
-              ✓ Entregar
+              {r.ofTotal && r.ofTotal > r.quantity ? `✓ Entregar ${r.quantity}` : '✓ Entregar'}
             </button>
           </li>
         ))}

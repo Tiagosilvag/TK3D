@@ -20,7 +20,7 @@ export default async function ConsignmentPartnerDetailPage({ params }: { params:
 
   // Pedidos dela já prontos (variação reservada): "✓ Entregar" cria a entrega.
   const readyRecords = await prisma.orderItem.findMany({
-    where: { status: 'PRONTO_RESERVADO', order: { consignmentPartnerId: id, channel: 'CONSIGNADO' } },
+    where: { reservedQuantity: { gt: 0 }, status: { notIn: ['ENTREGUE', 'CANCELADO'] }, order: { consignmentPartnerId: id, channel: 'CONSIGNADO' } },
     include: { product: { select: { name: true } }, order: { select: { buyerOrPlatform: true, deliveryDate: true } } },
     orderBy: { order: { deliveryDate: 'asc' } },
   })
@@ -28,7 +28,8 @@ export default async function ConsignmentPartnerDetailPage({ params }: { params:
     readyRecords.map(async (i) => ({
       id: i.id,
       productName: i.product.name,
-      quantity: i.quantity,
+      quantity: i.reservedQuantity,
+      ofTotal: i.quantity,
       unitPrice: i.unitPrice.toNumber(),
       buyer: null,
       channelLabel: 'Consignação',
