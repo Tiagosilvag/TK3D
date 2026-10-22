@@ -220,6 +220,10 @@ export default async function ProductionPage({
     return { id: p.id, name: p.name, costPerHour }
   })
 
+  // Atalhos do "+ Registrar produção": produtos produzidos por último.
+  const recentRuns = await prisma.productionRun.findMany({ orderBy: { createdAt: 'desc' }, take: 60, select: { productId: true } })
+  const recentProductIds = [...new Set(recentRuns.map((r) => r.productId).filter((id): id is string => Boolean(id)))].slice(0, 6)
+
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Produção e desperdício</h1>
@@ -309,6 +313,7 @@ export default async function ProductionPage({
       )}
 
       <ProductionRunsExplorer
+        recentProductIds={recentProductIds}
         runs={runs}
         byProduct={byProduct}
         plates={plates}

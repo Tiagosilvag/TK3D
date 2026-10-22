@@ -54,6 +54,7 @@ export interface ProductionRunRow {
 }
 
 export function ProductionRunsExplorer({
+  recentProductIds,
   runs,
   byProduct,
   plates,
@@ -66,6 +67,7 @@ export function ProductionRunsExplorer({
   newRunQty,
   newRunFilamentId,
 }: {
+  recentProductIds: string[]
   runs: ProductionRunRow[]
   byProduct: ProductionByProductRow[]
   plates: PlateListRow[]
@@ -370,6 +372,7 @@ export function ProductionRunsExplorer({
         open={newRunOpen}
         onOpenChange={setNewRunOpen}
         products={products}
+        recentProductIds={recentProductIds}
         printers={printers}
         filaments={filaments}
         initialProductId={newRunProductId}

@@ -277,6 +277,7 @@ export function ProductionRunBatchForm({
   open,
   onOpenChange,
   products,
+  recentProductIds = [],
   printers,
   filaments,
   initialProductId,
@@ -287,6 +288,7 @@ export function ProductionRunBatchForm({
   open: boolean
   onOpenChange: (open: boolean) => void
   products: Option[]
+  recentProductIds?: string[]
   printers: PrinterOption[]
   filaments: FilamentOption[]
   // Melhoria "Pedidos com reserva de estoque" §3 (fix): quando o modal é
@@ -818,6 +820,19 @@ export function ProductionRunBatchForm({
                 Produto
                 <ProductSelect options={products} value={productId} onChange={(id) => void handleProductChange(id)} className="tk-input-full" />
               </label>
+              {!productId && recentProductIds.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs text-slate-400 dark:text-slate-500">Recentes:</span>
+                  {recentProductIds.map((id) => {
+                    const p = products.find((x) => x.id === id)
+                    return p ? (
+                      <button key={id} type="button" onClick={() => void handleProductChange(id)} className="rounded-full border border-slate-200 px-2.5 py-0.5 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                        {p.name}
+                      </button>
+                    ) : null
+                  })}
+                </div>
+              )}
             </div>
 
             {rows.length > 0 && (
