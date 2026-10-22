@@ -280,8 +280,8 @@ export async function reconcileOrderReservations(
 // de um fix de escopo de reconciliação, como o de confirmAssembly/
 // maybeReconcileAfterProduction) fica com reservedQuantity desatualizado
 // pra sempre, até por acaso outro evento do MESMO produto+combo disparar
-// de novo -- nada re-sincroniza pedidos "esquecidos" sozinho. Botão
-// manual "Recalcular pedidos" (DemandQueuePanel) chama isto pra varrer
+// de novo -- nada re-sincroniza pedidos "esquecidos" sozinho.
+// getOrderDemandQueue chama isto a cada leitura pra varrer
 // TODO (productId, colorComboKey) com pedido pendente e reconciliar cada
 // um -- barato/idempotente quando nada mudou, mesma garantia de
 // reconcileOrderReservations.

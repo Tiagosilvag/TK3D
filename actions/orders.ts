@@ -985,6 +985,14 @@ export interface OrderDemandRow {
 }
 
 export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDemandRow[]; assemblyRows: OrderDemandRow[] }> {
+  // Bug "pedido antigo fica travado mostrando falta produzir pra sempre":
+  // a fila parte de reservedQuantity, que só era atualizado quando algum
+  // evento disparava a reconciliação (produzir, montar, mexer em pedido) --
+  // qualquer caminho que escapasse (venda, ajuste de estoque, correção de
+  // regra, pedido antigo) deixava a fila mentindo até alguém clicar num
+  // botão manual. Reconcilia aqui, na própria leitura (idempotente: só
+  // grava quando algo mudou), pra a fila sempre refletir o estoque real.
+  await reconcileAllPendingOrders()
   const items = await prisma.orderItem.findMany({
     where: { status: { notIn: ['ENTREGUE', 'CANCELADO'] } },
     include: {
@@ -1268,19 +1276,4 @@ export async function getRecentOrderBuyers(limit = 6): Promise<string[]> {
     take: limit,
   })
   return rows.map((r) => r.buyerOrPlatform!).filter(Boolean)
-}
-
-// Bug "pedido antigo fica travado mostrando falta produzir pra sempre":
-// botão manual (DemandQueuePanel) pra varrer e reconciliar TODO item
-// pendente de uma vez -- corrige item cuja reconciliação deveria ter
-// rodado num evento passado mas ficou pra trás (ex.: criado antes de um
-// fix de escopo de reconciliação), sem precisar esperar outro evento do
-// mesmo produto+combo disparar por acaso.
-export async function syncOrderReservations(): Promise<ActionResult> {
-  await reconcileAllPendingOrders()
-  revalidatePath('/orders')
-  revalidatePath('/production')
-  revalidatePath('/assembly')
-  revalidatePath('/stock')
-  return { success: true }
 }

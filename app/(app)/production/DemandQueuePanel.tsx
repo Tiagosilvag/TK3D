@@ -3,7 +3,6 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { getDeadlineBadge, ORDER_CHANNEL_LABELS } from '@/lib/format'
 import type { OrderDemandRow } from '@/actions/orders'
-import { SyncOrdersButton } from './SyncOrdersButton'
 import { DemandBatchRegisterForm, type DemandSelection } from './DemandBatchRegisterForm'
 
 type PrinterOption = { id: string; name: string; costPerHour: number }
@@ -69,7 +68,6 @@ export function DemandQueuePanel({ rows, printers, filaments }: { rows: OrderDem
           <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Peças pendentes de encomenda</h2>
           <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">{rows.length}</span>
         </div>
-        <SyncOrdersButton />
       </div>
       <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Ordenado pelo prazo de entrega mais próximo -- não pela ordem em que o pedido foi criado.</p>
 
