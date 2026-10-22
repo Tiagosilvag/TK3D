@@ -611,24 +611,51 @@ describe('bug "pedido com acessório de cor variável nunca reconcilia, mesmo j�
 })
 
 // Bug "peça montada pronta em estoque mas pedido continua com 'falta
-// produzir'": o pedido só grava a cor da peça que o cliente escolheu
-// (CABEÇA azul), mas a variação montada tem a chave completa (CABEÇA +
-// CORPO). Igualdade exata de colorComboKey nunca reservava a unidade.
-describe('pedido com cor só de uma peça reserva variação montada completa', () => {
+// produzir'": o pedido só grava a cor das peças de COR VARIÁVEL (CABEÇA
+// azul) -- peça de receita fixa (CORPO, 2+ filamentos) nunca entra na
+// chave --, mas a variação montada tem a chave COMPLETA (CABEÇA + CORPO).
+// Igualdade exata de colorComboKey nunca reservava a unidade (caso real:
+// MINI JESUS 50PÇ).
+describe('pedido com cor só da peça variável reserva a variação montada completa', () => {
   it('reserva a unidade montada e some da fila de produção', async () => {
-    const { product, cabeca, corpo, printer, azul, vermelho } = await createCompositeProduct()
+    const printer = await prisma.printer.create({ data: { name: 'P5', purchasePrice: 3600, depreciationHours: 10000, avgPowerConsumptionKwh: 0.27 } })
+    const vermelho = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Vermelho', colorHex: '#ff0000', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+    const verde = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Verde', colorHex: '#00ff00', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+    const azul = await prisma.filament.create({ data: { manufacturer: 'F1', material: 'PLA', colorName: 'Azul', colorHex: '#0000ff', currentStockGrams: 1000, avgUnitCostPerGram: 80 / 1000 } })
+    const product = await prisma.product.create({
+      data: { name: 'MINI JESUS', category: 'Decoração', isComposite: true, printerId: printer.id, filamentId: vermelho.id, weightGrams: 0, printTimeHours: 0, laborTimeHours: 0 },
+    })
+    const cabeca = await prisma.productPart.create({
+      data: { productId: product.id, name: 'CHARM', printerId: printer.id, printTimeHours: 1, quantityPerUnit: 1, filamentComponents: { create: [{ filamentId: vermelho.id, weightGrams: 10 }] } },
+    })
+    const corpo = await prisma.productPart.create({
+      data: {
+        productId: product.id, name: 'CORPO', printerId: printer.id, printTimeHours: 1, quantityPerUnit: 1,
+        filamentComponents: { create: [{ filamentId: vermelho.id, weightGrams: 10 }, { filamentId: verde.id, weightGrams: 5 }] },
+      },
+    })
 
     const orderResult = await createOrder(orderFdWithColors(product.id, { [cabeca.id]: azul.id }))
     expect(orderResult.success).toBe(true)
     const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
 
     await producePart(product.id, cabeca.id, printer.id, azul.id, 1)
-    await producePart(product.id, corpo.id, printer.id, vermelho.id, 1)
+    const corpoResult = await createProductionRun(fd({
+      productId: product.id, productPartId: corpo.id, printerId: printer.id, filamentId: vermelho.id, date: '2026-09-01',
+      quantityPlanned: '1', quantitySuccess: '1', quantityFailed: '0', gramsUsed: '10', gramsWasted: '0', timeWastedHours: '0',
+      filamentUsagesJson: JSON.stringify([
+        { filamentId: vermelho.id, gramsUsed: 10, gramsWasted: 0 },
+        { filamentId: verde.id, gramsUsed: 5, gramsWasted: 0 },
+      ]),
+    }))
+    expect(corpoResult.success).toBe(true)
+
+    const corpoKey = [vermelho.id, verde.id].sort().join(',')
     const assemble = await confirmAssembly(fd({
       productId: product.id,
       quantity: '1',
       notes: '',
-      colorChoicesJson: JSON.stringify({ [cabeca.id]: azul.id, [corpo.id]: vermelho.id }),
+      colorChoicesJson: JSON.stringify({ [cabeca.id]: azul.id, [corpo.id]: corpoKey }),
       accessoryUsagesJson: '[]',
       supplyUsagesJson: '[]',
     }))

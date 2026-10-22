@@ -8,7 +8,10 @@ import { StatusBadge } from '@/components/StatusBadge'
 import { ActionsMenu } from '@/components/ActionsMenu'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { CancelProductionRunForm } from './CancelProductionRunForm'
-import { deleteProductionRun, getPlateDetail, type ProductionByProductRow, type PlateListRow, type PlateDetail } from '@/actions/productionRuns'
+import { deleteProductionRun, getPlateDetail, updateProductionRunFull, type ProductionByProductRow, type PlateListRow, type PlateDetail, type ProductionRunEditInput } from '@/actions/productionRuns'
+import { UndoToast } from '@/components/UndoToast'
+import { QuantityCell } from './QuantityCell'
+import { takeProductionUndo, type ProductionUndo } from './productionUndo'
 import { ProductionRunBatchForm } from './ProductionRunBatchForm'
 import type { ProductionStatus } from '@prisma/client'
 
@@ -90,6 +93,30 @@ export function ProductionRunsExplorer({
   // pronto do server junto com `runs` (sem fetch sob demanda, diferente
   // do Plate -- é só o filamento desta linha, já carregado).
   const [colorRun, setColorRun] = useState<ProductionRunRow | null>(null)
+  // "Desfazer" de edição: vem da tela de edição (sessionStorage) ou da
+  // correção direta na célula Sucesso/Falhas.
+  const [undo, setUndo] = useState<ProductionUndo | null>(null)
+  const [undoError, setUndoError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const stashed = takeProductionUndo()
+    if (stashed) setUndo(stashed)
+  }, [])
+
+  async function runUndo() {
+    const current = undo
+    setUndo(null)
+    if (!current) return
+    const result = await updateProductionRunFull(current.runId, current.previous)
+    if (!result.success) setUndoError(result.error ?? 'Não foi possível desfazer.')
+    router.refresh()
+  }
+
+  function onQuantitySaved(runId: string, previous: ProductionRunEditInput) {
+    setUndoError(null)
+    setUndo({ runId, previous, message: 'Quantidades atualizadas.' })
+    router.refresh()
+  }
 
   function openColorDetail(run: ProductionRunRow) {
     setColorRun(run)
@@ -208,7 +235,13 @@ export function ProductionRunsExplorer({
                       )}
                     </td>
                     <td className="text-center">
-                      <span className="text-emerald-600 dark:text-emerald-400">{run.quantitySuccess}</span> / <span className={run.quantityFailed > 0 ? 'text-red-600 dark:text-red-400' : ''}>{run.quantityFailed}</span>
+                      <QuantityCell
+                        runId={run.id}
+                        success={run.quantitySuccess}
+                        failed={run.quantityFailed}
+                        disabled={run.status === 'CANCELADA'}
+                        onSaved={(previous) => onQuantitySaved(run.id, previous)}
+                      />
                     </td>
                     <td className="text-center">{run.cost != null ? formatCurrency(run.cost) : '—'}</td>
                     <td><StatusBadge badge={badge} title={run.status === 'CANCELADA' && run.cancelReason ? `Motivo: ${run.cancelReason}` : undefined} /></td>
@@ -446,6 +479,9 @@ export function ProductionRunsExplorer({
           </div>
         )}
       </dialog>
+
+      {undoError && <p className="fixed bottom-16 right-4 z-[60] max-w-sm rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 shadow dark:bg-red-950/80 dark:text-red-300">{undoError}</p>}
+      {undo && <UndoToast message={undo.message} onUndo={runUndo} onDismiss={() => setUndo(null)} durationMs={10000} />}
     </>
   )
 }

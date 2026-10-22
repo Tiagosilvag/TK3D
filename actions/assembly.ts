@@ -621,6 +621,9 @@ export interface AssemblyReversalResult {
 export async function reverseExcessAssemblyForRun(
   tx: Prisma.TransactionClient,
   run: { id: string; productId: string; productPartId: string | null; filamentId: string; quantitySuccess: number; filamentUsages: { filamentId: string }[] },
+  // Edição de produção: unidades que a run EDITADA continua fornecendo pro
+  // MESMO combo depois da edição (0 ao excluir/cancelar).
+  extraProducedAfter = 0,
 ): Promise<AssemblyReversalResult> {
   const partKey = run.productPartId ?? run.productId
   const comboKey = comboKeyFromRun(run)
@@ -637,7 +640,7 @@ export async function reverseExcessAssemblyForRun(
     },
     select: { filamentId: true, quantitySuccess: true, filamentUsages: { select: { filamentId: true } } },
   })
-  const producedAfter = otherRuns.filter((r) => comboKeyFromRun(r) === comboKey).reduce((sum, r) => sum + r.quantitySuccess, 0)
+  const producedAfter = otherRuns.filter((r) => comboKeyFromRun(r) === comboKey).reduce((sum, r) => sum + r.quantitySuccess, 0) + extraProducedAfter
 
   // Bug "Mosquetão compartilhado não desmonta": quando esta run produziu um
   // PRODUTO inteiro direto (productPartId nulo -- produto simples ou "peça

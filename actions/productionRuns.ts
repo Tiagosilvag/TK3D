@@ -18,7 +18,8 @@ import {
   type ProductionCostSnapshot,
 } from '@/lib/costing'
 import { revalidatePath } from 'next/cache'
-import { Prisma, type ProductionStatus, type SupplyUnit } from '@prisma/client'
+import { Prisma, type ProductionStatus, type SupplyUnit, type WasteReason } from '@prisma/client'
+import { getOwnStockSummary } from '@/lib/reports'
 import { productNeedsAssembly, productAutoAssembles } from '@/lib/products'
 import { getAssemblyStatus, reverseExcessAssemblyForRun, autoAssembleProductionRun } from '@/actions/assembly'
 import { reconcileOrderReservations } from '@/lib/orderReservations'
@@ -203,7 +204,7 @@ interface ResourceCheck {
 // quando esta run pertence a uma Plate (createPlate abaixo), gravado direto
 // na ProductionRun via o spread de `data` no create (nenhuma mudança extra
 // necessária aqui pra isso fluir).
-type RunCreationData = Omit<z.infer<typeof productionRunSchema>, 'filamentUsages'> & { batchId: string; plateId?: string | null }
+type RunCreationData = Omit<z.infer<typeof productionRunSchema>, 'filamentUsages'> & { batchId: string; plateId?: string | null; id?: string; createdAt?: Date }
 
 async function prepareProductionRunCreation(
   data: RunCreationData,
@@ -952,6 +953,222 @@ export async function updateProductionRun(id: string, formData: FormData): Promi
   revalidatePath('/production')
   revalidatePath('/filaments')
   return { success: true }
+}
+
+// ---------------------------------------------------------------------------
+// Edição COMPLETA de uma produção já registrada: data, impressora, tempo,
+// filamentos (trocar rolo, gramas, adicionar/remover cor), planejada, sucesso,
+// falhas. Tudo recalculado pela diferença: o consumo antigo volta ao rolo
+// antigo, o novo é debitado do rolo novo (a checagem de estoque já credita o
+// que a própria produção devolve), custo/status são refeitos e as montagens/
+// pedidos que dependiam das unidades são reconciliados. Produto e peça são
+// imutáveis (pra mudar: excluir e registrar de novo).
+//
+// A pendência do pedido NÃO é guardada: é derivada das produções existentes
+// (getOrderDemandQueue), então editar/excluir devolve a diferença certa sozinha.
+// ---------------------------------------------------------------------------
+export interface ProductionRunEditInput {
+  date: string // yyyy-mm-dd
+  printerId: string
+  printTimeHoursPerUnit?: number
+  timeWastedHours: number
+  wasteReason: string | null
+  notes: string | null
+  quantityPlanned: number
+  quantitySuccess: number
+  filaments: { filamentId: string; weightGramsPerUnit: number; gramsWasted: number }[]
+}
+
+export interface ProductionRunEditData extends ProductionRunEditInput {
+  id: string
+  productId: string
+  productName: string
+  productPartId: string | null
+  partName: string | null
+  plateId: string | null
+  status: ProductionStatus
+}
+
+function dayString(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+export async function getProductionRunEditData(id: string): Promise<ProductionRunEditData> {
+  const run = await prisma.productionRun.findUniqueOrThrow({
+    where: { id },
+    include: { filamentUsages: true, product: { select: { name: true } }, productPart: { select: { name: true } } },
+  })
+  const planned = run.quantityPlanned || 1
+  const components = run.filamentUsages.length > 0
+    ? run.filamentUsages.map((u) => ({ filamentId: u.filamentId, used: u.gramsUsed.toNumber(), wasted: u.gramsWasted.toNumber() }))
+    : [{ filamentId: run.filamentId, used: run.gramsUsed.toNumber(), wasted: run.gramsWasted.toNumber() }]
+  const snapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+  return {
+    id: run.id,
+    productId: run.productId,
+    productName: run.product.name,
+    productPartId: run.productPartId,
+    partName: run.productPart?.name ?? null,
+    plateId: run.plateId,
+    status: run.status,
+    date: dayString(run.date),
+    printerId: run.printerId,
+    printTimeHoursPerUnit: snapshot?.printTimeHours,
+    timeWastedHours: run.timeWastedHours.toNumber(),
+    wasteReason: run.wasteReason,
+    notes: run.notes,
+    quantityPlanned: run.quantityPlanned,
+    quantitySuccess: run.quantitySuccess,
+    filaments: components.map((c) => ({ filamentId: c.filamentId, weightGramsPerUnit: c.used / planned, gramsWasted: c.wasted })),
+  }
+}
+
+function comboKeyOf(filamentIds: string[]): string {
+  return [...new Set(filamentIds)].sort().join(',')
+}
+
+export async function updateProductionRunFull(
+  id: string,
+  input: ProductionRunEditInput,
+): Promise<{ success: boolean; error?: string; previous?: ProductionRunEditInput }> {
+  const planned = input.quantityPlanned
+  const success = input.quantitySuccess
+  if (!Number.isInteger(planned) || planned < 1) return { success: false, error: 'Planejada deve ser um número inteiro maior que zero.' }
+  if (!Number.isInteger(success) || success < 0) return { success: false, error: 'Sucesso deve ser um número inteiro, zero ou mais.' }
+  if (success > planned) return { success: false, error: 'Sucesso não pode ser maior que o planejado.' }
+  if (input.filaments.length === 0 || input.filaments.some((f) => !f.filamentId)) return { success: false, error: 'Selecione o filamento.' }
+  if (input.filaments.some((f) => !(f.weightGramsPerUnit >= 0) || !(f.gramsWasted >= 0))) return { success: false, error: 'Gramas não podem ser negativas.' }
+  if (!(input.timeWastedHours >= 0)) return { success: false, error: 'Tempo desperdiçado não pode ser negativo.' }
+  const date = new Date(`${input.date}T12:00:00`)
+  if (Number.isNaN(date.getTime())) return { success: false, error: 'Data inválida.' }
+
+  const run = await prisma.productionRun.findUniqueOrThrow({ where: { id }, include: { filamentUsages: true } })
+  if (run.status === 'CANCELADA') return { success: false, error: 'Uma produção cancelada não pode ser editada.' }
+
+  const previous = (await getProductionRunEditData(id)) as ProductionRunEditInput
+  const failed = planned - success
+
+  const newComponents = input.filaments.map((f) => ({
+    filamentId: f.filamentId,
+    gramsUsed: f.weightGramsPerUnit * planned,
+    gramsWasted: f.gramsWasted,
+  }))
+  const oldComponents = run.filamentUsages.length > 0
+    ? run.filamentUsages.map((u) => ({ filamentId: u.filamentId, gramsUsed: u.gramsUsed.toNumber(), gramsWasted: u.gramsWasted.toNumber() }))
+    : [{ filamentId: run.filamentId, gramsUsed: run.gramsUsed.toNumber(), gramsWasted: run.gramsWasted.toNumber() }]
+
+  // O que a própria produção devolve ao rolo conta como disponível na
+  // checagem de estoque (crédito negativo no mapa de reservas).
+  const reserved = new Map<string, number>()
+  for (const c of oldComponents) reserved.set(c.filamentId, (reserved.get(c.filamentId) ?? 0) - (c.gramsUsed + c.gramsWasted))
+
+  const oldSnapshot = run.costSnapshot as unknown as ProductionCostSnapshot | null
+  const first = newComponents[0]
+  const prepared = await prepareProductionRunCreation(
+    {
+      id: run.id,
+      createdAt: run.createdAt,
+      batchId: run.batchId,
+      plateId: run.plateId,
+      productId: run.productId,
+      productPartId: run.productPartId,
+      printerId: input.printerId,
+      filamentId: first.filamentId,
+      date,
+      quantityPlanned: planned,
+      quantitySuccess: success,
+      quantityFailed: failed,
+      gramsUsed: first.gramsUsed,
+      gramsWasted: first.gramsWasted,
+      timeWastedHours: input.timeWastedHours,
+      wasteReason: (input.wasteReason || null) as WasteReason | null,
+      notes: input.notes || null,
+    },
+    newComponents.length > 1 ? newComponents : undefined,
+    reserved,
+    input.printTimeHoursPerUnit ?? oldSnapshot?.printTimeHours,
+  )
+  if (!prepared.success) return { success: false, error: prepared.error }
+
+  const oldCombo = comboKeyOf(oldComponents.map((c) => c.filamentId))
+  const newCombo = comboKeyOf(newComponents.map((c) => c.filamentId))
+  const sameCombo = oldCombo === newCombo
+  const reduction = sameCombo ? Math.max(0, run.quantitySuccess - success) : run.quantitySuccess
+
+  if (reduction > 0) {
+    // Unidades que saem do combo antigo: se já viraram montagem (ou, sem
+    // montagem, já foram vendidas/entregues), recusa ou desmonta só o excedente.
+    const product = await prisma.product.findUniqueOrThrow({
+      where: { id: run.productId },
+      include: { _count: { select: { accessoryUsages: true, supplyUsages: true, componentUsages: true } } },
+    })
+    const needsAssembly = Boolean(run.productPartId) || productNeedsAssembly({
+      isComposite: product.isComposite,
+      accessoryUsagesCount: product._count.accessoryUsages,
+      supplyUsagesCount: product._count.supplyUsages,
+      componentUsagesCount: product._count.componentUsages,
+    })
+    if (!needsAssembly) {
+      const stock = await getOwnStockSummary()
+      const available = stock.find((s) => s.productId === run.productId)?.available ?? 0
+      if (available < reduction) {
+        return { success: false, error: `${reduction - available} unidade(s) dessa produção já foram vendidas ou entregues a parceiros -- não dá para reduzir.` }
+      }
+    } else {
+      const reversalError = await prisma.$transaction(async (tx) => {
+        const reversal = await reverseExcessAssemblyForRun(tx, run, sameCombo ? success : 0)
+        return reversal.success ? null : (reversal.error ?? 'Não foi possível reduzir esta produção.')
+      }, { timeout: 20000 })
+      if (reversalError) return { success: false, error: reversalError }
+    }
+  }
+
+  await prisma.$transaction([
+    ...oldComponents.map((c) =>
+      prisma.filament.update({ where: { id: c.filamentId }, data: { currentStockGrams: { increment: c.gramsUsed + c.gramsWasted } } }),
+    ),
+    prisma.productionRun.delete({ where: { id } }),
+    ...prepared.ops,
+  ])
+
+  await maybeReconcileAfterProduction(run.productId, run.filamentId)
+  if (!sameCombo) await maybeReconcileAfterProduction(run.productId, first.filamentId)
+  // Produto que se monta sozinho: só as unidades NOVAS (aumento, ou o combo novo inteiro).
+  const addedUnits = sameCombo ? Math.max(0, success - run.quantitySuccess) : success
+  if (addedUnits > 0) {
+    await maybeAutoAssembleAfterProduction({
+      productId: run.productId,
+      productPartId: run.productPartId,
+      quantitySuccess: addedUnits,
+      filamentId: first.filamentId,
+      filamentUsages: newComponents.length > 1 ? newComponents.map((c) => ({ filamentId: c.filamentId })) : [],
+    })
+  }
+
+  revalidatePath('/production')
+  revalidatePath('/filaments')
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
+  revalidatePath('/orders')
+  return { success: true, previous }
+}
+
+// Edição direta de Sucesso/Falhas na célula do histórico: mantém os gramas
+// por unidade da produção, planejada = sucesso + falhas. Não permite zerar
+// tudo (pra isso existe Excluir).
+export async function updateProductionRunQuantities(
+  id: string,
+  quantitySuccess: number,
+  quantityFailed: number,
+): Promise<{ success: boolean; error?: string; previous?: ProductionRunEditInput }> {
+  if (!Number.isInteger(quantitySuccess) || !Number.isInteger(quantityFailed) || quantitySuccess < 0 || quantityFailed < 0) {
+    return { success: false, error: 'Use números inteiros, zero ou mais.' }
+  }
+  if (quantitySuccess + quantityFailed < 1) return { success: false, error: 'Não dá para zerar tudo. Para remover a produção, use Excluir.' }
+  const current = await getProductionRunEditData(id)
+  const { id: _id, productId: _p, productName: _pn, productPartId: _pp, partName: _n, plateId: _pl, status: _s, ...rest } = current
+  void _id; void _p; void _pn; void _pp; void _n; void _pl; void _s
+  return updateProductionRunFull(id, { ...rest, quantityPlanned: quantitySuccess + quantityFailed, quantitySuccess })
 }
 
 // Melhoria "Editar impressora depois de criar": corrige a impressora de uma

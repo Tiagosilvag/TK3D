@@ -3,7 +3,7 @@ import { toFilamentSelectOption } from '@/lib/filamentPicker'
 import { prisma } from '@/lib/prisma'
 import { EditProductionRunForm } from './EditProductionRunForm'
 import { ProductionRunsExplorer, type ProductionRunRow } from './ProductionRunsExplorer'
-import { getProductionByProduct, getPlates } from '@/actions/productionRuns'
+import { getProductionByProduct, getPlates, getProductionRunEditData } from '@/actions/productionRuns'
 import { getOrderDemandQueue, getAccessoryDemandQueue } from '@/actions/orders'
 import { DemandQueuePanel } from './DemandQueuePanel'
 import { AccessoryDemandPanel } from './AccessoryDemandPanel'
@@ -155,59 +155,18 @@ export default async function ProductionPage({
     return qs.toString()
   })()
 
-  // Melhoria "Editar impressora depois de criar": só permite trocar quando a
-  // produção NÃO faz parte de uma Plate (impressora compartilhada por todas
-  // as peças da Plate, trocar isolado deixaria inconsistente) E o
-  // costSnapshot já guarda printTimeHours/printerCostFlags congelados
-  // (ausente = produção anterior a este recurso, updateProductionRunPrinter
-  // bloqueia do mesmo jeito no servidor -- este flag só evita mostrar um
-  // controle que vai falhar).
-  const editingRunSnapshot = editingRunRecord?.costSnapshot as unknown as ProductionCostSnapshot | null | undefined
-  const editingRun = editingRunRecord
-    ? {
-        id: editingRunRecord.id,
-        productName: editingRunRecord.product.name,
-        productPartName: editingRunRecord.productPart?.name ?? null,
-        printerId: editingRunRecord.printer.id,
-        printerName: editingRunRecord.printer.name,
-        canEditPrinter:
-          !editingRunRecord.plateId &&
-          editingRunRecord.status !== 'CANCELADA' &&
-          !!editingRunSnapshot &&
-          editingRunSnapshot.printTimeHours !== undefined &&
-          !!editingRunSnapshot.printerCostFlags,
-        printerLockedReason: editingRunRecord.plateId
-          ? 'Faz parte de uma Plate -- a impressora é compartilhada por todas as peças dela.'
-          : !editingRunSnapshot || editingRunSnapshot.printTimeHours === undefined || !editingRunSnapshot.printerCostFlags
-            ? 'Produção anterior a este recurso -- não guardou o tempo de impressão necessário pra recalcular o custo.'
-            : null,
-        // Melhoria "nome do filamento na Produção": mesmo corte de
-        // marca/Rolo# que getPlateDetail já usa (actions/productionRuns.ts)
-        // -- aqui é só o cabeçalho readonly ao editar uma produção já
-        // registrada, tipo + cor já identifica de relance.
-        filamentName: `${editingRunRecord.filament.material} ${editingRunRecord.filament.colorName}`,
-        isMultiFilament: editingRunRecord.filamentUsages.length > 0,
-        // Bug "só mostrava 1 cor de peça multi-filamento": filamentName
-        // acima vem só do campo escalar filamentId (1º componente/
-        // compatibilidade, ver CLAUDE.md), nunca mostrava as OUTRAS cores
-        // reais gravadas em ProductionRunFilamentUsage. Lista completa,
-        // só usada quando isMultiFilament (senão fica vazia).
-        filamentUsages: editingRunRecord.filamentUsages.map((u) => ({
-          label: `${u.filament.material} ${u.filament.colorName}`,
-          colorHex: u.filament.colorHex,
-          gramsUsed: u.gramsUsed.toNumber(),
-        })),
-        date: editingRunRecord.date.toISOString().slice(0, 10),
-        quantityPlanned: editingRunRecord.quantityPlanned,
-        quantitySuccess: editingRunRecord.quantitySuccess,
-        quantityFailed: editingRunRecord.quantityFailed,
-        gramsUsed: editingRunRecord.gramsUsed.toNumber(),
-        gramsWasted: editingRunRecord.gramsWasted.toNumber(),
-        timeWastedHours: editingRunRecord.timeWastedHours.toNumber(),
-        wasteReason: editingRunRecord.wasteReason,
-        notes: editingRunRecord.notes,
-      }
-    : undefined
+  // Edição completa: dados editáveis da produção + opções de filamento (as
+  // em estoque, mais os que a própria produção já usa -- um rolo que acabou
+  // de zerar por causa dela não pode sumir da lista).
+  const editData = editingRunRecord && editingRunRecord.status !== 'CANCELADA' ? await getProductionRunEditData(editingRunRecord.id) : null
+  const editFilaments = editData
+    ? [
+        ...filamentRecords.map((f) => ({ ...toFilamentSelectOption(f), pricePerGram: f.avgUnitCostPerGram.toNumber() })),
+        ...(await prisma.filament.findMany({
+          where: { id: { in: editData.filaments.map((f) => f.filamentId).filter((id) => !filamentRecords.some((r) => r.id === id)) } },
+        })).map((f) => ({ ...toFilamentSelectOption(f), pricePerGram: f.avgUnitCostPerGram.toNumber() })),
+      ]
+    : []
 
   // Melhoria "Produção" (reformulação Plate) §5: volta a ser uma linha por
   // PEÇA/run -- não mais agrupada por batchId, que deixou de representar
@@ -335,11 +294,13 @@ export default async function ProductionPage({
         )}
       </form>
 
-      {editingRun && (
+      {editData && (
         <div className="mt-6">
           <EditProductionRunForm
-            editingRun={editingRun}
+            key={editData.id}
+            data={editData}
             printers={printers.map((p) => ({ id: p.id, name: p.name }))}
+            filaments={editFilaments}
             returnTo={`/production${editQueryBase ? `?${editQueryBase}` : ''}`}
           />
         </div>

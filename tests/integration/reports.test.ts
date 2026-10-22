@@ -158,7 +158,7 @@ describe('getConsignmentStockSummary', () => {
 
     const summary = await getConsignmentStockSummary()
     expect(summary).toEqual([
-      { partnerName: 'Loja', productName: product.name, remaining: 6 },
+      { partnerName: 'Loja', productName: product.name, remaining: 6, remainingValue: 150 },
     ])
   })
 })
@@ -271,6 +271,7 @@ describe('relatórios de produção (Task 9)', () => {
       expect(summary).toEqual({
         totalRuns: 0,
         totalUnitsProduced: 0,
+        totalUnitsFailed: 0,
         successRate: 0,
         totalTimeHours: 0,
         totalCost: 0,
