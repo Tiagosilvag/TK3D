@@ -109,11 +109,14 @@ function QtyStepper({
   onDec,
   onInc,
   incDisabled,
+  onSet,
 }: {
   value: number
   onDec: () => void
   onInc: () => void
   incDisabled: boolean
+  // Digitar a quantidade direto (limitada ao saldo por quem chama).
+  onSet: (n: number) => void
 }) {
   return (
     <div className="flex shrink-0 items-center gap-1.5">
@@ -126,7 +129,7 @@ function QtyStepper({
       >
         −
       </button>
-      <span className="w-5 text-center text-sm font-medium tabular-nums">{value}</span>
+      <input value={value} onChange={(e) => onSet(Math.floor(Number(e.target.value.replace(/\D/g, ''))) || 0)} onFocus={(e) => e.target.select()} inputMode="numeric" aria-label="Quantidade" className="w-9 rounded border border-transparent bg-transparent text-center text-sm font-medium tabular-nums hover:border-slate-300 focus:border-violet-400 focus:outline-none dark:hover:border-slate-600" />
       <button
         type="button"
         onClick={onInc}
@@ -566,6 +569,7 @@ export function DeliveryBatchForm({
                             onDec={() => setQty(product.productId, singleVariant.key, (quantities[lineKey(product.productId, singleVariant.key)] ?? 0) - 1, singleVariant.available)}
                             onInc={() => setQty(product.productId, singleVariant.key, (quantities[lineKey(product.productId, singleVariant.key)] ?? 0) + 1, singleVariant.available)}
                             incDisabled={(quantities[lineKey(product.productId, singleVariant.key)] ?? 0) >= singleVariant.available}
+                            onSet={(n) => setQty(product.productId, singleVariant.key, n, singleVariant.available)}
                           />
                         </>
                       )}
@@ -575,6 +579,7 @@ export function DeliveryBatchForm({
                           onDec={() => setQty(product.productId, null, (quantities[lineKey(product.productId, null)] ?? 0) - 1, null)}
                           onInc={() => setQty(product.productId, null, (quantities[lineKey(product.productId, null)] ?? 0) + 1, null)}
                           incDisabled={false}
+                          onSet={(n) => setQty(product.productId, null, n, null)}
                         />
                       )}
                       {multiVariant && <span aria-hidden className="shrink-0 text-slate-400">{isExpanded ? '▴' : '▾'}</span>}
@@ -600,6 +605,7 @@ export function DeliveryBatchForm({
                                   onDec={() => setQty(product.productId, v.key, (quantities[lineKey(product.productId, v.key)] ?? 0) - 1, v.available)}
                                   onInc={() => setQty(product.productId, v.key, (quantities[lineKey(product.productId, v.key)] ?? 0) + 1, v.available)}
                                   incDisabled={(quantities[lineKey(product.productId, v.key)] ?? 0) >= v.available}
+                                  onSet={(n) => setQty(product.productId, v.key, n, v.available)}
                                 />
                               </div>
                             </div>

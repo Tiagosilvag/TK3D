@@ -43,7 +43,7 @@ function QtyStepper({ value, min, max, onChange }: { value: number; min: number;
   return (
     <div className="flex shrink-0 items-center gap-1.5">
       <button type="button" onClick={() => onChange(Math.max(min, value - 1))} disabled={value <= min} aria-label="Diminuir" className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-300 text-slate-600 disabled:opacity-30 dark:border-slate-600 dark:text-slate-300">−</button>
-      <span className="w-5 text-center text-sm font-medium tabular-nums">{value}</span>
+      <input value={value} onChange={(e) => onChange(Math.min(max, Math.max(min, Math.floor(Number(e.target.value.replace(/\D/g, ''))) || 0)))} onFocus={(e) => e.target.select()} inputMode="numeric" aria-label="Quantidade" className="w-9 rounded border border-transparent bg-transparent text-center text-sm font-medium tabular-nums hover:border-slate-300 focus:border-violet-400 focus:outline-none dark:hover:border-slate-600" />
       <button type="button" onClick={() => onChange(Math.min(max, value + 1))} disabled={value >= max} aria-label="Aumentar" className="flex h-6 w-6 items-center justify-center rounded-full border border-violet-400 text-violet-600 disabled:opacity-30 dark:border-violet-500 dark:text-violet-400">+</button>
     </div>
   )
