@@ -732,7 +732,11 @@ export async function reverseExcessAssemblyForRun(
       if (fullyReversed) {
         await tx.stockConsumption.delete({ where: { id: c.id } })
       } else {
-        await tx.stockConsumption.update({ where: { id: c.id }, data: { quantity: totalQty - reverseQty } })
+        const needed = c.neededQuantity?.toNumber()
+        await tx.stockConsumption.update({
+          where: { id: c.id },
+          data: { quantity: totalQty - reverseQty, ...(needed !== undefined ? { neededQuantity: needed * (1 - fraction) } : {}) },
+        })
       }
     }
 
@@ -941,19 +945,30 @@ async function performAssembly(input: PerformAssemblyInput): Promise<ActionResul
   // resolver o estoque depois"). O aviso não-bloqueante ("Estoque baixo
   // de: X") é calculado pela tela a partir de accessoryRequirements/
   // supplyRequirements ANTES da submissão, não impede o confirmAssembly.
-  const accessoryConsumption: { accessoryId: string; quantity: number }[] = []
+  // Débito = min(estoque, necessário): nunca deixa o estoque negativo, e o que
+  // foi REALMENTE debitado (`quantity`) é gravado junto com o necessário
+  // (`needed`), pra devolver exatamente o mesmo ao desfazer/editar. Mesma
+  // linha duas vezes na lista (ex.: acessório repetido) divide o estoque que
+  // sobrou, na ordem em que aparecem.
+  const accessoryLeft = new Map(accessories.map((a) => [a.id, Math.max(0, a.currentStock.toNumber())]))
+  const supplyLeft = new Map(supplies.map((x) => [x.id, Math.max(0, x.currentStock.toNumber())]))
+  const accessoryConsumption: { accessoryId: string; quantity: number; needed: number }[] = []
   for (const u of submittedAccessoryUsages) {
     if (u.quantityPerUnit <= 0) continue
-    const accessory = accessoryById.get(u.id)
-    if (!accessory) continue
-    accessoryConsumption.push({ accessoryId: u.id, quantity: u.quantityPerUnit * quantity })
+    if (!accessoryById.has(u.id)) continue
+    const needed = u.quantityPerUnit * quantity
+    const debit = Math.min(accessoryLeft.get(u.id) ?? 0, needed)
+    accessoryLeft.set(u.id, (accessoryLeft.get(u.id) ?? 0) - debit)
+    accessoryConsumption.push({ accessoryId: u.id, quantity: debit, needed })
   }
-  const supplyConsumption: { supplyId: string; quantity: number }[] = []
+  const supplyConsumption: { supplyId: string; quantity: number; needed: number }[] = []
   for (const u of submittedSupplyUsages) {
     if (u.quantityPerUnit <= 0) continue
-    const supply = supplyById.get(u.id)
-    if (!supply) continue
-    supplyConsumption.push({ supplyId: u.id, quantity: u.quantityPerUnit * quantity })
+    if (!supplyById.has(u.id)) continue
+    const needed = u.quantityPerUnit * quantity
+    const debit = Math.min(supplyLeft.get(u.id) ?? 0, needed)
+    supplyLeft.set(u.id, (supplyLeft.get(u.id) ?? 0) - debit)
+    supplyConsumption.push({ supplyId: u.id, quantity: debit, needed })
   }
 
   if (insufficient.length > 0) {
@@ -988,15 +1003,15 @@ async function performAssembly(input: PerformAssemblyInput): Promise<ActionResul
       },
     })
     for (const c of accessoryConsumption) {
-      await tx.accessory.update({ where: { id: c.accessoryId }, data: { currentStock: { decrement: c.quantity } } })
+      if (c.quantity > 0) await tx.accessory.update({ where: { id: c.accessoryId }, data: { currentStock: { decrement: c.quantity } } })
       await tx.stockConsumption.create({
-        data: { resourceType: 'ACCESSORY', resourceId: c.accessoryId, quantity: c.quantity, productId, source: 'ASSEMBLY', sourceId: assembly.id },
+        data: { resourceType: 'ACCESSORY', resourceId: c.accessoryId, quantity: c.quantity, neededQuantity: c.needed, productId, source: 'ASSEMBLY', sourceId: assembly.id },
       })
     }
     for (const c of supplyConsumption) {
-      await tx.supply.update({ where: { id: c.supplyId }, data: { currentStock: { decrement: c.quantity } } })
+      if (c.quantity > 0) await tx.supply.update({ where: { id: c.supplyId }, data: { currentStock: { decrement: c.quantity } } })
       await tx.stockConsumption.create({
-        data: { resourceType: 'SUPPLY', resourceId: c.supplyId, quantity: c.quantity, productId, source: 'ASSEMBLY', sourceId: assembly.id },
+        data: { resourceType: 'SUPPLY', resourceId: c.supplyId, quantity: c.quantity, neededQuantity: c.needed, productId, source: 'ASSEMBLY', sourceId: assembly.id },
       })
     }
     return assembly.id
@@ -1193,12 +1208,24 @@ export async function updateAssemblyQuantity(id: string, newQuantity: number): P
   await prisma.$transaction(async (tx) => {
     const consumptions = await tx.stockConsumption.findMany({ where: { source: 'ASSEMBLY', sourceId: id } })
     for (const c of consumptions) {
-      const before = c.quantity.toNumber()
-      const after = before * factor
-      const diff = after - before
-      if (c.resourceType === 'ACCESSORY') await tx.accessory.update({ where: { id: c.resourceId }, data: { currentStock: { decrement: diff } } })
-      else if (c.resourceType === 'SUPPLY') await tx.supply.update({ where: { id: c.resourceId }, data: { currentStock: { decrement: diff } } })
-      await tx.stockConsumption.update({ where: { id: c.id }, data: { quantity: after } })
+      const debited = c.quantity.toNumber()
+      // Linha anterior à coluna `neededQuantity`: debitado == necessário.
+      const neededBefore = c.neededQuantity?.toNumber() ?? debited
+      const neededAfter = neededBefore * factor
+      const resource = c.resourceType === 'ACCESSORY'
+        ? await tx.accessory.findUnique({ where: { id: c.resourceId }, select: { currentStock: true } })
+        : c.resourceType === 'SUPPLY'
+          ? await tx.supply.findUnique({ where: { id: c.resourceId }, select: { currentStock: true } })
+          : null
+      // Estoque disponível pra esta montagem = o que sobra + o que ela mesma já tinha debitado.
+      const available = Math.max(0, resource?.currentStock.toNumber() ?? 0) + debited
+      const debitAfter = Math.min(available, neededAfter)
+      const diff = debitAfter - debited
+      if (diff !== 0) {
+        if (c.resourceType === 'ACCESSORY') await tx.accessory.update({ where: { id: c.resourceId }, data: { currentStock: { decrement: diff } } })
+        else if (c.resourceType === 'SUPPLY') await tx.supply.update({ where: { id: c.resourceId }, data: { currentStock: { decrement: diff } } })
+      }
+      await tx.stockConsumption.update({ where: { id: c.id }, data: { quantity: debitAfter, neededQuantity: neededAfter } })
     }
     const snapshot = assembly.costSnapshot as { componentProductsCost: number; total: number } | null
     await tx.productAssembly.update({
@@ -1223,6 +1250,37 @@ export async function updateAssemblyQuantity(id: string, newQuantity: number): P
   revalidatePath('/supplies')
   revalidatePath('/orders')
   return { success: true, previousQuantity: old }
+}
+
+// "Ver peças" da fila de montagem: uma linha por peça, na combinação que o
+// pedido pediu (ou a de maior estoque), com as cores e o estoque dela.
+export interface AssemblyItemPartRow {
+  partId: string
+  name: string
+  quantityPerUnit: number
+  label: string | null
+  colors: { hex: string | null; name: string }[]
+  available: number
+  covers: number
+}
+
+export async function getAssemblyItemParts(orderItemId: string): Promise<AssemblyItemPartRow[]> {
+  const item = await prisma.orderItem.findUnique({ where: { id: orderItemId } })
+  if (!item) return []
+  const status = await getAssemblyStatus(item.productId)
+  const plan = planDefaultAssembly(status, item.colorComboKey ? deserializeColorChoices(item.colorComboKey) : null)
+  return status.parts.map((p) => {
+    const chosen = p.colorOptions?.find((o) => o.key === plan.colorChoices[p.partId]) ?? null
+    return {
+      partId: p.partId,
+      name: p.name,
+      quantityPerUnit: p.quantityPerUnit,
+      label: chosen?.label ?? null,
+      colors: chosen?.colors ?? [],
+      available: chosen ? chosen.available : p.available,
+      covers: chosen ? Math.floor(chosen.available / (p.quantityPerUnit || 1)) : p.maxUnitsFromThisPart,
+    }
+  })
 }
 
 export interface RecentAssemblyRow {

@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { getDeadlineBadge, ORDER_CHANNEL_LABELS } from '@/lib/format'
 import type { AssemblyQueueItem } from '@/actions/orders'
-import { assembleOrderItem, assembleOrderItems, undoAssemblies } from '@/actions/assembly'
+import { assembleOrderItem, assembleOrderItems, undoAssemblies, getAssemblyItemParts, type AssemblyItemPartRow } from '@/actions/assembly'
 import { UndoToast } from '@/components/UndoToast'
 
 // Fila de montagem: itens de pedido que precisam de montagem, do prazo mais
@@ -20,6 +20,18 @@ export function AssemblyQueuePanel({ items }: { items: AssemblyQueueItem[] }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; ids: string[] } | null>(null)
+  // "Ver peças": carregado sob demanda, 1 vez por item.
+  const [openParts, setOpenParts] = useState<Record<string, AssemblyItemPartRow[] | 'loading'>>({})
+
+  async function toggleParts(orderItemId: string) {
+    if (openParts[orderItemId]) {
+      setOpenParts((prev) => { const { [orderItemId]: _drop, ...rest } = prev; void _drop; return rest })
+      return
+    }
+    setOpenParts((prev) => ({ ...prev, [orderItemId]: 'loading' }))
+    const rows = await getAssemblyItemParts(orderItemId)
+    setOpenParts((prev) => ({ ...prev, [orderItemId]: rows }))
+  }
 
   const ready = items.filter((i) => canAssemble(i) > 0)
 
@@ -109,6 +121,9 @@ export function AssemblyQueuePanel({ items }: { items: AssemblyQueueItem[] }) {
                   </span>
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${deadline.className}`}>{deadline.label}</span>
                 </p>
+                <button type="button" onClick={() => void toggleParts(item.orderItemId)} className="mt-0.5 text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                  {openParts[item.orderItemId] ? 'Ocultar peças' : 'Ver peças'}
+                </button>
                 {all ? (
                   <p className="mt-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">Dá para montar tudo agora</p>
                 ) : units > 0 ? (
@@ -130,6 +145,31 @@ export function AssemblyQueuePanel({ items }: { items: AssemblyQueueItem[] }) {
                   </button>
                 )}
               </div>
+              {openParts[item.orderItemId] && (
+                <div className="basis-full rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/50">
+                  {openParts[item.orderItemId] === 'loading' ? (
+                    <p className="text-xs text-slate-400">Carregando…</p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {(openParts[item.orderItemId] as AssemblyItemPartRow[]).map((p) => (
+                        <li key={p.partId} className="flex items-center justify-between gap-3 text-xs">
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">
+                            {p.name}
+                            {p.quantityPerUnit !== 1 && <span className="ml-1 font-normal text-slate-400">× {p.quantityPerUnit}</span>}
+                          </span>
+                          <span className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-1.5">
+                            {p.colors.map((c, i) => (
+                              <span key={i} style={c.hex ? { background: c.hex } : undefined} title={c.name} className="inline-block h-3.5 w-3.5 rounded-full border border-black/15 dark:border-white/20" />
+                            ))}
+                            <span className="text-slate-500 dark:text-slate-400">{p.label ?? '—'}</span>
+                            <span className={p.available > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'font-semibold text-red-600 dark:text-red-400'}>{p.available} disp.</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </li>
           )
         })}

@@ -6,6 +6,7 @@ import { AssemblyOverview } from './AssemblyOverview'
 import { AssemblyDetailModal } from './AssemblyDetailModal'
 import { AssemblyQueuePanel } from './AssemblyQueuePanel'
 import { RecentAssemblies } from './RecentAssemblies'
+import { AssemblyPendingProduction } from './AssemblyPendingProduction'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,11 +28,16 @@ export default async function AssemblyPage({
     getRecentAssemblies(8),
   ])
 
+  const colorFilaments = await prisma.filament.findMany({ select: { id: true, colorHex: true } })
+  const colorHexById = Object.fromEntries(colorFilaments.map((f) => [f.id, f.colorHex]))
+
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Montagem</h1>
 
       <AssemblyQueuePanel items={demandQueue.assemblyQueue} />
+
+      <AssemblyPendingProduction rows={demandQueue.productionRows} colorHexById={colorHexById} />
 
       <AssemblyOverview rows={overview} />
 

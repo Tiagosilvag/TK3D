@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 import { createOrder, getOrderDemandQueue } from '@/actions/orders'
 import { createProductionRun } from '@/actions/productionRuns'
-import { assembleOrderItem, assembleOrderItems, assembleProductMax, undoAssemblies, updateAssemblyQuantity } from '@/actions/assembly'
+import { assembleOrderItem, assembleOrderItems, assembleProductMax, undoAssemblies, updateAssemblyQuantity, getAssemblyItemParts } from '@/actions/assembly'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
 
@@ -201,5 +201,57 @@ describe('updateAssemblyQuantity', () => {
     expect(refused.error).toMatch(/vendidas/)
     // Até 2 pode reduzir (as 2 vendidas continuam cobertas).
     expect((await updateAssemblyQuantity(result.assemblyId!, 2)).success).toBe(true)
+  })
+})
+
+describe('débito de acessório = min(estoque, necessário)', () => {
+  it('nunca deixa o estoque negativo, guarda debitado e necessário, e desfazer devolve exatamente o debitado', async () => {
+    const { printer, preto, argola, product, topo, base } = await setup()
+    await prisma.accessory.update({ where: { id: argola.id }, data: { currentStock: 3 } })
+    await produce(product.id, topo.id, printer.id, preto.id, 2)
+    await produce(product.id, base.id, printer.id, preto.id, 2)
+
+    const result = await assembleProductMax(product.id) // 2 un × 2 por unidade = precisa de 4, só há 3
+    expect(result.success).toBe(true)
+    expect(await accessoryStock(argola.id)).toBe(0)
+    const row = await prisma.stockConsumption.findFirstOrThrow({ where: { source: 'ASSEMBLY', sourceId: result.assemblyId! } })
+    expect([row.quantity.toNumber(), row.neededQuantity?.toNumber()]).toEqual([3, 4])
+
+    expect((await undoAssemblies([result.assemblyId!])).success).toBe(true)
+    expect(await accessoryStock(argola.id)).toBe(3)
+  })
+
+  it('corrigir a quantidade refaz o débito limitado ao estoque que existe', async () => {
+    const { printer, preto, argola, product, topo, base } = await setup()
+    await prisma.accessory.update({ where: { id: argola.id }, data: { currentStock: 5 } })
+    await produce(product.id, topo.id, printer.id, preto.id, 4)
+    await produce(product.id, base.id, printer.id, preto.id, 4)
+
+    const made = await assembleProductMax(product.id)
+    expect(made.units).toBe(4)
+    expect(await accessoryStock(argola.id)).toBe(0) // precisava de 8, havia 5
+
+    // Reduz para 2 (precisa de 4): o estoque volta a 1 e o débito passa a ser 4 de 4.
+    expect((await updateAssemblyQuantity(made.assemblyId!, 2)).success).toBe(true)
+    expect(await accessoryStock(argola.id)).toBe(1)
+    const row = await prisma.stockConsumption.findFirstOrThrow({ where: { source: 'ASSEMBLY', sourceId: made.assemblyId! } })
+    expect([row.quantity.toNumber(), row.neededQuantity?.toNumber()]).toEqual([4, 4])
+  })
+})
+
+describe('getAssemblyItemParts', () => {
+  it('lista as peças na combinação pedida, com cor e estoque', async () => {
+    const { printer, azul, preto, product, topo, base } = await setup()
+    await order(product.id, 1, { [topo.id]: azul.id, [base.id]: preto.id })
+    await produce(product.id, topo.id, printer.id, azul.id, 1)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+
+    const parts = await getAssemblyItemParts(item.id)
+    const byName = Object.fromEntries(parts.map((p) => [p.name, p]))
+    expect(byName.TOPO.available).toBe(1)
+    expect(byName.TOPO.colors.map((c) => c.hex)).toEqual(['#0000ff'])
+    expect(byName.TOPO.covers).toBe(1)
+    expect(byName.BASE.available).toBe(0)
+    expect(byName.BASE.covers).toBe(0)
   })
 })

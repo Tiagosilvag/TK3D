@@ -1581,6 +1581,10 @@ model StockConsumption {
   product      Product                       @relation(fields: [productId], references: [id])
   source       StockConsumptionSource
   sourceId     String
+  // Quanto a operação PRECISAVA (a montagem debita min(estoque, necessário):
+  // `quantity` é o realmente debitado). Nulo = linha anterior, em que
+  // debitado == necessário.
+  neededQuantity Decimal?                    @db.Decimal(12, 3)
   consumedAt   DateTime                      @default(now())
 
   @@index([resourceType, resourceId])
