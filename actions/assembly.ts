@@ -1151,6 +1151,80 @@ export async function undoAssemblies(assemblyIds: string[]): Promise<ActionResul
   return { success: true }
 }
 
+// Corrige a quantidade de uma montagem já registrada. Aumentar exige peça na
+// combinação que a montagem usou (checado contra o estoque ATUAL); diminuir
+// exige que as unidades retiradas não tenham sido vendidas/entregues. O consumo
+// de acessório/insumo é refeito pela diferença (a ficha é a mesma por unidade),
+// peças são derivadas (soma das montagens) e os pedidos são reconciliados.
+export async function updateAssemblyQuantity(id: string, newQuantity: number): Promise<ActionResult & { previousQuantity?: number }> {
+  if (!Number.isInteger(newQuantity) || newQuantity < 1) return { success: false, error: 'A quantidade deve ser um número inteiro maior que zero.' }
+  const assembly = await prisma.productAssembly.findUnique({ where: { id } })
+  if (!assembly) return { success: false, error: 'Montagem não encontrada.' }
+  const old = assembly.quantity
+  const delta = newQuantity - old
+  if (delta === 0) return { success: true, previousQuantity: old }
+
+  if (delta > 0) {
+    const status = await getAssemblyStatus(assembly.productId)
+    const choices = assembly.colorChoices as Record<string, string> | null
+    const missing: string[] = []
+    const check = (name: string, quantityPerUnit: number, colorOptions: AssemblyPartColorOption[] | null, maxUnits: number, key: string) => {
+      const covers = colorOptions && colorOptions.length > 0 && choices?.[key]
+        ? Math.floor((colorOptions.find((o) => o.key === choices[key])?.available ?? 0) / quantityPerUnit)
+        : maxUnits
+      if (covers < delta) missing.push(`${name} (faltam ${delta - covers})`)
+    }
+    for (const p of status.parts) check(p.name, p.quantityPerUnit, p.colorOptions, p.maxUnitsFromThisPart, p.partId)
+    for (const c of status.components) check(c.name, c.quantityPerUnit, c.colorOptions, c.maxUnitsFromThisComponent, c.componentProductId)
+    if (missing.length > 0) return { success: false, error: `Faltam peças para montar mais ${delta}: ${missing.join(', ')}. Mantive ${old}.` }
+  } else {
+    const [assembledAgg, soldAgg, deliveries] = await Promise.all([
+      prisma.productAssembly.aggregate({ where: { productId: assembly.productId }, _sum: { quantity: true } }),
+      prisma.sale.aggregate({ where: { productId: assembly.productId }, _sum: { quantity: true } }),
+      prisma.consignmentDelivery.findMany({ where: { productId: assembly.productId }, select: { quantityDelivered: true, returnedQuantity: true } }),
+    ])
+    const out = (soldAgg._sum.quantity ?? 0) + deliveries.reduce((sum, d) => sum + d.quantityDelivered - d.returnedQuantity, 0)
+    if ((assembledAgg._sum.quantity ?? 0) + delta < out) {
+      return { success: false, error: 'Essas unidades já foram vendidas ou entregues a parceiros -- não dá para reduzir a montagem.' }
+    }
+  }
+
+  const factor = newQuantity / old
+  await prisma.$transaction(async (tx) => {
+    const consumptions = await tx.stockConsumption.findMany({ where: { source: 'ASSEMBLY', sourceId: id } })
+    for (const c of consumptions) {
+      const before = c.quantity.toNumber()
+      const after = before * factor
+      const diff = after - before
+      if (c.resourceType === 'ACCESSORY') await tx.accessory.update({ where: { id: c.resourceId }, data: { currentStock: { decrement: diff } } })
+      else if (c.resourceType === 'SUPPLY') await tx.supply.update({ where: { id: c.resourceId }, data: { currentStock: { decrement: diff } } })
+      await tx.stockConsumption.update({ where: { id: c.id }, data: { quantity: after } })
+    }
+    const snapshot = assembly.costSnapshot as { componentProductsCost: number; total: number } | null
+    await tx.productAssembly.update({
+      where: { id },
+      data: {
+        quantity: newQuantity,
+        ...(snapshot ? { costSnapshot: { componentProductsCost: snapshot.componentProductsCost * factor, total: snapshot.total * factor } } : {}),
+      },
+    })
+  })
+
+  const pending = await prisma.orderItem.findMany({
+    where: { productId: assembly.productId, status: { notIn: ['ENTREGUE', 'CANCELADO'] } },
+    select: { colorComboKey: true },
+    distinct: ['colorComboKey'],
+  })
+  for (const { colorComboKey } of pending) await reconcileOrderReservations(assembly.productId, colorComboKey)
+
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
+  revalidatePath('/accessories')
+  revalidatePath('/supplies')
+  revalidatePath('/orders')
+  return { success: true, previousQuantity: old }
+}
+
 export interface RecentAssemblyRow {
   id: string
   productName: string

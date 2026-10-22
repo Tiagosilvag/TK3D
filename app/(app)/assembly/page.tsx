@@ -12,9 +12,10 @@ export const dynamic = 'force-dynamic'
 export default async function AssemblyPage({
   searchParams,
 }: {
-  searchParams: Promise<{ productId?: string; presetColorComboKey?: string }>
+  searchParams: Promise<{ productId?: string; presetColorComboKey?: string; qty?: string }>
 }) {
-  const { productId, presetColorComboKey } = await searchParams
+  const { productId, presetColorComboKey, qty } = await searchParams
+  const desiredQuantity = qty && Number.isInteger(Number(qty)) && Number(qty) > 0 ? Number(qty) : null
   const presetColorChoices = presetColorComboKey ? deserializeColorChoices(presetColorComboKey) : null
 
   const [overview, status, allAccessories, allSupplies, demandQueue, recent] = await Promise.all([
@@ -45,6 +46,7 @@ export default async function AssemblyPage({
       <AssemblyDetailModal
         status={status}
         presetColorChoices={presetColorChoices}
+        desiredQuantity={desiredQuantity}
         allAccessories={allAccessories.map((a) => ({ id: a.id, name: a.name, colorName: a.colorName, available: Math.max(0, a.currentStock.toNumber()) }))}
         allSupplies={allSupplies.map((s) => ({ id: s.id, name: s.name, unit: s.unit, available: Math.max(0, s.currentStock.toNumber()), catalogDefaultUsage: s.defaultUsage?.toNumber() ?? null }))}
       />

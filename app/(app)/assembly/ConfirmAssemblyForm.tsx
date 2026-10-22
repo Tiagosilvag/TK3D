@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { confirmAssembly, type AssemblyPartStatus, type AssemblyComponentStatus, type AssemblyResourceRequirement } from '@/actions/assembly'
 import { SubmitButton } from '@/components/SubmitButton'
 import { ComponentCategoryCard, optionLabel, type ComponentOption, type ComponentRow } from './ComponentCategoryCard'
@@ -75,44 +76,6 @@ function toComboOptions(item: ColorSelectable): ComboOption[] {
   return (item.colorOptions ?? []).map((o) => ({ key: o.key, label: o.label, colorHex: o.colorHex, available: o.available }))
 }
 
-const STEPS = [
-  { n: 1, label: 'Peças & cores' },
-  { n: 2, label: 'Acessórios & insumos' },
-  { n: 3, label: 'Revisar & confirmar' },
-] as const
-
-function StepTabs({ step, onChange }: { step: number; onChange: (n: 1 | 2 | 3) => void }) {
-  return (
-    <div className="flex gap-1 border-b border-slate-200 dark:border-slate-800">
-      {STEPS.map((s) => (
-        <button
-          key={s.n}
-          type="button"
-          onClick={() => onChange(s.n)}
-          className={`flex items-center gap-2 border-b-2 px-1 pb-2 pt-1 text-sm font-medium transition-colors ${
-            step === s.n
-              ? 'border-violet-600 text-slate-900 dark:border-violet-500 dark:text-slate-100'
-              : 'border-transparent text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'
-          } ${s.n > 1 ? 'ml-4' : ''}`}
-        >
-          <span
-            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
-              step === s.n
-                ? 'bg-violet-600 text-white dark:bg-violet-500 dark:text-slate-950'
-                : step > s.n
-                  ? 'bg-emerald-500 text-white'
-                  : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
-            }`}
-          >
-            {s.n}
-          </span>
-          {s.label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
 // Card de UMA peça/componente/acessório-com-cor: nome + qtd/unidade + o
 // seletor de cor (com estoque) juntos no mesmo lugar. Bug "montei o
 // produto errado": antes a tabela de "Peça/Qtd/Produzido/Disponível" e o
@@ -140,6 +103,7 @@ export function ConfirmAssemblyForm({
   allAccessories,
   allSupplies,
   presetColorChoices,
+  desiredQuantity,
 }: {
   productId: string
   isComposite: boolean
@@ -154,9 +118,11 @@ export function ConfirmAssemblyForm({
   // como valor INICIAL de colorChoices -- o usuário continua livre pra
   // trocar depois, igual qualquer outra pré-seleção.
   presetColorChoices?: Record<string, string> | null
+  // Quantidade que o pedido ainda precisa (?qty=): a quantidade inicial é o
+  // menor entre ela e o que dá pra montar.
+  desiredQuantity?: number | null
 }) {
   const router = useRouter()
-  const [step, setStep] = useState<1 | 2 | 3>(1)
   // Melhoria "aviso de sucesso": fechar a modal direto (fix anterior) tirava
   // a tela debaixo do usuário rápido demais pra notar que a montagem
   // realmente aconteceu -- mostra "Montagem confirmada!" por um instante
@@ -218,17 +184,48 @@ export function ConfirmAssemblyForm({
     return s.maxUnits <= 0
   }), [selectables, colorChoices])
 
-  const [quantity, setQuantity] = useState(String(effectiveMax))
+  const initialQuantity = (max: number) => String(desiredQuantity && desiredQuantity > 0 ? Math.min(desiredQuantity, max) : max)
+  const [quantity, setQuantity] = useState(initialQuantity(effectiveMax))
 
   // Melhoria "Montagem" §7: quantidade sempre parte pré-preenchida do
   // máximo permitido -- reajusta automaticamente quando o teto muda (o
   // campo continua livremente editável depois disso).
   useEffect(() => {
-    setQuantity(String(effectiveMax))
+    setQuantity(initialQuantity(effectiveMax))
     // eslint-disable-next-line react-hooks/exhaustive-deps -- só quando o teto muda, não a cada keystroke do próprio campo
   }, [effectiveMax])
 
   const quantityNum = parseInt(quantity, 10) || 0
+
+  // Ficha ao vivo: quantas unidades cada peça/componente cobre COM A COR
+  // ESCOLHIDA; a(s) que limita(m) o total fica(m) destacada(s).
+  const coverage = selectables.map((item) => {
+    const chosen = item.colorOptions?.find((o) => o.key === colorChoices[item.key]) ?? null
+    const covers = item.colorOptions && item.colorOptions.length > 0
+      ? (chosen && item.quantityPerUnit > 0 ? Math.floor(chosen.available / item.quantityPerUnit) : 0)
+      : item.maxUnits
+    return { item, chosen, covers }
+  })
+  const wantedUnits = Math.max(quantityNum, 1)
+  const missingForWanted = coverage.filter((c) => c.covers < wantedUnits).map((c) => ({ name: c.item.name, units: wantedUnits - c.covers }))
+
+  // Acessório/insumo faltando NÃO impede montar -- só avisa o quanto falta.
+  const stockWarnings: string[] = []
+  for (const r of accessoryRows) {
+    const option = accessoryById.get(r.id)
+    const need = (parseFloat(r.quantityPerUnit) || 0) * quantityNum
+    if (option && need > option.available) stockWarnings.push(`${optionLabel(option)}: faltam ${+(need - option.available).toFixed(2)}`)
+  }
+  for (const s of accessoryColorSelectables) {
+    const option = accessoryById.get(colorChoices[s.key])
+    const need = s.quantityPerUnit * quantityNum
+    if (option && need > option.available) stockWarnings.push(`${optionLabel(option)}: faltam ${+(need - option.available).toFixed(2)}`)
+  }
+  for (const r of supplyRows) {
+    const option = supplyById.get(r.id)
+    const need = (parseFloat(r.quantityPerUnit) || 0) * quantityNum
+    if (option && need > option.available) stockWarnings.push(`${optionLabel(option)}: faltam ${+(need - option.available).toFixed(2)}`)
+  }
 
   async function action(formData: FormData) {
     if (colorSelectables.some((s) => !colorChoices[s.key])) {
@@ -284,214 +281,166 @@ export function ConfirmAssemblyForm({
   }
 
   return (
-    <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+    <form action={action} className="flex flex-col gap-4 lg:flex-row lg:items-start">
+      <input type="hidden" name="productId" value={productId} />
       <div className="min-w-0 flex-1 space-y-4">
-        <StepTabs step={step} onChange={setStep} />
+        <p className="rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-800 dark:bg-violet-500/10 dark:text-violet-200">
+          {presetColorChoices
+            ? <><b>Preenchido a partir do pedido.</b> Tudo aqui é sugestão e pode ser mudado.</>
+            : <><b>Preenchido com as combinações de maior estoque.</b> Tudo aqui é sugestão e pode ser mudado.</>}
+        </p>
 
-        {step === 1 && (
-          <div className="space-y-4">
-            <div className="tk-panel p-4">
-              <h2 className="mb-1 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">
-                {isComposite ? 'Peças impressas' : 'Impressão'}
-              </h2>
-              <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">Cada card já mostra a peça e a cor/estoque juntos.</p>
-              <div className="space-y-2">
-                {partItems.map((item) => (
-                  <ComboCard
-                    key={item.key}
-                    item={item}
-                    value={colorChoices[item.key] ?? ''}
-                    onChange={(key) => setColorChoices((prev) => ({ ...prev, [item.key]: key }))}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {componentItems.length > 0 && (
-              <div className="tk-panel p-4">
-                <h2 className="mb-1 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Componentes</h2>
-                <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">Cores sem estoque aparecem apagadas e não podem ser selecionadas.</p>
-                <div className="space-y-2">
-                  {componentItems.map((item) => (
-                    <ComboCard
-                      key={item.key}
-                      item={item}
-                      value={colorChoices[item.key] ?? ''}
-                      onChange={(key) => setColorChoices((prev) => ({ ...prev, [item.key]: key }))}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {accessoryColorSelectables.length > 0 && (
-              <div className="tk-panel p-4">
-                <h2 className="mb-1 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Acessórios (cor variável)</h2>
-                <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">Falta desse acessório não impede montar, mas escolha a cor certa mesmo assim.</p>
-                <div className="space-y-2">
-                  {accessoryColorSelectables.map((item) => (
-                    <ComboCard
-                      key={item.key}
-                      item={item}
-                      value={colorChoices[item.key] ?? ''}
-                      onChange={(key) => setColorChoices((prev) => ({ ...prev, [item.key]: key }))}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="flex justify-end">
-              <button type="button" onClick={() => setStep(2)} className="tk-btn-primary">Continuar</button>
-            </div>
+        <div className="tk-panel p-4">
+          <h2 className="mb-1 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">
+            {isComposite ? 'Peças impressas' : 'Impressão'}
+          </h2>
+          <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">Cada peça mostra as combinações de cor e quanto tem de cada uma. Combinação sem estoque pode ser escolhida, mas não monta.</p>
+          <div className="space-y-2">
+            {partItems.map((item) => (
+              <ComboCard
+                key={item.key}
+                item={item}
+                value={colorChoices[item.key] ?? ''}
+                onChange={(key) => setColorChoices((prev) => ({ ...prev, [item.key]: key }))}
+              />
+            ))}
           </div>
-        )}
+        </div>
 
-        {step === 2 && (
-          <div className="space-y-4">
-            <ComponentCategoryCard label="Acessórios" rows={accessoryRows} onChange={setAccessoryRows} options={allAccessories} />
-            <ComponentCategoryCard label="Insumos" rows={supplyRows} onChange={setSupplyRows} options={allSupplies} />
-            <div className="flex justify-between">
-              <button type="button" onClick={() => setStep(1)} className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 hover:underline dark:text-slate-400">Voltar</button>
-              <button type="button" onClick={() => setStep(3)} className="tk-btn-primary">Continuar</button>
-            </div>
-          </div>
-        )}
-
-        {step === 3 && (
-          <div className="space-y-4">
-            <div className="tk-panel p-4">
-              <h2 className="mb-1 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Confira antes de montar</h2>
-              <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">Essa é a combinação exata que vai ser produzida.</p>
-              <div className="flex flex-wrap gap-2">
-                {colorSelectables.map((item) => {
-                  const chosen = item.colorOptions?.find((o) => o.key === colorChoices[item.key]) ?? null
-                  return (
-                    <span key={item.key} className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 py-1 pl-1.5 pr-3 text-xs dark:border-slate-700 dark:bg-slate-800/60">
-                      {chosen?.colorHex ? (
-                        <span style={{ background: chosen.colorHex }} className="inline-block h-4 w-4 shrink-0 rounded-full border border-slate-300/50 dark:border-slate-600/50" />
-                      ) : (
-                        <span className="inline-block h-4 w-4 shrink-0 rounded-full border border-dashed border-slate-300 dark:border-slate-600" />
-                      )}
-                      <span><span className="font-semibold">{item.name}</span> — {chosen?.label ?? '—'}</span>
-                    </span>
-                  )
-                })}
-              </div>
-            </div>
-
-            {(accessoryRows.some((r) => r.id) || supplyRows.some((r) => r.id)) && (
-              <div className="tk-panel p-4">
-                <h2 className="mb-1 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Acessórios & insumos</h2>
-                <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">Também vão ser descontados do estoque ao confirmar.</p>
-                <div className="flex flex-wrap gap-2">
-                  {accessoryRows.filter((r) => r.id).map((r) => {
-                    const option = accessoryById.get(r.id)
-                    return (
-                      <span key={r.id} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs dark:border-slate-700 dark:bg-slate-800/60">
-                        {option ? optionLabel(option) : '—'} × {r.quantityPerUnit}{option?.unit ? option.unit.toLowerCase() : 'un'}
-                      </span>
-                    )
-                  })}
-                  {supplyRows.filter((r) => r.id).map((r) => {
-                    const option = supplyById.get(r.id)
-                    return (
-                      <span key={r.id} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs dark:border-slate-700 dark:bg-slate-800/60">
-                        {option ? optionLabel(option) : '—'} × {r.quantityPerUnit}{option?.unit ? option.unit.toLowerCase() : 'un'}
-                      </span>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-
-            <form action={action} className="tk-panel grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
-              <input type="hidden" name="productId" value={productId} />
-              <label className="text-sm">
-                Quantidade a montar
-                <input
-                  name="quantity"
-                  type="number"
-                  step="1"
-                  min="1"
-                  max={effectiveMax}
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
-                  className="tk-input-full"
-                  required
-                  disabled={effectiveMax <= 0}
+        {componentItems.length > 0 && (
+          <div className="tk-panel p-4">
+            <h2 className="mb-1 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Componentes</h2>
+            <div className="space-y-2">
+              {componentItems.map((item) => (
+                <ComboCard
+                  key={item.key}
+                  item={item}
+                  value={colorChoices[item.key] ?? ''}
+                  onChange={(key) => setColorChoices((prev) => ({ ...prev, [item.key]: key }))}
                 />
-              </label>
-              <label className="text-sm">
-                Observações (opcional)
-                <input name="notes" className="tk-input-full" />
-              </label>
-              <div className="col-span-full flex items-center justify-between">
-                <button type="button" onClick={() => setStep(2)} className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 hover:underline dark:text-slate-400">Voltar</button>
-                <SubmitButton pendingLabel="Montando…" disabled={effectiveMax <= 0 || quantityNum < 1 || quantityNum > effectiveMax}>
-                  Confirmar montagem
-                </SubmitButton>
-              </div>
-            </form>
+              ))}
+            </div>
           </div>
         )}
+
+        {accessoryColorSelectables.length > 0 && (
+          <div className="tk-panel p-4">
+            <h2 className="mb-1 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Acessórios (cor variável)</h2>
+            <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">Falta de acessório não impede montar, mas escolha a cor certa mesmo assim.</p>
+            <div className="space-y-2">
+              {accessoryColorSelectables.map((item) => (
+                <ComboCard
+                  key={item.key}
+                  item={item}
+                  value={colorChoices[item.key] ?? ''}
+                  onChange={(key) => setColorChoices((prev) => ({ ...prev, [item.key]: key }))}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        <ComponentCategoryCard label="Acessórios" rows={accessoryRows} onChange={setAccessoryRows} options={allAccessories} />
+        <ComponentCategoryCard label="Insumos" rows={supplyRows} onChange={setSupplyRows} options={allSupplies} />
+
+        {/* Rodapé fixo na rolagem da modal: quantidade (já selecionada, Enter
+            confirma), observações e as duas saídas. */}
+        <div className="tk-panel sticky bottom-0 z-10 grid grid-cols-2 items-end gap-3 p-4 shadow-lg md:grid-cols-[8rem_1fr_auto]">
+          <label className="text-sm">
+            Quantidade a montar
+            <input
+              name="quantity"
+              type="number"
+              step="1"
+              min={1}
+              max={Math.max(effectiveMax, 1)}
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              onFocus={(e) => e.target.select()}
+              autoFocus
+              className="tk-input-full"
+              required
+              disabled={effectiveMax <= 0}
+            />
+            <span className="mt-0.5 block text-xs text-slate-400 dark:text-slate-500">máx. {effectiveMax}</span>
+          </label>
+          <label className="col-span-2 text-sm md:col-span-1">
+            Observações (opcional)
+            <input name="notes" className="tk-input-full" />
+          </label>
+          <div className="col-span-2 flex flex-wrap items-center justify-end gap-2 md:col-span-1">
+            {missingForWanted.length > 0 && (
+              <Link href="/production" className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+                → Ir para Produção
+              </Link>
+            )}
+            <SubmitButton pendingLabel="Montando…" disabled={effectiveMax <= 0 || quantityNum < 1 || quantityNum > effectiveMax}>
+              Confirmar montagem
+            </SubmitButton>
+          </div>
+        </div>
       </div>
 
-      {/* Ficha de montagem: sempre visível, atualiza a cada escolha de cor
-          -- fica sticky dentro do próprio scroll da modal (AssemblyDetailModal),
-          não da janela. Bug "montei o produto errado": antes o aviso de
-          estoque insuficiente vinha de status.parts (a foto de quando a
-          modal abriu), não da cor que a pessoa realmente escolheu -- esta
-          ficha só existe pra nunca mais divergir do que está selecionado. */}
+      {/* Ficha de montagem: sempre visível, atualiza a cada escolha. */}
       <aside className="w-full shrink-0 lg:sticky lg:top-0 lg:w-72">
         <div className="tk-panel p-4">
           <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Ficha de montagem</h2>
-          <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">Atualiza a cada escolha de cor</p>
+          <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">Atualiza a cada mudança</p>
 
           <div className={`mb-3 rounded-lg border p-3 ${effectiveMax > 0 ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/50 dark:bg-emerald-500/10' : 'border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-500/10'}`}>
-            <p className={`font-display text-2xl font-bold tabular-nums ${effectiveMax > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{effectiveMax}</p>
+            <p className={`font-display text-3xl font-bold tabular-nums ${effectiveMax > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{effectiveMax}</p>
             <p className="text-xs text-slate-500 dark:text-slate-400">unidade{effectiveMax === 1 ? '' : 's'} possíve{effectiveMax === 1 ? 'l' : 'is'} com a combinação atual</p>
           </div>
 
-          <div className="space-y-1.5">
-            {[...selectables, ...accessoryColorSelectables].map((item) => {
-              const chosen = item.colorOptions?.find((o) => o.key === colorChoices[item.key]) ?? null
-              const bad = item.colorOptions ? (!chosen || chosen.available <= 0) : item.maxUnits <= 0
+          <div className="space-y-2">
+            {coverage.map(({ item, chosen, covers }) => {
+              const limits = covers === effectiveMax && coverage.length > 1
               return (
                 <div key={item.key} className="flex items-start gap-2 text-xs">
                   {chosen?.colorHex ? (
-                    <span style={{ background: chosen.colorHex }} className="mt-0.5 inline-block h-3.5 w-3.5 shrink-0 rounded-md border border-slate-300/50 dark:border-slate-600/50" />
+                    <span style={{ background: chosen.colorHex }} className="mt-0.5 inline-block h-3.5 w-3.5 shrink-0 rounded-full border border-slate-300/50 dark:border-slate-600/50" />
                   ) : (
-                    <span className="mt-0.5 inline-block h-3.5 w-3.5 shrink-0 rounded-md border border-dashed border-slate-300 dark:border-slate-600" />
+                    <span className="mt-0.5 inline-block h-3.5 w-3.5 shrink-0 rounded-full border border-dashed border-slate-300 dark:border-slate-600" />
                   )}
-                  <span className="shrink-0 text-slate-500 dark:text-slate-400">{item.name}</span>
-                  {/* Bug "nome sem quebra de linha": combo de peça multi-filamento
-                      (ex. "MULTIFILA PRETO + MASTERPRINT BRANCO") é bem mais
-                      longo que uma cor só -- `shrink-0
-                      truncate` antes travava esse valor no tamanho do próprio
-                      conteúdo (shrink-0 nunca deixa truncate ativar de verdade),
-                      empurrando a ficha inteira pra fora e criando barra de
-                      rolagem horizontal na modal. `min-w-0 flex-1` deixa
-                      encolher, `break-words` quebra em vez de estourar. */}
-                  <span className={`min-w-0 flex-1 break-words text-right font-medium ${bad ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-300'}`}>
-                    {chosen?.label ?? (item.colorOptions ? '—' : 'ok')}
+                  <span className="min-w-0 flex-1">
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{item.name}</span>
+                    <span className="block break-words text-slate-500 dark:text-slate-400">{chosen?.label ?? (item.colorOptions ? 'sem combinação' : '')}</span>
                   </span>
+                  <span className={`shrink-0 text-right ${covers <= 0 ? 'font-semibold text-red-600 dark:text-red-400' : 'text-slate-600 dark:text-slate-300'}`}>
+                    {chosen ? `${chosen.available} disp.` : ''}
+                    <span className="block">cobre {covers} un.{limits && <b className="ml-1 text-amber-600 dark:text-amber-400">limita</b>}</span>
+                  </span>
+                </div>
+              )
+            })}
+            {accessoryColorSelectables.map((item) => {
+              const chosen = item.colorOptions?.find((o) => o.key === colorChoices[item.key]) ?? null
+              return (
+                <div key={item.key} className="flex items-start gap-2 text-xs text-slate-500 dark:text-slate-400">
+                  <span style={chosen?.colorHex ? { background: chosen.colorHex } : undefined} className="mt-0.5 inline-block h-3.5 w-3.5 shrink-0 rounded-full border border-slate-300/50 dark:border-slate-600/50" />
+                  <span className="min-w-0 flex-1"><span className="font-semibold text-slate-800 dark:text-slate-200">{item.name}</span> · {chosen?.label ?? '—'}</span>
                 </div>
               )
             })}
           </div>
 
-          {blockingItems.length > 0 ? (
-            <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-400">
-              ⚠ {blockingItems.map((i) => i.name).join(', ')} sem estoque na cor escolhida — essa combinação não pode ser montada.
+          {stockWarnings.length > 0 && (
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+              ⚠ {stockWarnings.join(' · ')} <span className="opacity-80">(não impede montar)</span>
             </p>
-          ) : effectiveMax > 0 && quantityNum > effectiveMax ? (
+          )}
+
+          {quantityNum > effectiveMax && missingForWanted.length > 0 ? (
             <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-400">
-              ⚠ Estoque só cobre {effectiveMax} unidade(s), menos que a quantidade pedida ({quantityNum}).
+              Só dá para montar {effectiveMax} agora. Faltam: {missingForWanted.map((m) => `${m.name} (${m.units})`).join(', ')}.
+            </p>
+          ) : blockingItems.length > 0 ? (
+            <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-400">
+              ⚠ {blockingItems.map((i) => i.name).join(', ')} sem estoque na combinação escolhida.
             </p>
           ) : null}
         </div>
       </aside>
-    </div>
+    </form>
   )
 }

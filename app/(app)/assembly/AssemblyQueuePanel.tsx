@@ -95,6 +95,7 @@ export function AssemblyQueuePanel({ items }: { items: AssemblyQueueItem[] }) {
           const missing = item.missingParts.map((m) => `${m.name} (${m.units})`).join(', ')
           const adjustHref = `/assembly?${new URLSearchParams({
             productId: item.productId,
+            qty: String(item.shortfall),
             ...(item.colorComboKey ? { presetColorComboKey: item.colorComboKey } : {}),
           }).toString()}`
           return (

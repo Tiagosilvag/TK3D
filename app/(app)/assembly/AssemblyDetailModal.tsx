@@ -20,6 +20,7 @@ export function AssemblyDetailModal({
   presetColorChoices,
   allAccessories,
   allSupplies,
+  desiredQuantity,
 }: {
   status: AssemblyStatus | null
   // Encomenda com variação personalizada: vem de ?presetColorComboKey=
@@ -29,6 +30,7 @@ export function AssemblyDetailModal({
   presetColorChoices: Record<string, string> | null
   allAccessories: ComponentOption[]
   allSupplies: ComponentOption[]
+  desiredQuantity: number | null
 }) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -52,7 +54,7 @@ export function AssemblyDetailModal({
       ref={dialogRef}
       onClose={close}
       onClick={(e) => { if (isOutsideDialogClick(e)) close() }}
-      className="w-full [--tk-dialog-cap:56rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/60 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
+      className="w-full [--tk-dialog-cap:64rem] rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/60 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
     >
       {status && (
         <div className="flex max-h-[85vh] flex-col">
@@ -84,6 +86,7 @@ export function AssemblyDetailModal({
               allAccessories={allAccessories}
               allSupplies={allSupplies}
               presetColorChoices={presetColorChoices}
+              desiredQuantity={desiredQuantity}
             />
 
             <Link href="/stock" className="inline-block text-sm text-violet-600 hover:underline dark:text-violet-400">
