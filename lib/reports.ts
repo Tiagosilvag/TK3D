@@ -70,8 +70,20 @@ export async function getFilamentConsumptionHistory(filamentId: string): Promise
 // 3.6 estendeu SaleChannel com SHOPEE/MERCADO_LIVRE (além do MARKETPLACE
 // legado) -- pro Dashboard, que só distingue Direta vs Marketplace no
 // gráfico de participação, os três contam pro mesmo balde "MARKETPLACE".
-export async function getRevenueByChannel(): Promise<Record<'DIRETA' | 'MARKETPLACE', number>> {
-  const sales = await prisma.sale.findMany()
+// Período global do Dashboard: `range` opcional (from/to inclusivos, mesma
+// convenção de ProductionReportFilters) -- sem ele, histórico inteiro.
+export interface DateRange {
+  from?: Date
+  to?: Date
+}
+
+function dateWhere(range?: DateRange): { gte?: Date; lte?: Date } | undefined {
+  if (!range?.from && !range?.to) return undefined
+  return { ...(range.from ? { gte: range.from } : {}), ...(range.to ? { lte: range.to } : {}) }
+}
+
+export async function getRevenueByChannel(range?: DateRange): Promise<Record<'DIRETA' | 'MARKETPLACE', number>> {
+  const sales = await prisma.sale.findMany({ where: { saleDate: dateWhere(range) } })
   const result = { DIRETA: 0, MARKETPLACE: 0 }
   for (const s of sales) {
     const bucket = s.channel === 'DIRETA' ? 'DIRETA' : 'MARKETPLACE'
@@ -80,8 +92,8 @@ export async function getRevenueByChannel(): Promise<Record<'DIRETA' | 'MARKETPL
   return result
 }
 
-export async function getConsignmentRevenue(): Promise<number> {
-  const reports = await prisma.consignmentSaleReport.findMany({ include: { delivery: true } })
+export async function getConsignmentRevenue(range?: DateRange): Promise<number> {
+  const reports = await prisma.consignmentSaleReport.findMany({ where: { reportDate: dateWhere(range) }, include: { delivery: true } })
   return reports.reduce((sum, r) => {
     const unitPrice = r.unitPrice?.toNumber() ?? r.delivery.unitPrice.toNumber()
     const commission = r.commissionPercent.toNumber()
@@ -89,9 +101,10 @@ export async function getConsignmentRevenue(): Promise<number> {
   }, 0)
 }
 
-export async function getTopProducts(limit = 5) {
+export async function getTopProducts(limit = 5, range?: DateRange) {
   const grouped = await prisma.sale.groupBy({
     by: ['productId'],
+    where: { saleDate: dateWhere(range) },
     _sum: { quantity: true },
     orderBy: { _sum: { quantity: 'desc' } },
     take: limit,
@@ -179,7 +192,10 @@ function shouldCountCost(run: { status: ProductionStatus }, filters: ProductionR
 export interface ProductionSummary {
   totalRuns: number
   totalUnitsProduced: number
-  successRate: number // 0-100, sum(quantitySuccess) / sum(quantityPlanned)
+  totalUnitsFailed: number
+  // 0-100: unidades boas ÷ unidades planejadas (Σ quantitySuccess ÷
+  // Σ quantityPlanned) -- por UNIDADE, nunca por número de produções.
+  successRate: number
   totalTimeHours: number
   totalCost: number
   totalWasteCost: number
@@ -189,6 +205,7 @@ export async function getProductionSummary(filters: ProductionReportFilters = {}
   const runs = await getFilteredProductionRuns(filters)
 
   let totalUnitsProduced = 0
+  let totalUnitsFailed = 0
   let totalPlanned = 0
   let totalTimeHours = 0
   let totalCost = 0
@@ -196,6 +213,7 @@ export async function getProductionSummary(filters: ProductionReportFilters = {}
 
   for (const run of runs) {
     totalUnitsProduced += run.quantitySuccess
+    totalUnitsFailed += run.quantityFailed
     totalPlanned += run.quantityPlanned
     totalTimeHours += run.product.printTimeHours.toNumber() * run.quantitySuccess + run.timeWastedHours.toNumber()
     const snapshot = readSnapshot(run)
@@ -208,6 +226,7 @@ export async function getProductionSummary(filters: ProductionReportFilters = {}
   return {
     totalRuns: runs.length,
     totalUnitsProduced,
+    totalUnitsFailed,
     successRate: totalPlanned > 0 ? (totalUnitsProduced / totalPlanned) * 100 : 0,
     totalTimeHours,
     totalCost,
@@ -1596,14 +1615,19 @@ export async function getConsignmentStockSummary() {
 // mesma base (preço cheio), diferente do "Consignação" da Receita total
 // (que é líquido, depois de descontar comissão -- o que a loja de fato
 // embolsa).
-export async function getConsignmentSoldSummary(): Promise<{ totalUnitsSold: number; totalGrossValue: number }> {
-  const reports = await prisma.consignmentSaleReport.findMany({ include: { delivery: true } })
+export async function getConsignmentSoldSummary(range?: DateRange): Promise<{ totalUnitsSold: number; totalGrossValue: number; totalCommission: number }> {
+  const reports = await prisma.consignmentSaleReport.findMany({ where: { reportDate: dateWhere(range) }, include: { delivery: true } })
   let totalUnitsSold = 0
   let totalGrossValue = 0
+  // Comissão REAL de cada venda (commissionPercent gravado no próprio
+  // relatório) -- nunca a diferença entre dois totais.
+  let totalCommission = 0
   for (const r of reports) {
     const unitPrice = r.unitPrice?.toNumber() ?? r.delivery.unitPrice.toNumber()
+    const gross = r.quantitySold * unitPrice
     totalUnitsSold += r.quantitySold
-    totalGrossValue += r.quantitySold * unitPrice
+    totalGrossValue += gross
+    totalCommission += gross * r.commissionPercent.toNumber()
   }
-  return { totalUnitsSold, totalGrossValue }
+  return { totalUnitsSold, totalGrossValue, totalCommission }
 }

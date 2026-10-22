@@ -1,4 +1,3 @@
-import { Fragment } from 'react'
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import {
@@ -13,26 +12,55 @@ import {
   getPrinterUsage,
   type ProductionReportFilters,
 } from '@/lib/reports'
-// Melhoria "Produção" (reformulação Plate) §6: "Plates realizadas" e
-// "produtos completos vs. parciais" -- reaproveita getProductionByProduct
-// de actions/productionRuns.ts (que já traz completeSets via
-// getAssemblyStatus) em vez de reimplementar "conjuntos completos" aqui;
+// "Produtos completos / parciais" reaproveita getProductionByProduct de
+// actions/productionRuns.ts (traz completeSets via getAssemblyStatus);
 // aliado pra não colidir com o getProductionByProduct de lib/reports acima
 // (função diferente, shape diferente, mesmo nome por coincidência).
 import { getProductionByProduct as getPlateProductionByProduct } from '@/actions/productionRuns'
-import { calculateStockReferenceQuantity, calculateStockPercentRemaining, getStockStatusWithThresholds } from '@/lib/costing'
 import { formatCurrency, getProductionStatusBadge, WASTE_REASON_LABELS } from '@/lib/format'
-import { ProductSelect } from '@/components/ProductSelect'
+import { getAttentionAlerts, getConsignmentStockByPartner, getProfitSummary, resolvePeriod, PERIOD_LABELS, type AttentionAlert } from '@/lib/dashboard'
 import type { ProductionStatus, WasteReason } from '@prisma/client'
+import { UrlSelect } from './UrlSelect'
+import { ConsignmentStockList } from './ConsignmentStockList'
+import { ProductionByProductTable } from './ProductionByProductTable'
 
-// This page aggregates data mutated by actions on several other routes
-// (production runs, consignment deliveries/sale reports, and direct sales)
-// that only revalidate their own paths, not /dashboard. Force dynamic
-// rendering so it always reflects the latest data instead of a stale
-// build-time snapshot.
+// Agrega dados mutados por actions de várias outras rotas (produção,
+// consignação, vendas) que só revalidam o próprio path -- sempre dinâmico.
 export const dynamic = 'force-dynamic'
 
 const integer = new Intl.NumberFormat('pt-BR')
+const percent = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+
+const STATUS_VALUES: ProductionStatus[] = ['CONCLUIDA', 'PARCIAL', 'COM_FALHAS', 'CANCELADA']
+const WASTE_REASON_VALUES = Object.keys(WASTE_REASON_LABELS) as WasteReason[]
+const TABS = [
+  { key: 'geral', label: 'Visão geral' },
+  { key: 'consignacao', label: 'Consignação' },
+  { key: 'producao', label: 'Produção' },
+] as const
+type TabKey = (typeof TABS)[number]['key']
+
+interface DashboardParams {
+  aba?: string
+  periodo?: string
+  from?: string
+  to?: string
+  productId?: string
+  printerId?: string
+  status?: string
+  wasteReason?: string
+  parceiro?: string
+}
+
+function buildHref(sp: DashboardParams, overrides: Partial<Record<keyof DashboardParams, string | null>>): string {
+  const merged: Record<string, string | null | undefined> = { ...sp, ...overrides }
+  const qs = new URLSearchParams()
+  for (const [k, v] of Object.entries(merged)) if (v) qs.set(k, v)
+  const s = qs.toString()
+  return s ? `/dashboard?${s}` : '/dashboard'
+}
+
+const card = 'rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900'
 
 function EmptyState({ children }: { children: React.ReactNode }) {
   return (
@@ -42,533 +70,428 @@ function EmptyState({ children }: { children: React.ReactNode }) {
   )
 }
 
-// --- Filtros de produção (spec §6, task-9 brief) ---------------------------
-// Same Link/tabs + querystring-preserving `buildHref` convention already used
-// by app/(app)/filaments/page.tsx (material/stock/color tabs) and
-// app/(app)/accessories/page.tsx (type/stock tabs) — status and wasteReason
-// are small bounded enums so they become tabs; período (from/to, free dates)
-// and produto/impressora (open-ended lists) go through a plain GET <form>
-// instead, since a Link tab per date or per product doesn't scale the way it
-// does for a 4- or 8-value enum.
-
-const STATUS_VALUES: ProductionStatus[] = ['CONCLUIDA', 'PARCIAL', 'COM_FALHAS', 'CANCELADA']
-const WASTE_REASON_VALUES = Object.keys(WASTE_REASON_LABELS) as WasteReason[]
-
-interface DashboardFilterParams {
-  from?: string
-  to?: string
-  productId?: string
-  printerId?: string
-  status?: string
-  wasteReason?: string
-}
-
-function buildHref(params: DashboardFilterParams): string {
-  const qs = new URLSearchParams()
-  if (params.from) qs.set('from', params.from)
-  if (params.to) qs.set('to', params.to)
-  if (params.productId) qs.set('productId', params.productId)
-  if (params.printerId) qs.set('printerId', params.printerId)
-  if (params.status) qs.set('status', params.status)
-  if (params.wasteReason) qs.set('wasteReason', params.wasteReason)
-  const s = qs.toString()
-  return s ? `/dashboard?${s}` : '/dashboard'
-}
-
-function tabClass(isActive: boolean): string {
-  return `rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-    isActive
-      ? 'bg-gradient-to-r from-violet-600 to-blue-600 text-white dark:from-violet-500 dark:to-blue-500 dark:text-slate-950'
-      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
+function tabClass(active: boolean): string {
+  return `border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+    active
+      ? 'border-violet-600 text-slate-900 dark:border-violet-400 dark:text-slate-100'
+      : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
   }`
 }
 
-// "to" is a date-only <input>, but ProductionRun.date can carry a time
-// component -- without this, a run recorded later on the selected end day
-// would be excluded by an implicit lte-at-midnight. Bumped to the end of that
-// day so the range is inclusive of the whole day the user picked.
-function parseDate(value: string | undefined, endOfDay: boolean): Date | undefined {
-  if (!value) return undefined
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return undefined
-  if (endOfDay) d.setHours(23, 59, 59, 999)
-  return d
+function pillClass(active: boolean): string {
+  return `rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+    active
+      ? 'bg-violet-600 text-white dark:bg-violet-500 dark:text-slate-950'
+      : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
+  }`
 }
 
-export default async function DashboardPage({
-  searchParams,
-}: {
-  searchParams: Promise<DashboardFilterParams>
-}) {
+const ALERT_TONE: Record<AttentionAlert['tone'], string> = {
+  red: 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300',
+  amber: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300',
+  blue: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300',
+  green: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+}
+
+function Bar({ value, max, className }: { value: number; max: number; className: string }) {
+  return (
+    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+      <div className={`h-full rounded-full ${className}`} style={{ width: `${max > 0 ? Math.max(2, (value / max) * 100) : 0}%` }} />
+    </div>
+  )
+}
+
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<DashboardParams> }) {
   const sp = await searchParams
+  const tab: TabKey = TABS.some((t) => t.key === sp.aba) ? (sp.aba as TabKey) : 'geral'
+  const period = resolvePeriod(sp)
+  const range = { from: period.from, to: period.to }
+
+  const header = (
+    <header className="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Visão geral</p>
+        <h1 className="mt-1 font-display text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Dashboard</h1>
+      </div>
+      <div className="flex flex-col items-end gap-2">
+        <div className="flex flex-wrap gap-1 rounded-lg border border-slate-200 p-1 dark:border-slate-800" role="group" aria-label="Período">
+          {(Object.keys(PERIOD_LABELS) as (keyof typeof PERIOD_LABELS)[]).map((key) => (
+            <Link key={key} href={buildHref(sp, { periodo: key === 'tudo' ? null : key, from: null, to: null })} className={pillClass(period.key === key)}>
+              {PERIOD_LABELS[key]}
+            </Link>
+          ))}
+        </div>
+        <form method="get" className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+          {Object.entries({ aba: sp.aba, productId: sp.productId, printerId: sp.printerId, status: sp.status, wasteReason: sp.wasteReason, parceiro: sp.parceiro }).map(([k, v]) =>
+            v ? <input key={k} type="hidden" name={k} value={v} /> : null,
+          )}
+          <span className={period.key === 'custom' ? 'font-medium text-violet-600 dark:text-violet-400' : ''}>Personalizado:</span>
+          <input type="date" name="from" defaultValue={sp.from ?? ''} aria-label="De" className="tk-input-full" />
+          <span>até</span>
+          <input type="date" name="to" defaultValue={sp.to ?? ''} aria-label="Até" className="tk-input-full" />
+          <button type="submit" className="rounded-md border border-slate-200 px-2.5 py-1.5 font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+            Aplicar
+          </button>
+        </form>
+      </div>
+    </header>
+  )
+
+  const tabs = (
+    <nav className="flex gap-1 border-b border-slate-200 dark:border-slate-800" aria-label="Seções do dashboard">
+      {TABS.map((t) => (
+        <Link key={t.key} href={buildHref(sp, { aba: t.key === 'geral' ? null : t.key })} className={tabClass(tab === t.key)}>
+          {t.label}
+        </Link>
+      ))}
+    </nav>
+  )
+
+  // ------------------------------------------------------------------ Visão geral
+  if (tab === 'geral') {
+    const [revenue, consignmentRevenue, topProducts, consignmentStock, consignmentSold, productionSummary, profit, alerts] = await Promise.all([
+      getRevenueByChannel(range),
+      getConsignmentRevenue(range),
+      getTopProducts(5, range),
+      getConsignmentStockSummary(),
+      getConsignmentSoldSummary(range),
+      getProductionSummary(range),
+      getProfitSummary(range),
+      getAttentionAlerts(),
+    ])
+    const totalRevenue = revenue.DIRETA + revenue.MARKETPLACE + consignmentRevenue
+    const share = (v: number) => (totalRevenue > 0 ? (v / totalRevenue) * 100 : 0)
+    const consignmentUnits = consignmentStock.reduce((s, r) => s + r.remaining, 0)
+    const consignmentValue = consignmentStock.reduce((s, r) => s + r.remainingValue, 0)
+    const topMax = topProducts[0]?.quantitySold ?? 0
+
+    const channels = [
+      { label: 'Direta', value: revenue.DIRETA, dot: 'bg-emerald-500' },
+      { label: 'Marketplace', value: revenue.MARKETPLACE, dot: 'bg-slate-400 dark:bg-slate-500' },
+      { label: 'Consignação', value: consignmentRevenue, dot: 'bg-amber-500' },
+    ]
+
+    const kpis = [
+      { label: 'Peças com parceiros', value: integer.format(consignmentUnits), sub: `${formatCurrency(consignmentValue)} · ainda não vendidas`, href: buildHref(sp, { aba: 'consignacao' }) },
+      { label: 'Vendido em consignação', value: integer.format(consignmentSold.totalUnitsSold), sub: `${formatCurrency(consignmentSold.totalGrossValue)} bruto`, href: buildHref(sp, { aba: 'consignacao' }) },
+      { label: 'Unidades produzidas', value: integer.format(productionSummary.totalUnitsProduced), sub: `${integer.format(productionSummary.totalRuns)} produções`, href: buildHref(sp, { aba: 'producao' }) },
+      { label: 'Taxa de sucesso', value: `${percent.format(productionSummary.successRate)}%`, sub: `${integer.format(productionSummary.totalUnitsFailed)} unidades falhadas`, href: buildHref(sp, { aba: 'producao' }) },
+    ]
+
+    return (
+      <div className="mx-auto max-w-5xl space-y-6 p-0 sm:p-6">
+        {header}
+        {tabs}
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <section className={`${card} p-5 sm:p-6 lg:col-span-2`}>
+            <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Receita total</p>
+            <p className="mt-1 font-display text-4xl font-semibold tabular-nums tracking-tight text-slate-900 dark:text-slate-100">{formatCurrency(totalRevenue)}</p>
+            <div className="mt-5 flex h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+              {totalRevenue > 0 && (
+                <>
+                  <div className="h-full bg-emerald-500" style={{ width: `${share(revenue.DIRETA)}%` }} />
+                  <div className="h-full bg-slate-400 dark:bg-slate-500" style={{ width: `${share(revenue.MARKETPLACE)}%` }} />
+                  <div className="h-full bg-amber-500" style={{ width: `${share(consignmentRevenue)}%` }} />
+                </>
+              )}
+            </div>
+            <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {channels.map((c) => (
+                <div key={c.label}>
+                  <dt className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
+                    <span className={`h-2 w-2 rounded-full ${c.dot}`} /> {c.label}
+                  </dt>
+                  <dd className="mt-0.5 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(c.value)}</dd>
+                  <dd className="text-xs text-slate-400 dark:text-slate-500">{percent.format(share(c.value))}% da receita</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          <section className={`${card} p-5 sm:p-6`}>
+            <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Lucro estimado</p>
+            {profit.profit === null ? (
+              <>
+                <p className="mt-1 font-display text-4xl font-semibold tabular-nums text-slate-300 dark:text-slate-600">R$ —</p>
+                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+                  Nenhuma venda do período tem custo registrado para calcular o lucro. Aparece assim que houver vendas com custo congelado.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className={`mt-1 font-display text-4xl font-semibold tabular-nums ${profit.profit < 0 ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-slate-100'}`}>
+                  {formatCurrency(profit.profit)}
+                </p>
+                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+                  Preço − custo de produção (com embalagem) − taxa da plataforma − frete − brinde, somado sobre {integer.format(profit.salesCounted)} {profit.salesCounted === 1 ? 'venda' : 'vendas'} diretas e de marketplace.
+                  {profit.salesSkipped > 0 && ` ${integer.format(profit.salesSkipped)} ${profit.salesSkipped === 1 ? 'venda antiga' : 'vendas antigas'} sem custo congelado ficou de fora.`} Não inclui consignação.
+                </p>
+              </>
+            )}
+          </section>
+        </div>
+
+        <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {kpis.map((k) => (
+            <Link key={k.label} href={k.href} className={`${card} p-4 transition-colors hover:border-violet-400 dark:hover:border-violet-500`}>
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{k.label}</p>
+              <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">{k.value}</p>
+              <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{k.sub}</p>
+            </Link>
+          ))}
+        </section>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <section className={`${card} p-5`}>
+            <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Precisa de atenção</h2>
+            {alerts.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-400 dark:text-slate-500">Nada pendente agora.</p>
+            ) : (
+              <ul className="mt-3 divide-y divide-slate-100 dark:divide-slate-800">
+                {alerts.map((a) => (
+                  <li key={a.key}>
+                    <Link href={a.href} className="flex items-center justify-between gap-3 py-2.5 text-sm text-slate-700 hover:text-violet-600 dark:text-slate-300 dark:hover:text-violet-400">
+                      <span>{a.label}</span>
+                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold tabular-nums ${ALERT_TONE[a.tone]}`}>
+                        {a.amount !== undefined ? formatCurrency(a.amount) : integer.format(a.count)}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className={`${card} p-5`}>
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Top 5 mais vendidos</h2>
+              <span className="text-xs text-slate-400 dark:text-slate-500">unidades</span>
+            </div>
+            {topProducts.length === 0 ? (
+              <div className="mt-3"><EmptyState>Nenhuma venda no período.</EmptyState></div>
+            ) : (
+              <ol className="mt-3 space-y-3">
+                {topProducts.map((entry, i) => (
+                  <li key={entry.product.id}>
+                    <div className="mb-1 flex items-center justify-between gap-3 text-sm">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${i === 0 ? 'bg-amber-500 text-white dark:text-slate-950' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>{i + 1}</span>
+                        <span className="truncate font-medium text-slate-800 dark:text-slate-200">{entry.product.name}</span>
+                      </span>
+                      <span className="shrink-0 tabular-nums text-slate-600 dark:text-slate-400">{integer.format(entry.quantitySold)}</span>
+                    </div>
+                    <Bar value={entry.quantitySold} max={topMax} className="bg-violet-500 dark:bg-violet-400" />
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        </div>
+      </div>
+    )
+  }
+
+  // ------------------------------------------------------------------ Consignação
+  if (tab === 'consignacao') {
+    const [soldSummary, partnersStock] = await Promise.all([getConsignmentSoldSummary(range), getConsignmentStockByPartner()])
+    const net = soldSummary.totalGrossValue - soldSummary.totalCommission
+    const selectedPartner = partnersStock.some((p) => p.partnerId === sp.parceiro) ? sp.parceiro! : ''
+    const shownPartners = selectedPartner ? partnersStock.filter((p) => p.partnerId === selectedPartner) : partnersStock
+
+    return (
+      <div className="mx-auto max-w-5xl space-y-6 p-0 sm:p-6">
+        {header}
+        {tabs}
+
+        <section className={`${card} p-5 sm:p-6`}>
+          <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Do vendido ao que entra na receita</h2>
+          <dl className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div>
+              <dt className="text-xs font-medium text-slate-500 dark:text-slate-400">Vendido pelos parceiros (bruto)</dt>
+              <dd className="mt-1 font-display text-2xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(soldSummary.totalGrossValue)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-slate-500 dark:text-slate-400">− Comissão dos parceiros</dt>
+              <dd className="mt-1 font-display text-2xl font-semibold tabular-nums text-amber-600 dark:text-amber-400">{formatCurrency(soldSummary.totalCommission)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-medium text-slate-500 dark:text-slate-400">= Entra na receita (líquido)</dt>
+              <dd className="mt-1 font-display text-2xl font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{formatCurrency(net)}</dd>
+            </div>
+          </dl>
+          <p className="mt-3 text-xs text-slate-400 dark:text-slate-500">
+            {integer.format(soldSummary.totalUnitsSold)} peças vendidas no período. A comissão é a soma da comissão registrada em cada venda de cada parceiro.
+          </p>
+        </section>
+
+        {partnersStock.length === 0 ? (
+          <EmptyState>Nenhum estoque em consignação no momento.</EmptyState>
+        ) : (
+          <>
+            {partnersStock.length > 1 && (
+              <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                <span>Parceiro</span>
+                <UrlSelect
+                  name="parceiro"
+                  label="Parceiro"
+                  value={selectedPartner}
+                  allLabel="Todos"
+                  options={partnersStock.map((p) => ({ value: p.partnerId, label: p.partnerName }))}
+                />
+              </div>
+            )}
+            <ConsignmentStockList partners={shownPartners} />
+            <p className="text-xs text-slate-400 dark:text-slate-500">O estoque com parceiros é a posição de agora, não depende do período.</p>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // ------------------------------------------------------------------ Produção
   const activeStatus = STATUS_VALUES.includes(sp.status as ProductionStatus) ? (sp.status as ProductionStatus) : undefined
   const activeWasteReason = WASTE_REASON_VALUES.includes(sp.wasteReason as WasteReason) ? (sp.wasteReason as WasteReason) : undefined
-  const activeProductId = sp.productId || undefined
-  const activePrinterId = sp.printerId || undefined
-  const fromDate = parseDate(sp.from, false)
-  const toDate = parseDate(sp.to, true)
-  const hasProductionFilter = Boolean(activeStatus || activeWasteReason || activeProductId || activePrinterId || sp.from || sp.to)
-
   const productionFilters: ProductionReportFilters = {
-    from: fromDate,
-    to: toDate,
-    productId: activeProductId,
-    printerId: activePrinterId,
+    ...range,
+    productId: sp.productId || undefined,
+    printerId: sp.printerId || undefined,
     status: activeStatus,
     wasteReason: activeWasteReason,
   }
 
-  const [
-    revenue,
-    topProducts,
-    consignmentStock,
-    consignmentSold,
-    consignmentRevenue,
-    productionSummary,
-    productionByProduct,
-    failuresByReason,
-    printerUsage,
-    filterProducts,
-    filterPrinters,
-    supplies,
-    settings,
-    platesInRangeCount,
-    plateProductionByProduct,
-  ] = await Promise.all([
-    getRevenueByChannel(),
-    getTopProducts(5),
-    getConsignmentStockSummary(),
-    getConsignmentSoldSummary(),
-    getConsignmentRevenue(),
+  const [summary, byProduct, failures, printerUsage, filterProducts, filterPrinters, platesCount, completeness] = await Promise.all([
     getProductionSummary(productionFilters),
     getProductionByProduct(productionFilters),
     getFailuresByWasteReason(productionFilters),
     getPrinterUsage(productionFilters),
-    // Brinde nunca tem produção -- excluído do filtro.
-    prisma.product.findMany({ where: { isGift: false }, orderBy: { name: 'asc' }, select: { id: true, name: true, category: true } }),
+    // Brinde nunca tem produção -- fora do filtro.
+    prisma.product.findMany({ where: { isGift: false }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     prisma.printer.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
-    prisma.supply.findMany({ include: { purchases: { orderBy: { purchaseDate: 'desc' } } }, orderBy: { name: 'asc' } }),
-    prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
-    prisma.plate.count({ where: { date: { gte: fromDate, lte: toDate }, ...(activePrinterId ? { printerId: activePrinterId } : {}) } }),
-    // Melhoria "Produção" (reformulação Plate) §6: "produtos completos vs.
-    // parciais" -- sempre sobre TODO o histórico (não aplica os filtros de
-    // período/status/motivo acima), mesmo padrão de getAssemblyOverview em
-    // Meu Estoque (visão agregada, não uma lista filtrada).
+    prisma.plate.count({
+      where: {
+        ...(range.from || range.to ? { date: { ...(range.from ? { gte: range.from } : {}), ...(range.to ? { lte: range.to } : {}) } } : {}),
+        ...(productionFilters.printerId ? { printerId: productionFilters.printerId } : {}),
+        ...(productionFilters.productId ? { runs: { some: { productId: productionFilters.productId } } } : {}),
+      },
+    }),
+    // Sempre sobre TODO o histórico (visão agregada, não lista filtrada).
     getPlateProductionByProduct(),
   ])
 
-  const completeProductsCount = plateProductionByProduct.filter((p) => p.completeSets > 0).length
-  const partialProductsCount = plateProductionByProduct.filter((p) => p.completeSets === 0).length
-
-  // Card de alerta (spec do módulo Insumos): insumos esgotados ou em estoque
-  // crítico, mesmo cálculo de status usado em app/(app)/supplies/page.tsx.
-  const lowThresholdPercent = settings.stockLowThresholdPercent.toNumber()
-  const criticalThresholdPercent = settings.stockCriticalThresholdPercent.toNumber()
-  const criticalSupplies = supplies
-    .map((s) => {
-      const currentStock = s.currentStock.toNumber()
-      const referenceQuantity = calculateStockReferenceQuantity(s.purchases.map((p) => p.quantity.toNumber()))
-      const percentRemaining = calculateStockPercentRemaining(currentStock, referenceQuantity)
-      const status = getStockStatusWithThresholds(percentRemaining, lowThresholdPercent, criticalThresholdPercent)
-      return { id: s.id, name: s.name, status }
-    })
-    .filter((s) => s.status.label === 'Esgotado' || s.status.label === 'Estoque crítico')
-
-  const totalRevenue = revenue.DIRETA + revenue.MARKETPLACE + consignmentRevenue
-  const diretaShare = totalRevenue > 0 ? (revenue.DIRETA / totalRevenue) * 100 : 0
-  const marketplaceShare = totalRevenue > 0 ? (revenue.MARKETPLACE / totalRevenue) * 100 : 0
-  const consignmentShare = totalRevenue > 0 ? 100 - diretaShare - marketplaceShare : 0
-  const consignmentUnits = consignmentStock.reduce((sum, s) => sum + s.remaining, 0)
-  const consignmentValue = consignmentStock.reduce((sum, s) => sum + s.remainingValue, 0)
-
-  const consignmentByPartner = [...consignmentStock]
-    .sort((a, b) => a.partnerName.localeCompare(b.partnerName) || b.remaining - a.remaining)
-    .reduce<Record<string, typeof consignmentStock>>((acc, item) => {
-      ;(acc[item.partnerName] ??= []).push(item)
-      return acc
-    }, {})
+  const completeCount = completeness.filter((p) => p.completeSets > 0).length
+  const partialCount = completeness.filter((p) => p.completeSets === 0).length
+  const totalPrinterHours = printerUsage.reduce((s, r) => s + r.totalHours, 0)
+  const maxFailed = failures[0]?.quantityFailed ?? 0
+  const unitCost = summary.totalUnitsProduced > 0 ? summary.totalCost / summary.totalUnitsProduced : 0
+  const wastePercent = summary.totalCost > 0 ? (summary.totalWasteCost / summary.totalCost) * 100 : 0
 
   return (
-    <div className="mx-auto max-w-5xl space-y-8 p-0 sm:space-y-10 sm:p-6">
-      <header>
-        <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Visão geral</p>
-        <h1 className="mt-1 font-display text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Dashboard</h1>
-      </header>
+    <div className="mx-auto max-w-5xl space-y-6 p-0 sm:p-6">
+      {header}
+      {tabs}
 
-      {/* Hero: revenue is the headline number of the business — everything else is secondary. */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 sm:p-8">
-        <div className="flex flex-col gap-8 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Receita total</p>
-            <p className="mt-1 font-display text-4xl font-semibold tabular-nums tracking-tight text-slate-900 dark:text-slate-100 sm:text-5xl">
-              {formatCurrency(totalRevenue)}
-            </p>
-          </div>
-          <dl className="flex flex-wrap gap-x-6 gap-y-3 sm:gap-8">
-            <div>
-              <dt className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" /> Direta
-              </dt>
-              <dd className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(revenue.DIRETA)}</dd>
-            </div>
-            <div>
-              <dt className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
-                <span className="h-2 w-2 rounded-full bg-slate-300 dark:bg-slate-600" /> Marketplace
-              </dt>
-              <dd className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(revenue.MARKETPLACE)}</dd>
-            </div>
-            <div>
-              <dt className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
-                <span className="h-2 w-2 rounded-full bg-amber-500" /> Consignação
-              </dt>
-              <dd className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(consignmentRevenue)}</dd>
-            </div>
-          </dl>
+      <div className="flex flex-wrap items-center gap-2">
+        <UrlSelect name="productId" label="Produto" value={sp.productId ?? ''} allLabel="Todos os produtos" options={filterProducts.map((p) => ({ value: p.id, label: p.name }))} />
+        <UrlSelect name="printerId" label="Impressora" value={sp.printerId ?? ''} allLabel="Todas as impressoras" options={filterPrinters.map((p) => ({ value: p.id, label: p.name }))} />
+        <UrlSelect name="status" label="Status" value={activeStatus ?? ''} allLabel="Todos os status" options={STATUS_VALUES.map((s) => ({ value: s, label: getProductionStatusBadge(s).label }))} />
+        <UrlSelect name="wasteReason" label="Motivo" value={activeWasteReason ?? ''} allLabel="Todos os motivos" options={WASTE_REASON_VALUES.map((r) => ({ value: r, label: WASTE_REASON_LABELS[r] }))} />
+      </div>
+
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className={`${card} p-5`}>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Unidades produzidas</p>
+          <p className="mt-1 font-display text-3xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">{integer.format(summary.totalUnitsProduced)}</p>
+          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{integer.format(summary.totalRuns)} produções</p>
         </div>
-        <div className="mt-6 flex h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-          {totalRevenue > 0 ? (
-            <>
-              <div className="h-full bg-emerald-500" style={{ width: `${diretaShare}%` }} />
-              <div className="h-full bg-slate-300 dark:bg-slate-600" style={{ width: `${marketplaceShare}%` }} />
-              <div className="h-full bg-amber-500" style={{ width: `${consignmentShare}%` }} />
-            </>
-          ) : null}
+        <div className={`${card} p-5`}>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Taxa de sucesso</p>
+          <p className="mt-1 font-display text-3xl font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{percent.format(summary.successRate)}%</p>
+          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">unidades boas ÷ planejadas · {integer.format(summary.totalUnitsFailed)} falhadas</p>
+        </div>
+        <div className={`${card} p-5`}>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Custo total</p>
+          <p className="mt-1 font-display text-3xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(summary.totalCost)}</p>
+          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">≈ {formatCurrency(unitCost)} por unidade</p>
         </div>
       </section>
 
-      {criticalSupplies.length > 0 && (
-        <section className="rounded-2xl border border-red-200 bg-red-50 p-5 dark:border-red-900/50 dark:bg-red-500/10">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <h2 className="font-display text-sm font-semibold text-red-800 dark:text-red-300">
-              ⚠️ Insumos esgotados ou em estoque crítico
-            </h2>
-            <Link href="/supplies" className="text-xs font-medium text-red-700 underline-offset-2 hover:underline dark:text-red-400">
-              Ver insumos &rarr;
-            </Link>
-          </div>
-          <ul className="mt-3 space-y-1 text-sm">
-            {criticalSupplies.map((s) => (
-              <li key={s.id} className="flex items-center gap-2 text-red-800 dark:text-red-300">
-                <span>{s.status.emoji}</span>
-                <span className="font-medium">{s.name}</span>
-                <span className="text-red-600 dark:text-red-400">— {s.status.label}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* Secondary metric: consignment units are assets held by partners.
-          Fix 3 (task-10 brief): the old "Custo total de desperdício" card
-          here used to live-recalculate from CURRENT Printer/Filament/
-          Settings for every historical run (lib/reports.ts's now-removed
-          getTotalWasteCost) -- exactly what the costSnapshot mechanism
-          (spec §4, Task 7) was built to eliminate. The "Desperdício total"
-          card in the "Produção" section below (Task 9) already reads
-          costSnapshot.wasteCost correctly and is the single source of truth
-          for this number going forward, so the old contradicting card is
-          removed rather than kept side-by-side with it. */}
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-          <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Peças em consignação</p>
-          <p className="mt-1 flex items-baseline gap-2 font-display text-3xl font-semibold tabular-nums tracking-tight text-slate-900 dark:text-slate-100">
-            {integer.format(consignmentUnits)}
-            <span className="text-base font-medium text-slate-400 dark:text-slate-500">{formatCurrency(consignmentValue)}</span>
-          </p>
-          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Unidades entregues a parceiros, ainda não vendidas</p>
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className={`${card} p-4`}>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Tempo total</p>
+          <p className="mt-1 font-display text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{percent.format(summary.totalTimeHours)} h</p>
         </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Vendido em consignação</p>
-            <Link href="/consignment/reports" className="text-xs font-medium text-violet-600 underline-offset-2 hover:underline dark:text-violet-400">
-              Ver relatórios de venda &rarr;
-            </Link>
-          </div>
-          <p className="mt-1 flex items-baseline gap-2 font-display text-3xl font-semibold tabular-nums tracking-tight text-slate-900 dark:text-slate-100">
-            {integer.format(consignmentSold.totalUnitsSold)}
-            <span className="text-base font-medium text-slate-400 dark:text-slate-500">{formatCurrency(consignmentSold.totalGrossValue)}</span>
+        <div className={`${card} p-4`}>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Desperdício</p>
+          <p className="mt-1 font-display text-lg font-semibold tabular-nums text-amber-600 dark:text-amber-400">{formatCurrency(summary.totalWasteCost)}</p>
+          <p className="text-xs text-slate-400 dark:text-slate-500">{percent.format(wastePercent)}% do custo</p>
+        </div>
+        <div className={`${card} p-4`}>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Plates realizadas</p>
+          <p className="mt-1 font-display text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{integer.format(platesCount)}</p>
+        </div>
+        <div className={`${card} p-4`}>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Completos / parciais</p>
+          <p className="mt-1 font-display text-lg font-semibold tabular-nums">
+            <span className="text-emerald-600 dark:text-emerald-400">{integer.format(completeCount)}</span>
+            <span className="text-slate-400"> / </span>
+            <span className="text-amber-600 dark:text-amber-400">{integer.format(partialCount)}</span>
           </p>
-          <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">Unidades já vendidas pelos parceiros (valor bruto, antes da comissão)</p>
         </div>
       </section>
 
-      <section>
-        <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Top 5 produtos mais vendidos</h2>
-        {topProducts.length === 0 ? (
-          <EmptyState>Nenhuma venda registrada ainda.</EmptyState>
-        ) : (
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 text-left text-xs font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
-                  <th className="w-12 py-3 pl-5"></th>
-                  <th className="py-3">Produto</th>
-                  <th className="py-3 text-center">Unidades vendidas</th>
-                </tr>
-              </thead>
-              <tbody>
-                {topProducts.map((entry, i) => (
-                  <tr key={entry.product.id} className={i !== topProducts.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''}>
-                    <td className="py-3 pl-5">
-                      <span
-                        className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${
-                          i === 0
-                            ? 'bg-amber-500 text-white dark:bg-amber-500 dark:text-slate-950'
-                            : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
-                        }`}
-                      >
-                        {i + 1}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <section className={`${card} p-5`}>
+          <div className="flex items-center justify-between">
+            <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Impressoras mais usadas</h2>
+            <span className="text-xs text-slate-400 dark:text-slate-500">% das horas</span>
+          </div>
+          {printerUsage.length === 0 ? (
+            <div className="mt-3"><EmptyState>Nenhuma produção com esses filtros.</EmptyState></div>
+          ) : (
+            <ul className="mt-3 space-y-4">
+              {printerUsage.map((row) => {
+                const pct = totalPrinterHours > 0 ? (row.totalHours / totalPrinterHours) * 100 : 0
+                return (
+                  <li key={row.printerId}>
+                    <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-3 text-sm">
+                      <span className="font-medium text-slate-800 dark:text-slate-200">{row.printerName}</span>
+                      <span className="text-xs tabular-nums text-slate-500 dark:text-slate-400">
+                        {integer.format(row.runsCount)} produções · {percent.format(row.totalHours)} h · {Math.round(pct)}%
                       </span>
-                    </td>
-                    <td className="py-3 font-medium text-slate-800 dark:text-slate-200">{entry.product.name}</td>
-                    <td className="py-3 text-center tabular-nums text-slate-600 dark:text-slate-400">{integer.format(entry.quantitySold)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <section>
-        <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Estoque em consignação por parceiro</h2>
-        {consignmentStock.length === 0 ? (
-          <EmptyState>Nenhum estoque em consignação no momento.</EmptyState>
-        ) : (
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 text-left text-xs font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
-                  <th className="py-3 pl-5">Parceiro / Produto</th>
-                  <th className="py-3 text-center">Saldo restante</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(consignmentByPartner).map(([partnerName, items]) => (
-                  <Fragment key={partnerName}>
-                    <tr className="border-b border-slate-100 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/60">
-                      <td colSpan={2} className="py-2 pl-5 text-xs font-semibold text-slate-500 dark:text-slate-400">
-                        {partnerName}
-                      </td>
-                    </tr>
-                    {items.map((item, i) => (
-                      <tr
-                        key={`${partnerName}-${item.productName}-${i}`}
-                        className={i !== items.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''}
-                      >
-                        <td className="py-3 pl-9 text-slate-700 dark:text-slate-300">{item.productName}</td>
-                        <td className="py-3 text-center tabular-nums font-medium text-slate-800 dark:text-slate-200">
-                          {integer.format(item.remaining)}
-                        </td>
-                      </tr>
-                    ))}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* Task 9 (spec §6): production indicators + filters + breakdown tables.
-          Cards reuse the same rounded-2xl border/bg-white card and Link/tabs
-          filter conventions as the rest of this page and app/(app)/filaments,
-          app/(app)/accessories -- no new visual system. Every cost figure here
-          sums each run's frozen costSnapshot.total (spec §4) instead of
-          recalculating from current Settings/Printer/Filament/Accessory/
-          Supply state. */}
-      <section>
-        <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Produção</h2>
-
-        <form method="get" className="mb-2 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-          {activeStatus && <input type="hidden" name="status" value={activeStatus} />}
-          {activeWasteReason && <input type="hidden" name="wasteReason" value={activeWasteReason} />}
-          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
-            De
-            <input type="date" name="from" defaultValue={sp.from ?? ''} className="tk-input-full mt-1" />
-          </label>
-          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
-            Até
-            <input type="date" name="to" defaultValue={sp.to ?? ''} className="tk-input-full mt-1" />
-          </label>
-          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
-            Produto
-            <ProductSelect name="productId" options={filterProducts} defaultValue={activeProductId ?? ''} emptyLabel="Todos" className="tk-input-full mt-1" />
-          </label>
-          <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
-            Impressora
-            <select name="printerId" defaultValue={activePrinterId ?? ''} className="tk-input-full mt-1">
-              <option value="">Todas</option>
-              {filterPrinters.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          </label>
-          <button type="submit" className="rounded-lg bg-gradient-to-r from-violet-600 to-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 dark:from-violet-500 dark:to-blue-500 dark:text-slate-950">
-            Filtrar
-          </button>
-          {hasProductionFilter && (
-            <Link href="/dashboard" className="text-sm font-medium text-slate-500 underline-offset-2 hover:underline dark:text-slate-400">
-              Limpar filtros
-            </Link>
+                    </div>
+                    <Bar value={row.totalHours} max={totalPrinterHours} className="bg-violet-500 dark:bg-violet-400" />
+                  </li>
+                )
+              })}
+            </ul>
           )}
-        </form>
+        </section>
 
-        <div className="mb-2 flex flex-wrap gap-1">
-          <Link href={buildHref({ from: sp.from, to: sp.to, productId: activeProductId, printerId: activePrinterId, wasteReason: activeWasteReason })} className={tabClass(!activeStatus)}>
-            Todos os status
-          </Link>
-          {STATUS_VALUES.map((status) => (
-            <Link
-              key={status}
-              href={buildHref({ from: sp.from, to: sp.to, productId: activeProductId, printerId: activePrinterId, wasteReason: activeWasteReason, status })}
-              className={tabClass(activeStatus === status)}
-            >
-              {getProductionStatusBadge(status).label}
-            </Link>
-          ))}
-        </div>
+        <section className={`${card} p-5`}>
+          <div className="flex items-center justify-between">
+            <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Falhas por motivo</h2>
+            <span className="text-xs text-slate-400 dark:text-slate-500">unidades</span>
+          </div>
+          {failures.length === 0 ? (
+            <div className="mt-3"><EmptyState>Nenhuma falha classificada com esses filtros.</EmptyState></div>
+          ) : (
+            <ul className="mt-3 space-y-4">
+              {failures.map((row) => (
+                <li key={row.wasteReason}>
+                  <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
+                    <span className="font-medium text-slate-800 dark:text-slate-200">{WASTE_REASON_LABELS[row.wasteReason]}</span>
+                    <span className="text-xs tabular-nums text-slate-500 dark:text-slate-400">{integer.format(row.quantityFailed)} un.</span>
+                  </div>
+                  <Bar value={row.quantityFailed} max={maxFailed} className="bg-red-500 dark:bg-red-400" />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
 
-        <div className="mb-4 flex flex-wrap gap-1">
-          <Link href={buildHref({ from: sp.from, to: sp.to, productId: activeProductId, printerId: activePrinterId, status: activeStatus })} className={tabClass(!activeWasteReason)}>
-            Todos os motivos
-          </Link>
-          {WASTE_REASON_VALUES.map((reason) => (
-            <Link
-              key={reason}
-              href={buildHref({ from: sp.from, to: sp.to, productId: activeProductId, printerId: activePrinterId, status: activeStatus, wasteReason: reason })}
-              className={tabClass(activeWasteReason === reason)}
-            >
-              {WASTE_REASON_LABELS[reason]}
-            </Link>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Produções</p>
-            <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">{integer.format(productionSummary.totalRuns)}</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Unidades produzidas</p>
-            <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">{integer.format(productionSummary.totalUnitsProduced)}</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Taxa de sucesso</p>
-            <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">{productionSummary.successRate.toFixed(1)}%</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Tempo total</p>
-            <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">{productionSummary.totalTimeHours.toFixed(1)}h</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Custo total</p>
-            <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(productionSummary.totalCost)}</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Desperdício total</p>
-            <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-amber-600 dark:text-amber-400">{formatCurrency(productionSummary.totalWasteCost)}</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Plates realizadas</p>
-            <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">{integer.format(platesInRangeCount)}</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-            <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Produtos completos / parciais</p>
-            <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-slate-900 dark:text-slate-100">
-              <span className="text-emerald-600 dark:text-emerald-400">{integer.format(completeProductsCount)}</span>
-              {' / '}
-              <span className="text-amber-600 dark:text-amber-400">{integer.format(partialProductsCount)}</span>
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section>
-        <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Produção por produto</h2>
-        {productionByProduct.length === 0 ? (
-          <EmptyState>Nenhuma produção registrada com esses filtros.</EmptyState>
-        ) : (
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 text-left text-xs font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
-                  <th className="py-3 pl-5">Produto</th>
-                  <th className="py-3 text-center">Produções</th>
-                  <th className="py-3 text-center">Unidades</th>
-                  <th className="py-3 text-center">Custo total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {productionByProduct.map((row, i) => (
-                  <tr key={row.productId} className={i !== productionByProduct.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''}>
-                    <td className="py-3 pl-5 font-medium text-slate-800 dark:text-slate-200">{row.productName}</td>
-                    <td className="py-3 text-center tabular-nums text-slate-600 dark:text-slate-400">{integer.format(row.runsCount)}</td>
-                    <td className="py-3 text-center tabular-nums text-slate-600 dark:text-slate-400">{integer.format(row.quantitySuccess)}</td>
-                    <td className="py-3 text-center tabular-nums font-medium text-slate-800 dark:text-slate-200">{formatCurrency(row.totalCost)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <section>
-        <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Falhas por motivo</h2>
-        {failuresByReason.length === 0 ? (
-          <EmptyState>Nenhuma falha classificada com esses filtros.</EmptyState>
-        ) : (
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 text-left text-xs font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
-                  <th className="py-3 pl-5">Motivo</th>
-                  <th className="py-3 text-center">Produções</th>
-                  <th className="py-3 text-center">Unidades falhadas</th>
-                </tr>
-              </thead>
-              <tbody>
-                {failuresByReason.map((row, i) => (
-                  <tr key={row.wasteReason} className={i !== failuresByReason.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''}>
-                    <td className="py-3 pl-5 font-medium text-slate-800 dark:text-slate-200">{WASTE_REASON_LABELS[row.wasteReason]}</td>
-                    <td className="py-3 text-center tabular-nums text-slate-600 dark:text-slate-400">{integer.format(row.runsCount)}</td>
-                    <td className="py-3 text-center tabular-nums font-medium text-red-600 dark:text-red-400">{integer.format(row.quantityFailed)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <section>
-        <h2 className="mb-3 font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Impressoras mais usadas</h2>
-        {printerUsage.length === 0 ? (
-          <EmptyState>Nenhuma produção registrada com esses filtros.</EmptyState>
-        ) : (
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 text-left text-xs font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
-                  <th className="py-3 pl-5">Impressora</th>
-                  <th className="py-3 text-center">Produções</th>
-                  <th className="py-3 text-center">Horas</th>
-                </tr>
-              </thead>
-              <tbody>
-                {printerUsage.map((row, i) => (
-                  <tr key={row.printerId} className={i !== printerUsage.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''}>
-                    <td className="py-3 pl-5 font-medium text-slate-800 dark:text-slate-200">{row.printerName}</td>
-                    <td className="py-3 text-center tabular-nums text-slate-600 dark:text-slate-400">{integer.format(row.runsCount)}</td>
-                    <td className="py-3 text-center tabular-nums font-medium text-slate-800 dark:text-slate-200">{row.totalHours.toFixed(1)}h</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      <ProductionByProductTable rows={byProduct} />
     </div>
   )
 }
