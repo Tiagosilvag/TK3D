@@ -609,3 +609,36 @@ describe('bug "pedido com acessório de cor variável nunca reconcilia, mesmo j�
     expect(updatedItem.reservedQuantity).toBe(1)
   })
 })
+
+// Bug "peça montada pronta em estoque mas pedido continua com 'falta
+// produzir'": o pedido só grava a cor da peça que o cliente escolheu
+// (CABEÇA azul), mas a variação montada tem a chave completa (CABEÇA +
+// CORPO). Igualdade exata de colorComboKey nunca reservava a unidade.
+describe('pedido com cor só de uma peça reserva variação montada completa', () => {
+  it('reserva a unidade montada e some da fila de produção', async () => {
+    const { product, cabeca, corpo, printer, azul, vermelho } = await createCompositeProduct()
+
+    const orderResult = await createOrder(orderFdWithColors(product.id, { [cabeca.id]: azul.id }))
+    expect(orderResult.success).toBe(true)
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+
+    await producePart(product.id, cabeca.id, printer.id, azul.id, 1)
+    await producePart(product.id, corpo.id, printer.id, vermelho.id, 1)
+    const assemble = await confirmAssembly(fd({
+      productId: product.id,
+      quantity: '1',
+      notes: '',
+      colorChoicesJson: JSON.stringify({ [cabeca.id]: azul.id, [corpo.id]: vermelho.id }),
+      accessoryUsagesJson: '[]',
+      supplyUsagesJson: '[]',
+    }))
+    expect(assemble.success).toBe(true)
+
+    const refreshed = await prisma.orderItem.findUniqueOrThrow({ where: { id: item.id } })
+    expect(refreshed.status).toBe('PRONTO_RESERVADO')
+    expect(refreshed.reservedQuantity).toBe(1)
+
+    const queue = await getOrderDemandQueue()
+    expect(queue.productionRows.some((r) => r.orderItemId === item.id)).toBe(false)
+  })
+})

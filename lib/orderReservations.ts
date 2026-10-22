@@ -87,11 +87,28 @@ async function getRawProductAvailable(productId: string, needsAssembly: boolean)
 // (mesma limitação aceita que a tela de Vendas já convive).
 async function getRawVariantAvailable(productId: string, colorComboKey: string, needsAssembly: boolean): Promise<number> {
   const breakdown = await getProductVariantBreakdown(productId, needsAssembly)
-  const variant = breakdown.find((v) => v.key === colorComboKey)
-  const produced = variant?.quantity ?? 0
+  // Bug "peça montada pronta em estoque mas pedido continua pendente /
+  // 'falta produzir'": o pedido só grava a cor das peças que o cliente
+  // ESCOLHEU (ex.: só o Charm vermelho), mas a variação montada em estoque
+  // tem a chave COMPLETA (todas as peças: corpo + charm). Igualdade exata
+  // de chave nunca batia -- a unidade pronta não era reservada e as peças
+  // (já consumidas na montagem) voltavam como "falta produzir". Pra
+  // produto que precisa de montagem, uma variação atende o pedido quando
+  // contém TODAS as escolhas dele (peças que o pedido não escolheu aceitam
+  // qualquer cor).
+  const wanted = needsAssembly ? deserializeColorChoices(colorComboKey) : null
+  const matches = (key: string): boolean => {
+    if (key === colorComboKey) return true
+    if (!wanted) return false
+    const have = deserializeColorChoices(key)
+    return Object.entries(wanted).every(([partId, combo]) => have[partId] === combo)
+  }
+  const matchingKeys = breakdown.filter((v) => matches(v.key)).map((v) => v.key)
+  const produced = breakdown.filter((v) => matches(v.key)).reduce((sum, v) => sum + v.quantity, 0)
+  const keys = matchingKeys.length > 0 ? matchingKeys : [colorComboKey]
   const [deliveredAgg, soldAgg] = await Promise.all([
-    prisma.consignmentDelivery.aggregate({ where: { productId, colorComboKey }, _sum: { quantityDelivered: true, returnedQuantity: true } }),
-    prisma.sale.aggregate({ where: { productId, colorComboKey }, _sum: { quantity: true } }),
+    prisma.consignmentDelivery.aggregate({ where: { productId, colorComboKey: { in: keys } }, _sum: { quantityDelivered: true, returnedQuantity: true } }),
+    prisma.sale.aggregate({ where: { productId, colorComboKey: { in: keys } }, _sum: { quantity: true } }),
   ])
   const delivered = (deliveredAgg._sum.quantityDelivered ?? 0) - (deliveredAgg._sum.returnedQuantity ?? 0)
   return Math.max(0, produced - delivered - (soldAgg._sum.quantity ?? 0))
