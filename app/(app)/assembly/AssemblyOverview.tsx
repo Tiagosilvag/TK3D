@@ -1,7 +1,9 @@
 'use client'
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import type { AssemblyOverviewRow } from '@/actions/assembly'
+import { useRouter } from 'next/navigation'
+import { assembleProductMax, undoAssemblies, type AssemblyOverviewRow } from '@/actions/assembly'
+import { UndoToast } from '@/components/UndoToast'
 
 // Melhoria "Montagem" §2: lista geral no topo -- busca por nome + Já
 // montado/Disponível (vermelho quando zerado, verde quando há) -- clicar
@@ -25,6 +27,34 @@ function chipClass(active: boolean): string {
 export function AssemblyOverview({ rows }: { rows: AssemblyOverviewRow[] }) {
   const [search, setSearch] = useState('')
   const [chip, setChip] = useState<Chip>('ALL')
+  const router = useRouter()
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ message: string; ids: string[] } | null>(null)
+
+  // "✓ Montar N": monta o máximo possível com as combinações de maior estoque.
+  async function assembleMax(row: AssemblyOverviewRow) {
+    if (busyId) return
+    setBusyId(row.productId)
+    setError(null)
+    const result = await assembleProductMax(row.productId)
+    setBusyId(null)
+    if (!result.success) {
+      setError(`${row.productName}: ${result.error ?? 'não foi possível montar.'}`)
+      return
+    }
+    setToast({ message: `${result.units} × ${row.productName} montada${result.units === 1 ? '' : 's'}.`, ids: result.assemblyId ? [result.assemblyId] : [] })
+    router.refresh()
+  }
+
+  async function undoToast() {
+    const ids = toast?.ids ?? []
+    setToast(null)
+    if (ids.length === 0) return
+    const result = await undoAssemblies(ids)
+    if (!result.success) setError(result.error ?? 'Não foi possível desfazer.')
+    router.refresh()
+  }
 
   const totalProducts = rows.length
   const blockedCount = rows.filter((r) => r.maxAssemblableUnits <= 0).length
@@ -79,6 +109,8 @@ export function AssemblyOverview({ rows }: { rows: AssemblyOverviewRow[] }) {
           <button type="button" onClick={() => setChip('ASSEMBLED')} className={chipClass(chip === 'ASSEMBLED')}>Já montado</button>
         </div>
 
+        {error && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
+
         {visibleRows.length === 0 ? (
           <p className="mt-4 text-center text-sm text-slate-400 dark:text-slate-500">Nenhum produto encontrado.</p>
         ) : (
@@ -109,8 +141,19 @@ export function AssemblyOverview({ rows }: { rows: AssemblyOverviewRow[] }) {
                       {r.maxAssemblableUnits} unidade{r.maxAssemblableUnits === 1 ? '' : 's'}
                     </Link>
                   </td>
-                  <td className="text-right text-slate-400" aria-hidden>
-                    <Link href={`/assembly?productId=${r.productId}`}>›</Link>
+                  <td className="text-right">
+                    <span className="inline-flex items-center gap-3 text-xs font-medium">
+                      {r.maxAssemblableUnits > 0 ? (
+                        <>
+                          <Link href={`/assembly?productId=${r.productId}`} className="text-violet-600 hover:underline dark:text-violet-400">Ajustar</Link>
+                          <button type="button" disabled={busyId !== null} onClick={() => assembleMax(r)} className="tk-btn-primary px-3 py-1.5 text-xs disabled:opacity-60">
+                            ✓ Montar {r.maxAssemblableUnits}
+                          </button>
+                        </>
+                      ) : (
+                        <Link href={`/assembly?productId=${r.productId}`} className="text-violet-600 hover:underline dark:text-violet-400">Ver peças</Link>
+                      )}
+                    </span>
                   </td>
                 </tr>
               ))}
@@ -118,6 +161,8 @@ export function AssemblyOverview({ rows }: { rows: AssemblyOverviewRow[] }) {
           </table>
         )}
       </div>
+
+      {toast && <UndoToast message={toast.message} onUndo={undoToast} onDismiss={() => setToast(null)} durationMs={10000} />}
     </div>
   )
 }

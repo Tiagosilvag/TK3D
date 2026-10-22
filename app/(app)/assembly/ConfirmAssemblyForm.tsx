@@ -137,10 +137,8 @@ export function ConfirmAssemblyForm({
   components,
   accessoryRequirements,
   supplyRequirements,
-  packagingRequirements,
   allAccessories,
   allSupplies,
-  allPackaging,
   presetColorChoices,
 }: {
   productId: string
@@ -149,10 +147,8 @@ export function ConfirmAssemblyForm({
   components: AssemblyComponentStatus[]
   accessoryRequirements: AssemblyResourceRequirement[]
   supplyRequirements: AssemblyResourceRequirement[]
-  packagingRequirements: AssemblyResourceRequirement[]
   allAccessories: ComponentOption[]
   allSupplies: ComponentOption[]
-  allPackaging: ComponentOption[]
   // Encomenda com variação personalizada: combinação de cor que um
   // pedido específico precisa (vinda de AssemblyDemandPanel), usada só
   // como valor INICIAL de colorChoices -- o usuário continua livre pra
@@ -192,7 +188,6 @@ export function ConfirmAssemblyForm({
   // Embalagem §5: mostrada por completude/visibilidade, NUNCA submetida ao
   // confirmAssembly (continua consumida só na Venda) -- estado só existe
   // aqui pra alimentar o próprio ComponentCategoryCard (readOnly).
-  const packagingRows = useMemo(() => toRows(packagingRequirements), [packagingRequirements])
 
   // Bug fix ("montei o produto errado"): o teto de unidades usado a
   // circular no servidor (maxUnitsFromThisPart/maxUnitsFromThisComponent)
@@ -356,7 +351,6 @@ export function ConfirmAssemblyForm({
           <div className="space-y-4">
             <ComponentCategoryCard label="Acessórios" rows={accessoryRows} onChange={setAccessoryRows} options={allAccessories} />
             <ComponentCategoryCard label="Insumos" rows={supplyRows} onChange={setSupplyRows} options={allSupplies} />
-            <ComponentCategoryCard label="Embalagem" rows={packagingRows} onChange={() => {}} options={allPackaging} readOnly />
             <div className="flex justify-between">
               <button type="button" onClick={() => setStep(1)} className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 hover:underline dark:text-slate-400">Voltar</button>
               <button type="button" onClick={() => setStep(3)} className="tk-btn-primary">Continuar</button>
@@ -434,7 +428,7 @@ export function ConfirmAssemblyForm({
               </label>
               <div className="col-span-full flex items-center justify-between">
                 <button type="button" onClick={() => setStep(2)} className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 hover:underline dark:text-slate-400">Voltar</button>
-                <SubmitButton pendingLabel="Montando…" disabled={effectiveMax <= 0}>
+                <SubmitButton pendingLabel="Montando…" disabled={effectiveMax <= 0 || quantityNum < 1 || quantityNum > effectiveMax}>
                   Confirmar montagem
                 </SubmitButton>
               </div>

@@ -984,7 +984,29 @@ export interface OrderDemandRow {
   filamentIds: string[] | null
 }
 
-export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDemandRow[]; assemblyRows: OrderDemandRow[] }> {
+// Fila de Montagem: UM item por item de pedido que precisa de montagem e
+// ainda não está completo -- com quanto dá pra montar agora (assemblableUnits,
+// já descontando itens de prazo mais próximo que disputam as mesmas peças) e
+// quais peças faltam pro resto. Mesmo cálculo da fila de demanda acima, só
+// que sem esconder o item quando nada dá pra montar.
+export interface AssemblyQueueItem {
+  orderItemId: string
+  orderNumber: string | null
+  channel: OrderChannel
+  buyerOrPlatform: string | null
+  deliveryDate: Date
+  status: OrderStatus
+  productId: string
+  productName: string
+  quantity: number
+  reservedQuantity: number
+  colorComboKey: string | null
+  shortfall: number
+  assemblableUnits: number
+  missingParts: { name: string; units: number }[]
+}
+
+export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDemandRow[]; assemblyRows: OrderDemandRow[]; assemblyQueue: AssemblyQueueItem[] }> {
   // Bug "pedido antigo fica travado mostrando falta produzir pra sempre":
   // a fila parte de reservedQuantity, que só era atualizado quando algum
   // evento disparava a reconciliação (produzir, montar, mexer em pedido) --
@@ -1002,10 +1024,11 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
     orderBy: [{ order: { deliveryDate: 'asc' } }, { createdAt: 'asc' }],
   })
   const pending = items.filter((i) => i.quantity > i.reservedQuantity)
-  if (pending.length === 0) return { productionRows: [], assemblyRows: [] }
+  if (pending.length === 0) return { productionRows: [], assemblyRows: [], assemblyQueue: [] }
 
   const productionRows: OrderDemandRow[] = []
   const assemblyRows: OrderDemandRow[] = []
+  const assemblyQueue: AssemblyQueueItem[] = []
   type ProductCache = {
     parts: Awaited<ReturnType<typeof getAssemblyStatus>>['parts']
     pool: Map<string, number>
@@ -1157,6 +1180,7 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
     }
     assemblableUnits = Math.max(0, assemblableUnits)
 
+    const missingParts: { name: string; units: number }[] = []
     if (assemblableUnits > 0) {
       assemblyRows.push({ ...base, partId: null, partName: null, neededUnits: assemblableUnits, comboLabel: null, filamentIds: null })
       for (const part of parts) {
@@ -1172,13 +1196,31 @@ export async function getOrderDemandQueue(): Promise<{ productionRows: OrderDema
         const stillMissing = Math.max(0, neededForPart - poolAvail)
         consumeFromPart(part.partId, Math.min(poolAvail, neededForPart))
         if (stillMissing > 0) {
+          missingParts.push({ name: part.name, units: stillMissing })
           productionRows.push({ ...base, partId: part.partId, partName: part.name, neededUnits: stillMissing, ...(await comboInfoForPart(part.partId)) })
         }
       }
     }
+
+    assemblyQueue.push({
+      orderItemId: item.id,
+      orderNumber: item.order.orderNumber,
+      channel: item.order.channel,
+      buyerOrPlatform: item.order.buyerOrPlatform,
+      deliveryDate: item.order.deliveryDate,
+      status: item.status,
+      productId: product.id,
+      productName: product.name,
+      quantity: item.quantity,
+      reservedQuantity: item.reservedQuantity,
+      colorComboKey: item.colorComboKey,
+      shortfall,
+      assemblableUnits,
+      missingParts,
+    })
   }
 
-  return { productionRows, assemblyRows }
+  return { productionRows, assemblyRows, assemblyQueue }
 }
 
 export interface AccessoryDemandRow {

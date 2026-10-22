@@ -1,10 +1,11 @@
 import { prisma } from '@/lib/prisma'
-import { getAssemblyStatus, getAssemblyOverview } from '@/actions/assembly'
+import { getAssemblyStatus, getAssemblyOverview, getRecentAssemblies } from '@/actions/assembly'
 import { getOrderDemandQueue } from '@/actions/orders'
 import { deserializeColorChoices } from '@/lib/reports'
 import { AssemblyOverview } from './AssemblyOverview'
 import { AssemblyDetailModal } from './AssemblyDetailModal'
-import { AssemblyDemandPanel } from './AssemblyDemandPanel'
+import { AssemblyQueuePanel } from './AssemblyQueuePanel'
+import { RecentAssemblies } from './RecentAssemblies'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,22 +17,24 @@ export default async function AssemblyPage({
   const { productId, presetColorComboKey } = await searchParams
   const presetColorChoices = presetColorComboKey ? deserializeColorChoices(presetColorComboKey) : null
 
-  const [overview, status, allAccessories, allSupplies, allPackaging, demandQueue] = await Promise.all([
+  const [overview, status, allAccessories, allSupplies, demandQueue, recent] = await Promise.all([
     getAssemblyOverview(),
     productId ? getAssemblyStatus(productId) : Promise.resolve(null),
     prisma.accessory.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     prisma.supply.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
-    prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
     getOrderDemandQueue(),
+    getRecentAssemblies(8),
   ])
 
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Montagem</h1>
 
-      <AssemblyDemandPanel rows={demandQueue.assemblyRows} />
+      <AssemblyQueuePanel items={demandQueue.assemblyQueue} />
 
       <AssemblyOverview rows={overview} />
+
+      <RecentAssemblies rows={recent} />
 
       {overview.length === 0 && (
         <div className="mt-4 rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400 dark:border-slate-700 dark:text-slate-500">
@@ -44,7 +47,6 @@ export default async function AssemblyPage({
         presetColorChoices={presetColorChoices}
         allAccessories={allAccessories.map((a) => ({ id: a.id, name: a.name, colorName: a.colorName, available: Math.max(0, a.currentStock.toNumber()) }))}
         allSupplies={allSupplies.map((s) => ({ id: s.id, name: s.name, unit: s.unit, available: Math.max(0, s.currentStock.toNumber()), catalogDefaultUsage: s.defaultUsage?.toNumber() ?? null }))}
-        allPackaging={allPackaging.map((p) => ({ id: p.id, name: p.name, available: Math.max(0, p.currentStock.toNumber()) }))}
       />
     </div>
   )

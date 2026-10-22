@@ -20,7 +20,6 @@ export function AssemblyDetailModal({
   presetColorChoices,
   allAccessories,
   allSupplies,
-  allPackaging,
 }: {
   status: AssemblyStatus | null
   // Encomenda com variação personalizada: vem de ?presetColorComboKey=
@@ -30,7 +29,6 @@ export function AssemblyDetailModal({
   presetColorChoices: Record<string, string> | null
   allAccessories: ComponentOption[]
   allSupplies: ComponentOption[]
-  allPackaging: ComponentOption[]
 }) {
   const router = useRouter()
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -83,10 +81,8 @@ export function AssemblyDetailModal({
               components={status.components}
               accessoryRequirements={status.accessoryRequirements}
               supplyRequirements={status.supplyRequirements}
-              packagingRequirements={status.packagingRequirements}
               allAccessories={allAccessories}
               allSupplies={allSupplies}
-              allPackaging={allPackaging}
               presetColorChoices={presetColorChoices}
             />
 

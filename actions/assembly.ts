@@ -4,11 +4,12 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { revalidatePath } from 'next/cache'
 import { productNeedsAssembly } from '@/lib/products'
-import { getProductVariantBreakdown, getOwnStockSummary, serializeColorChoices } from '@/lib/reports'
+import { getProductVariantBreakdown, getOwnStockSummary, serializeColorChoices, deserializeColorChoices } from '@/lib/reports'
+import { planDefaultAssembly } from '@/lib/assemblyDefaults'
 import { getProductAverageProductionCost } from '@/actions/products'
 import { reconcileOrderReservations } from '@/lib/orderReservations'
 
-type ActionResult = { success: boolean; error?: string }
+type ActionResult = { success: boolean; error?: string; assemblyId?: string; units?: number }
 
 // Bug "produção usou um Preto diferente do pedido": colorName+material
 // sozinhos não são únicos no catálogo -- "Rolo #" não faz sentido aqui
@@ -973,7 +974,7 @@ async function performAssembly(input: PerformAssemblyInput): Promise<ActionResul
   // consumido, quando, ou por qual montagem. Usa $transaction em forma de
   // função (não array) porque as linhas de StockConsumption precisam do
   // id da ProductAssembly recém-criada.
-  await prisma.$transaction(async (tx) => {
+  const createdAssemblyId = await prisma.$transaction(async (tx) => {
     const assembly = await tx.productAssembly.create({
       data: {
         productId,
@@ -995,6 +996,7 @@ async function performAssembly(input: PerformAssemblyInput): Promise<ActionResul
         data: { resourceType: 'SUPPLY', resourceId: c.supplyId, quantity: c.quantity, productId, source: 'ASSEMBLY', sourceId: assembly.id },
       })
     }
+    return assembly.id
   })
 
   // Melhoria "Pedidos com reserva de estoque": produto que precisa de
@@ -1028,7 +1030,135 @@ async function performAssembly(input: PerformAssemblyInput): Promise<ActionResul
   revalidatePath('/accessories')
   revalidatePath('/supplies')
   revalidatePath('/orders')
+  return { success: true, assemblyId: createdAssemblyId, units: quantity }
+}
+
+// ---------------------------------------------------------------------------
+// Montagem em 1 clique (fila de pedidos, lista de produtos, "montar todos").
+// Usa os mesmos padrões que o formulário pré-seleciona (lib/assemblyDefaults)
+// e a mesma performAssembly -- nenhuma regra de estoque duplicada.
+// ---------------------------------------------------------------------------
+
+// Monta o que dá pra montar AGORA de um item de pedido, com a variação que o
+// cliente pediu: até o que ainda falta pro item (quantidade − reservado).
+export async function assembleOrderItem(orderItemId: string): Promise<ActionResult> {
+  const item = await prisma.orderItem.findUnique({ where: { id: orderItemId } })
+  if (!item) return { success: false, error: 'Item de pedido não encontrado.' }
+  if (item.status === 'ENTREGUE' || item.status === 'CANCELADO') return { success: false, error: 'Este item já foi encerrado.' }
+  const shortfall = item.quantity - item.reservedQuantity
+  if (shortfall < 1) return { success: false, error: 'Este item já está completo.' }
+
+  const status = await getAssemblyStatus(item.productId)
+  const plan = planDefaultAssembly(status, item.colorComboKey ? deserializeColorChoices(item.colorComboKey) : null)
+  const quantity = Math.min(shortfall, plan.maxUnits)
+  if (quantity < 1) return { success: false, error: `Não dá para montar agora: falta ${plan.limiting.join(', ') || 'peça'}.` }
+
+  return performAssembly({
+    productId: item.productId,
+    quantity,
+    notes: null,
+    colorChoices: plan.colorChoices,
+    accessoryUsages: plan.accessoryUsages,
+    supplyUsages: plan.supplyUsages,
+  })
+}
+
+// Monta o máximo possível de um produto, com as combinações de maior estoque.
+export async function assembleProductMax(productId: string): Promise<ActionResult> {
+  const status = await getAssemblyStatus(productId)
+  const plan = planDefaultAssembly(status, null)
+  if (plan.maxUnits < 1) return { success: false, error: `Não dá para montar agora: falta ${plan.limiting.join(', ') || 'peça'}.` }
+  return performAssembly({
+    productId,
+    quantity: plan.maxUnits,
+    notes: null,
+    colorChoices: plan.colorChoices,
+    accessoryUsages: plan.accessoryUsages,
+    supplyUsages: plan.supplyUsages,
+  })
+}
+
+// Monta, em sequência, cada item de pedido que já tem peça pra montar --
+// reavaliando o estoque a cada um (itens do mesmo produto disputam as
+// mesmas peças, então o 2º enxerga o que o 1º já consumiu).
+export async function assembleOrderItems(orderItemIds: string[]): Promise<{ success: boolean; error?: string; assemblyIds: string[]; units: number }> {
+  const assemblyIds: string[] = []
+  let units = 0
+  let firstError: string | undefined
+  for (const id of orderItemIds) {
+    const result = await assembleOrderItem(id)
+    if (result.success && result.assemblyId) {
+      assemblyIds.push(result.assemblyId)
+      units += result.units ?? 0
+    } else if (!firstError) {
+      firstError = result.error
+    }
+  }
+  if (assemblyIds.length === 0) return { success: false, error: firstError ?? 'Nada para montar.', assemblyIds, units }
+  return { success: true, assemblyIds, units }
+}
+
+// Desfaz montagens: devolve peças (some do "Já montado", então a peça volta
+// a ficar disponível), e devolve ao estoque exatamente o que cada montagem
+// debitou de acessório/insumo (StockConsumption). Recusa se as unidades
+// montadas já foram vendidas/entregues -- nesse caso não há o que desfazer.
+export async function undoAssemblies(assemblyIds: string[]): Promise<ActionResult> {
+  const productIds = new Set<string>()
+  for (const id of assemblyIds) {
+    const assembly = await prisma.productAssembly.findUnique({ where: { id } })
+    if (!assembly) continue
+
+    const [assembledAgg, soldAgg, deliveries] = await Promise.all([
+      prisma.productAssembly.aggregate({ where: { productId: assembly.productId }, _sum: { quantity: true } }),
+      prisma.sale.aggregate({ where: { productId: assembly.productId }, _sum: { quantity: true } }),
+      prisma.consignmentDelivery.findMany({ where: { productId: assembly.productId }, select: { quantityDelivered: true, returnedQuantity: true } }),
+    ])
+    const assembledAfter = (assembledAgg._sum.quantity ?? 0) - assembly.quantity
+    const out = (soldAgg._sum.quantity ?? 0) + deliveries.reduce((sum, d) => sum + d.quantityDelivered - d.returnedQuantity, 0)
+    if (assembledAfter < out) {
+      return { success: false, error: 'Essas unidades já foram vendidas ou entregues a parceiros -- não dá para desfazer a montagem.' }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const consumptions = await tx.stockConsumption.findMany({ where: { source: 'ASSEMBLY', sourceId: id } })
+      for (const c of consumptions) {
+        if (c.resourceType === 'ACCESSORY') await tx.accessory.update({ where: { id: c.resourceId }, data: { currentStock: { increment: c.quantity } } })
+        else if (c.resourceType === 'SUPPLY') await tx.supply.update({ where: { id: c.resourceId }, data: { currentStock: { increment: c.quantity } } })
+      }
+      await tx.stockConsumption.deleteMany({ where: { source: 'ASSEMBLY', sourceId: id } })
+      await tx.productAssembly.delete({ where: { id } })
+    })
+    productIds.add(assembly.productId)
+  }
+
+  for (const productId of productIds) {
+    const pending = await prisma.orderItem.findMany({
+      where: { productId, status: { notIn: ['ENTREGUE', 'CANCELADO'] } },
+      select: { colorComboKey: true },
+      distinct: ['colorComboKey'],
+    })
+    for (const { colorComboKey } of pending) await reconcileOrderReservations(productId, colorComboKey)
+  }
+
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
+  revalidatePath('/accessories')
+  revalidatePath('/supplies')
+  revalidatePath('/orders')
   return { success: true }
+}
+
+export interface RecentAssemblyRow {
+  id: string
+  productName: string
+  quantity: number
+  createdAt: string
+  notes: string | null
+}
+
+export async function getRecentAssemblies(limit = 8): Promise<RecentAssemblyRow[]> {
+  const rows = await prisma.productAssembly.findMany({ orderBy: { createdAt: 'desc' }, take: limit, include: { product: { select: { name: true } } } })
+  return rows.map((r) => ({ id: r.id, productName: r.product.name, quantity: r.quantity, createdAt: r.createdAt.toISOString(), notes: r.notes }))
 }
 
 export async function confirmAssembly(formData: FormData): Promise<ActionResult> {
