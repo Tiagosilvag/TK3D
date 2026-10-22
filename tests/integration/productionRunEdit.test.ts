@@ -213,4 +213,24 @@ describe('registro de alterações, restauração e aviso de pedido', () => {
     const ready = await getItemsAwaitingAssembly([item.id])
     expect(ready.map((r) => r.productName)).toEqual(['BONECO'])
   })
+
+  it('R$/g editado à mão muda o custo congelado, é devolvido na edição e voltar ao cadastro restaura', async () => {
+    const { printer, preto, product, cabeca } = await setup()
+    const run = await produce(product.id, cabeca.id, printer.id, preto.id, 2, 10)
+    const total = async () => ((await prisma.productionRun.findUniqueOrThrow({ where: { id: run.id } })).costSnapshot as unknown as { total: number }).total
+    const base = await total()
+    const data = await getProductionRunEditData(run.id)
+    expect(data.filaments[0].pricePerGram).toBeUndefined()
+
+    const caro = await updateProductionRunFull(run.id, { ...data, filaments: [{ ...data.filaments[0], pricePerGram: 0.2 }] })
+    expect(caro.success).toBe(true)
+    // 2 un. × 10 g × (0,20 − 0,08) = R$ 2,40 a mais de filamento
+    expect(await total()).toBeGreaterThan(base + 2.3)
+    expect((await getProductionRunEditData(run.id)).filaments[0].pricePerGram).toBe(0.2)
+
+    const volta = await updateProductionRunFull(run.id, { ...data, filaments: [{ ...data.filaments[0] }] })
+    expect(volta.success).toBe(true)
+    expect(await total()).toBeCloseTo(base, 6)
+    expect((await getProductionRunEditData(run.id)).filaments[0].pricePerGram).toBeUndefined()
+  })
 })

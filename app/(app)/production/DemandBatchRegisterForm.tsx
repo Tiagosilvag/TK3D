@@ -6,7 +6,7 @@ import { createProductionRunDemandBatch } from '@/actions/productionRuns'
 import { getProductProductionDefaults } from '@/actions/products'
 import { WASTE_REASON_LABELS } from '@/lib/format'
 import { todayInBrasiliaString as today } from '@/lib/timezone'
-import { failedFor, plannedChangePatch, successChangePatch, failedChangePatch, type FilamentComponentRow } from '@/lib/productionRunRow'
+import { failedFor, plannedChangePatch, successChangePatch, failedChangePatch, type FilamentComponentRow, editedPricePerGram } from '@/lib/productionRunRow'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
 import { FilamentEditor } from './ProductionRunBatchForm'
@@ -195,6 +195,7 @@ export function DemandBatchRegisterForm({
             filamentId: f.filamentId,
             weightGramsPerUnit: parseFloat(f.weightGramsPerUnit) || 0,
             gramsWasted: parseFloat(f.gramsWasted) || 0,
+            ...editedPricePerGram(f),
           })),
           timeWastedHours: parseFloat(r.timeWastedHours) || 0,
           wasteReason: r.wasteReason || null,

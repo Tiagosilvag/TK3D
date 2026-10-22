@@ -833,6 +833,9 @@ export interface ProductionResourceConsumption {
 }
 
 export interface ProductionCostSnapshot {
+  // R$/g digitado à mão por filamento nesta produção (só os editados; o
+  // resto usa o preço médio do cadastro). Guardado para reeditar sem perder.
+  filamentPriceOverrides?: Record<string, number>
   quantityPlanned: number
   quantitySuccess: number
   quantityFailed: number

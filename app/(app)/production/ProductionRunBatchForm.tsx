@@ -8,7 +8,7 @@ import { buildPlateAutofill } from '@/lib/bambu/autofill'
 import { allocatePlatePrintTime } from '@/lib/costing'
 import { WASTE_REASON_LABELS } from '@/lib/format'
 import { todayInBrasiliaString as today } from '@/lib/timezone'
-import { failedFor, plannedChangePatch, successChangePatch, failedChangePatch, type FilamentComponentRow } from '@/lib/productionRunRow'
+import { failedFor, plannedChangePatch, successChangePatch, failedChangePatch, type FilamentComponentRow, editedPricePerGram } from '@/lib/productionRunRow'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
 import { FilamentSelect, AddColorsButton, type FilamentFormOption } from '@/components/FilamentSelect'
@@ -170,19 +170,48 @@ export function FilamentEditor({
       + Adicionar outra cor (impressão multi-material)
     </AddColorsButton>
   ) : null
-  function priceFor(filamentId: string): number {
+  function catalogPrice(filamentId: string): number {
     return filamentOptions.find((f) => f.id === filamentId)?.pricePerGram ?? 0
+  }
+  // Preço efetivo da linha: o digitado à mão ou o médio do cadastro.
+  function priceOf(row: FilamentComponentRow): number {
+    const typed = parseFloat((row.pricePerGram ?? '').replace(',', '.'))
+    return Number.isFinite(typed) && typed > 0 ? typed : catalogPrice(row.filamentId)
+  }
+  function priceInput(row: FilamentComponentRow, index: number) {
+    const base = catalogPrice(row.filamentId)
+    const edited = (row.pricePerGram ?? '') !== '' && Math.abs(priceOf(row) - base) > 1e-9
+    return (
+      <>
+        <input
+          type="text"
+          inputMode="decimal"
+          value={row.pricePerGram ?? (base ? base.toFixed(4) : '')}
+          onChange={(e) => onChange(index, { pricePerGram: e.target.value })}
+          onFocus={(e) => e.target.select()}
+          disabled={disabled}
+          aria-label="R$ por grama"
+          placeholder="—"
+          className="tk-input-full"
+        />
+        {edited && !disabled && (
+          <button type="button" onClick={() => onChange(index, { pricePerGram: '' })} className="mt-0.5 block text-left text-[10px] text-violet-600 hover:underline dark:text-violet-400">
+            alterado (cadastro: {base.toFixed(4)}) · voltar
+          </button>
+        )}
+      </>
+    )
   }
 
   if (filaments.length === 1) {
     const f = filaments[0]
-    const pricePerGram = priceFor(f.filamentId)
+    const pricePerGram = priceOf(f)
     const cost = (parseFloat(f.weightGramsPerUnit) || 0) * pricePerGram
     return (
       <>
         <label className="text-xs">
           Filamento
-          <FilamentSelect options={filamentOptions} value={f.filamentId} onChange={(id) => onChange(0, { filamentId: id })} disabled={disabled} need={needFor(f)} contextLabel={contextLabel} />
+          <FilamentSelect options={filamentOptions} value={f.filamentId} onChange={(id) => onChange(0, { filamentId: id, pricePerGram: '' })} disabled={disabled} need={needFor(f)} contextLabel={contextLabel} />
         </label>
         <label className="text-xs">
           Peso por unidade (g)
@@ -198,7 +227,7 @@ export function FilamentEditor({
         </label>
         <label className="text-xs">
           R$/g
-          <input type="text" value={pricePerGram ? pricePerGram.toFixed(4) : '—'} disabled className="tk-input-full opacity-60" />
+          {priceInput(f, 0)}
         </label>
         <label className="text-xs">
           Custo
@@ -226,13 +255,13 @@ export function FilamentEditor({
           </thead>
           <tbody>
             {filaments.map((f, i) => {
-              const pricePerGram = priceFor(f.filamentId)
+              const pricePerGram = priceOf(f)
               const cost = (parseFloat(f.weightGramsPerUnit) || 0) * pricePerGram
               return (
                 <Fragment key={i}>
                 <tr>
                   <td className="py-1 pr-2">
-                    <FilamentSelect options={filamentOptions} value={f.filamentId} onChange={(id) => onChange(i, { filamentId: id })} disabled={disabled} need={needFor(f)} contextIds={siblingIds} contextLabel={contextLabel} />
+                    <FilamentSelect options={filamentOptions} value={f.filamentId} onChange={(id) => onChange(i, { filamentId: id, pricePerGram: '' })} disabled={disabled} need={needFor(f)} contextIds={siblingIds} contextLabel={contextLabel} />
                   </td>
                   <td className="py-1 pr-2">
                     <input
@@ -247,7 +276,7 @@ export function FilamentEditor({
                       onFocus={(e) => e.target.select()}
                     />
                   </td>
-                  <td className="py-1 pr-2 tabular-nums text-slate-500 dark:text-slate-400">{pricePerGram ? pricePerGram.toFixed(4) : '—'}</td>
+                  <td className="py-1 pr-2 tabular-nums">{priceInput(f, i)}</td>
                   <td className="py-1 pr-2 tabular-nums text-slate-500 dark:text-slate-400">{cost ? cost.toFixed(2) : '—'}</td>
                   <td className="py-1 text-right">
                     {onRemove && filaments.length > 1 && !disabled && (
@@ -505,7 +534,7 @@ export function ProductionRunBatchForm({
         ...original,
         key: `${original.partId ?? 'product'}-cor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         label: `${original.label} (outra cor)`,
-        filaments: original.filaments.map((f) => ({ ...f, filamentId: '', gramsWasted: '0' })),
+        filaments: original.filaments.map((f) => ({ ...f, filamentId: '', gramsWasted: '0', pricePerGram: '' })),
         quantityPlanned: globalQty,
         quantitySuccess: globalQty,
         timeWastedHours: '0',
@@ -678,7 +707,7 @@ export function ProductionRunBatchForm({
   const rollUsage = rollTotals(
     activeRowsForGasto.map((r) => ({
       quantityPlanned: parseInt(r.quantityPlanned, 10) || 0,
-      filaments: r.filaments.map((f) => ({ filamentId: f.filamentId, weightGramsPerUnit: parseFloat(f.weightGramsPerUnit) || 0, gramsWasted: parseFloat(f.gramsWasted) || 0 })),
+      filaments: r.filaments.map((f) => ({ filamentId: f.filamentId, weightGramsPerUnit: parseFloat(f.weightGramsPerUnit) || 0, gramsWasted: parseFloat(f.gramsWasted) || 0, ...editedPricePerGram(f) })),
     })),
     new Map(filaments.map((f) => [f.id, f.stockGrams ?? 0])),
   )
@@ -719,6 +748,7 @@ export function ProductionRunBatchForm({
             filamentId: f.filamentId,
             weightGramsPerUnit: parseFloat(f.weightGramsPerUnit) || 0,
             gramsWasted: parseFloat(f.gramsWasted) || 0,
+            ...editedPricePerGram(f),
           })),
           timeWastedHours: parseFloat(r.timeWastedHours) || 0,
           wasteReason: r.wasteReason || null,
@@ -768,6 +798,7 @@ export function ProductionRunBatchForm({
             filamentId: f.filamentId,
             weightGramsPerUnit: parseFloat(f.weightGramsPerUnit) || 0,
             gramsWasted: parseFloat(f.gramsWasted) || 0,
+            ...editedPricePerGram(f),
           })),
           timeWastedHours: parseFloat(item.timeWastedHours) || 0,
           wasteReason: item.wasteReason || null,

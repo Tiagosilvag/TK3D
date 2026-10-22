@@ -211,6 +211,12 @@ interface ResourceCheck {
 // necessária aqui pra isso fluir).
 type RunCreationData = Omit<z.infer<typeof productionRunSchema>, 'filamentUsages'> & { batchId: string; plateId?: string | null; id?: string; createdAt?: Date }
 
+// R$/g editados à mão nas linhas de filamento de um item (só os preenchidos).
+function pricePerGramMap(filaments: { filamentId: string; pricePerGram?: number }[]): Map<string, number> | undefined {
+  const entries = filaments.filter((f) => f.pricePerGram !== undefined && f.pricePerGram > 0).map((f) => [f.filamentId, f.pricePerGram!] as const)
+  return entries.length > 0 ? new Map(entries) : undefined
+}
+
 async function prepareProductionRunCreation(
   data: RunCreationData,
   filamentUsages?: { filamentId: string; gramsUsed: number; gramsWasted: number }[],
@@ -234,6 +240,9 @@ async function prepareProductionRunCreation(
   // lendo o campo do catálogo direto, nunca este valor (REGRA 15/16: não
   // mexer nessa lógica existente).
   allocatedPrintTimeHours?: number,
+  // R$/g editado à mão por filamento (filamentId -> R$/g). Quando existe, o
+  // preço/kg do custo vira a média ponderada pelas gramas realmente usadas.
+  pricePerGramByFilament?: Map<string, number>,
 ): Promise<{ success: true; ops: Prisma.PrismaPromise<unknown>[] } | { success: false; error: string }> {
   // Ajuste "peça multi-filamento": os componentes REAIS consumidos nesta
   // produção -- filamentUsages (1 por cor da receita) quando a peça tem
@@ -339,6 +348,17 @@ async function prepareProductionRunCreation(
     filamentPricePerKg = filamentById.get(data.filamentId)!.avgUnitCostPerGram.toNumber() * 1000
   }
 
+  if (pricePerGramByFilament && pricePerGramByFilament.size > 0) {
+    const gramsTotal = components.reduce((s, c) => s + c.gramsUsed, 0)
+    if (gramsTotal > 0) {
+      const weighted = components.reduce(
+        (s, c) => s + c.gramsUsed * (pricePerGramByFilament.get(c.filamentId) ?? filamentById.get(c.filamentId)!.avgUnitCostPerGram.toNumber()),
+        0,
+      )
+      filamentPricePerKg = (weighted / gramsTotal) * 1000
+    }
+  }
+
   // gramsUsed/gramsWasted do snapshot = soma real de todos os componentes
   // (o que fisicamente foi consumido nesta produção, N=1 ou N>1).
   const totalGramsUsed = components.reduce((s, c) => s + c.gramsUsed, 0)
@@ -425,7 +445,9 @@ async function prepareProductionRunCreation(
         ...data,
         gramsUsed: totalGramsUsed,
         gramsWasted: totalGramsWasted,
-        costSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+        costSnapshot: (pricePerGramByFilament && pricePerGramByFilament.size > 0
+          ? { ...snapshot, filamentPriceOverrides: Object.fromEntries(pricePerGramByFilament) }
+          : snapshot) as unknown as Prisma.InputJsonValue,
         status,
         // Só gravado quando a peça tem >1 componente -- ver comentário no
         // schema (ProductionRun.filamentUsages).
@@ -564,6 +586,8 @@ export async function createProductionRunBatch(formData: FormData): Promise<Acti
       },
       filamentUsages,
       reservedGramsByFilament,
+      undefined,
+      pricePerGramMap(item.filaments),
     )
     if (!result.success) return result
     allOps.push(...result.ops)
@@ -660,6 +684,8 @@ export async function createProductionRunDemandBatch(formData: FormData): Promis
       },
       filamentUsages,
       reservedGramsByFilament,
+      undefined,
+      pricePerGramMap(item.filaments),
     )
     if (!result.success) return result
     allOps.push(...result.ops)
@@ -797,6 +823,7 @@ export async function createPlate(formData: FormData): Promise<ActionResult> {
       filamentUsages,
       reservedGramsByFilament,
       allocatedTimes[i],
+      pricePerGramMap(item.filaments),
     )
     if (!result.success) return result
     allOps.push(...result.ops)
@@ -981,7 +1008,7 @@ export interface ProductionRunEditInput {
   notes: string | null
   quantityPlanned: number
   quantitySuccess: number
-  filaments: { filamentId: string; weightGramsPerUnit: number; gramsWasted: number }[]
+  filaments: { filamentId: string; weightGramsPerUnit: number; gramsWasted: number; pricePerGram?: number }[]
 }
 
 export interface ProductionRunEditData extends ProductionRunEditInput {
@@ -1024,7 +1051,12 @@ export async function getProductionRunEditData(id: string): Promise<ProductionRu
     notes: run.notes,
     quantityPlanned: run.quantityPlanned,
     quantitySuccess: run.quantitySuccess,
-    filaments: components.map((c) => ({ filamentId: c.filamentId, weightGramsPerUnit: c.used / planned, gramsWasted: c.wasted })),
+    filaments: components.map((c) => ({
+      filamentId: c.filamentId,
+      weightGramsPerUnit: c.used / planned,
+      gramsWasted: c.wasted,
+      ...(snapshot?.filamentPriceOverrides?.[c.filamentId] ? { pricePerGram: snapshot.filamentPriceOverrides[c.filamentId] } : {}),
+    })),
   }
 }
 
@@ -1093,6 +1125,7 @@ export async function updateProductionRunFull(
     newComponents.length > 1 ? newComponents : undefined,
     reserved,
     input.printTimeHoursPerUnit ?? oldSnapshot?.printTimeHours,
+    pricePerGramMap(input.filaments),
   )
   if (!prepared.success) return { success: false, error: prepared.error }
 
@@ -1412,6 +1445,7 @@ export async function restoreProductionRun(data: ProductionRunEditData): Promise
     components.length > 1 ? components : undefined,
     new Map(),
     data.printTimeHoursPerUnit,
+    pricePerGramMap(data.filaments),
   )
   if (!prepared.success) return { success: false, error: prepared.error }
   await prisma.$transaction(prepared.ops)

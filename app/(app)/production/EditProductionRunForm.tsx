@@ -17,6 +17,7 @@ interface Row {
   filamentId: string
   weight: string // gramas por unidade
   wasted: string // gramas desperdiçadas (total)
+  price?: string // R$/g editado à mão ('' = preço médio do cadastro)
 }
 
 // Edição COMPLETA de uma produção já registrada (data, impressora, filamentos,
@@ -47,7 +48,7 @@ export function EditProductionRunForm({
   const [success, setSuccess] = useState(String(data.quantitySuccess))
   const [successTouched, setSuccessTouched] = useState(false)
   const [rows, setRows] = useState<Row[]>(
-    data.filaments.map((f) => ({ filamentId: f.filamentId, weight: String(Math.round(f.weightGramsPerUnit * 1000) / 1000), wasted: String(f.gramsWasted) })),
+    data.filaments.map((f) => ({ filamentId: f.filamentId, weight: String(Math.round(f.weightGramsPerUnit * 1000) / 1000), wasted: String(f.gramsWasted), price: f.pricePerGram ? String(f.pricePerGram) : '' })),
   )
   const [error, setError] = useState<string | null>(null)
 
@@ -97,7 +98,7 @@ export function EditProductionRunForm({
       notes: notes || null,
       quantityPlanned: plannedNum,
       quantitySuccess: successNum,
-      filaments: rows.map((r) => ({ filamentId: r.filamentId, weightGramsPerUnit: parseFloat(r.weight) || 0, gramsWasted: parseFloat(r.wasted) || 0 })),
+      filaments: rows.map((r) => ({ filamentId: r.filamentId, weightGramsPerUnit: parseFloat(r.weight) || 0, gramsWasted: parseFloat(r.wasted) || 0, ...(parseFloat((r.price ?? '').replace(',', '.')) > 0 ? { pricePerGram: parseFloat((r.price ?? '').replace(',', '.')) } : {}) })),
     })
     if (!result.success) return setError(result.error ?? 'Erro ao salvar.')
     if (result.previous) stashProductionUndo({ runId: data.id, previous: result.previous, message: 'Produção atualizada.' })
@@ -158,16 +159,18 @@ export function EditProductionRunForm({
           const stock = (opt?.stockGrams ?? 0) + (oldByFilament.get(r.filamentId) ?? 0)
           const usage = newByFilament.get(r.filamentId) ?? 0
           const short = r.filamentId !== '' && usage > stock + 1e-9
-          const pricePerGram = opt?.pricePerGram ?? 0
+          const catalogPrice = opt?.pricePerGram ?? 0
+          const typedPrice = parseFloat((r.price ?? '').replace(',', '.'))
+          const pricePerGram = typedPrice > 0 ? typedPrice : catalogPrice
           return (
             <div key={i}>
-              <div className="grid grid-cols-2 items-end gap-2 md:grid-cols-[1fr_7rem_7rem_6rem_auto]">
+              <div className="grid grid-cols-2 items-end gap-2 md:grid-cols-[1fr_7rem_7rem_7rem_6rem_auto]">
                 <label className="col-span-2 text-xs md:col-span-1">
                   Filamento *
                   <FilamentSelect
                     options={filaments}
                     value={r.filamentId}
-                    onChange={(id) => updateRow(i, { filamentId: id })}
+                    onChange={(id) => updateRow(i, { filamentId: id, price: '' })}
                     need={(parseFloat(r.weight) || 0) * plannedNum + (parseFloat(r.wasted) || 0)}
                     contextIds={rows.filter((_, j) => j !== i).map((x) => x.filamentId).filter(Boolean)}
                     contextLabel={data.partName ?? data.productName}
@@ -180,6 +183,22 @@ export function EditProductionRunForm({
                 <label className="text-xs">
                   Desperdício (g)
                   <input type="number" step="0.01" min="0" value={r.wasted} onChange={(e) => updateRow(i, { wasted: e.target.value })} className="tk-input-full" />
+                </label>
+                <label className="text-xs">
+                  R$/g
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={r.price || (catalogPrice ? catalogPrice.toFixed(4) : '')}
+                    onChange={(e) => updateRow(i, { price: e.target.value })}
+                    onFocus={(e) => e.target.select()}
+                    className="tk-input-full"
+                  />
+                  {typedPrice > 0 && Math.abs(typedPrice - catalogPrice) > 1e-9 && (
+                    <button type="button" onClick={() => updateRow(i, { price: '' })} className="mt-0.5 block text-left text-[10px] text-violet-600 hover:underline dark:text-violet-400">
+                      alterado (cadastro: {catalogPrice.toFixed(4)}) · voltar
+                    </button>
+                  )}
                 </label>
                 <div className="text-xs tabular-nums text-slate-500 dark:text-slate-400">
                   <span className="block">Custo/un.</span>

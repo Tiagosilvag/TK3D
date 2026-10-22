@@ -60,6 +60,8 @@ export const productionRunBatchItemFilamentSchema = z.object({
   filamentId: z.string().min(1),
   weightGramsPerUnit: z.coerce.number({ invalid_type_error: 'Peso inválido' }).nonnegative('Não pode ser negativo'),
   gramsWasted: z.coerce.number().nonnegative('Gramas desperdiçadas não pode ser negativo').default(0),
+  // R$/g editado à mão nesta produção (vazio = preço médio do cadastro).
+  pricePerGram: z.coerce.number({ invalid_type_error: 'R$/g inválido' }).positive('R$/g deve ser maior que zero').optional(),
 })
 
 // Melhoria "Produção" (reformulação Plate): `date` deixou de ser um campo

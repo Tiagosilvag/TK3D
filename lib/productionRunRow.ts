@@ -10,6 +10,14 @@ export interface FilamentComponentRow {
   filamentId: string
   weightGramsPerUnit: string
   gramsWasted: string
+  // R$/g editado à mão ('' ou ausente = usa o preço médio do cadastro).
+  pricePerGram?: string
+}
+
+// Campo `pricePerGram` do payload só quando o usuário digitou um valor.
+export function editedPricePerGram(f: { pricePerGram?: string }): { pricePerGram?: number } {
+  const n = parseFloat((f.pricePerGram ?? '').replace(',', '.'))
+  return Number.isFinite(n) && n > 0 ? { pricePerGram: n } : {}
 }
 
 export function failedFor(row: { quantityPlanned: string; quantitySuccess: string }): number {
