@@ -1,150 +1,263 @@
 'use client'
-import type { FilamentFormOption } from '@/components/FilamentSelect'
-import { useState } from 'react'
-import Link from 'next/link'
+import { useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { getDeadlineBadge, ORDER_CHANNEL_LABELS } from '@/lib/format'
 import type { OrderDemandRow } from '@/actions/orders'
+import { getProductProductionDefaults, type ProductProductionDefaults } from '@/actions/products'
+import { createProductionRunDemandBatch, undoProductionBatch } from '@/actions/productionRuns'
+import { buildOneClickItem, groupByOrderItem, rollShortfalls, type OneClickItem } from '@/lib/demandOneClick'
+import { UndoToast } from '@/components/UndoToast'
+import type { FilamentFormOption } from '@/components/FilamentSelect'
 import { DemandBatchRegisterForm, type DemandSelection } from './DemandBatchRegisterForm'
 
 type PrinterOption = { id: string; name: string; costPerHour: number }
 type FilamentOption = FilamentFormOption
 
-// Melhoria "Pedidos com reserva de estoque" §3: painel "Peças pendentes
-// de encomenda" no topo de Produção -- só peça que ainda NÃO existe
-// fisicamente (nem impressa nem montada) e que algum pedido precisa.
-// Ordenado por prazo mais próximo primeiro (getOrderDemandQueue já
-// devolve nessa ordem, herdada da mesma prioridade que
-// reconcileOrderReservations usa pra reserva de verdade). Só renderiza
-// quando há alguma linha -- sem estado vazio, é um painel de "trabalho
-// pendente", não uma listagem permanente.
+// Painel "Peças pendentes de encomenda": agrupado por pedido (produto,
+// origem e prazo uma vez só, peças como linhas). O caso comum é 1 clique:
+// "✓ Produzido" registra a quantidade com impressora, tempo, gramas e
+// filamento da ficha técnica -- antes, confere o consumo por ROLO somando
+// todas as peças juntas e, se algum não cobrir, abre o formulário completo
+// com o aviso em vez de registrar. "Ajustar" abre o formulário (falhas,
+// troca de filamento etc.). Toda ação mostra "Desfazer" por 10 s.
 //
-// Pedido do usuário "registrar produção de todos os pendentes, selecionar
-// todos ou alguns": virou Client Component (checkbox por linha + "Marcar
-// todas"/"Desmarcar todas") -- o botão "Registrar produção" de cada linha
-// continua existindo pro fluxo de 1 peça só (navega pra abrir o modal de
-// sempre, ProductionRunsExplorer), checkbox + "Registrar selecionadas"
-// abrem um modal PRÓPRIO (DemandBatchRegisterForm) que registra N peças
-// (possivelmente de produtos diferentes) numa submissão só.
+// A pendência não é um contador: getOrderDemandQueue a deriva das produções
+// existentes, então desfazer/editar/excluir uma produção devolve a
+// pendência certa sozinho.
+const rowKey = (row: OrderDemandRow) => `${row.orderItemId}:${row.partId ?? 'produto'}`
+
+function todayIso(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 export function DemandQueuePanel({ rows, printers, filaments }: { rows: OrderDemandRow[]; printers: PrinterOption[]; filaments: FilamentOption[] }) {
-  const [selected, setSelected] = useState<Set<number>>(new Set())
-  const [batchOpen, setBatchOpen] = useState(false)
+  const router = useRouter()
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [qty, setQty] = useState<Record<string, string>>({})
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ message: string; batchId?: string } | null>(null)
+  const [adjust, setAdjust] = useState<DemandSelection[] | null>(null)
+  const defaultsCache = useRef(new Map<string, ProductProductionDefaults>())
 
-  if (rows.length === 0) return null
+  const groups = useMemo(() => groupByOrderItem(rows), [rows])
+  const stockById = useMemo(() => new Map(filaments.map((f) => [f.id, f.stockGrams ?? 0])), [filaments])
+  const filamentName = (id: string) => filaments.find((f) => f.id === id)?.name ?? 'filamento'
 
-  function toggle(i: number) {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(i)) next.delete(i)
-      else next.add(i)
-      return next
-    })
+  const adjustSelection = useMemo(() => adjust ?? [], [adjust])
+
+  // Tudo registrado: só o aviso com "Desfazer" fica na tela.
+  if (rows.length === 0) {
+    return toast ? <UndoToast message={toast.message} onUndo={toast.batchId ? undo : undefined} onDismiss={() => setToast(null)} durationMs={10000} /> : null
   }
 
-  function selectAll() {
-    setSelected(new Set(rows.map((_, i) => i)))
+  function qtyFor(row: OrderDemandRow): number {
+    const parsed = parseInt(qty[rowKey(row)] ?? '', 10)
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : row.neededUnits
   }
 
-  function selectNone() {
-    setSelected(new Set())
-  }
-
-  const selection: DemandSelection[] = rows
-    .map((row, i) => ({ row, i }))
-    .filter(({ i }) => selected.has(i))
-    .map(({ row, i }) => ({
-      key: String(i),
+  function toSelection(row: OrderDemandRow): DemandSelection {
+    return {
+      key: rowKey(row),
       productId: row.productId,
       productName: row.productName,
       partId: row.partId,
       partName: row.partName,
       comboLabel: row.comboLabel,
       filamentIds: row.filamentIds,
-      neededUnits: row.neededUnits,
-    }))
+      neededUnits: qtyFor(row),
+    }
+  }
+
+  function toggle(key: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  async function defaultsFor(productId: string): Promise<ProductProductionDefaults> {
+    const cached = defaultsCache.current.get(productId)
+    if (cached) return cached
+    const fresh = await getProductProductionDefaults(productId)
+    defaultsCache.current.set(productId, fresh)
+    return fresh
+  }
+
+  // Registro em 1 clique de N linhas. Qualquer impedimento (ficha incompleta,
+  // rolo que não cobre) abre o formulário completo -- nunca registra pela metade.
+  async function registerRows(target: OrderDemandRow[]) {
+    if (target.length === 0 || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const items: OneClickItem[] = []
+      for (const row of target) {
+        const built = buildOneClickItem(
+          { productId: row.productId, partId: row.partId, filamentIds: row.filamentIds, quantity: qtyFor(row) },
+          await defaultsFor(row.productId),
+          todayIso(),
+        )
+        if ('error' in built) {
+          setError(`${row.productName}${row.partName ? ` — ${row.partName}` : ''}: ${built.error} Abrindo o formulário para completar.`)
+          setAdjust(target.map(toSelection))
+          return
+        }
+        items.push(built)
+      }
+
+      const short = rollShortfalls(items, stockById)
+      if (short.length > 0) {
+        const s = short[0]
+        setError(`${filamentName(s.filamentId)} não cobre: precisa de ${s.needed.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} g e tem ${s.available.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} g. Abrindo o formulário para ajustar.`)
+        setAdjust(target.map(toSelection))
+        return
+      }
+
+      const fd = new FormData()
+      fd.set('itemsJson', JSON.stringify(items))
+      const result = await createProductionRunDemandBatch(fd)
+      if (!result.success) {
+        setError(result.error ?? 'Erro ao registrar produção.')
+        return
+      }
+      const units = items.reduce((sum, i) => sum + i.quantitySuccess, 0)
+      setToast({ message: `${units} ${units === 1 ? 'peça registrada' : 'peças registradas'}.`, batchId: result.batchId })
+      setSelected(new Set())
+      router.refresh()
+    } catch {
+      setError('Erro ao registrar produção.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function undo() {
+    const batchId = toast?.batchId
+    setToast(null)
+    if (!batchId) return
+    const result = await undoProductionBatch(batchId)
+    if (!result.success) setError(result.error ?? 'Não foi possível desfazer.')
+    router.refresh()
+  }
+
+  const selectedRows = rows.filter((r) => selected.has(rowKey(r)))
 
   return (
     <div className="tk-panel mt-4 p-4">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Peças pendentes de encomenda</h2>
           <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">{rows.length}</span>
         </div>
-      </div>
-      <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Ordenado pelo prazo de entrega mais próximo -- não pela ordem em que o pedido foi criado.</p>
-
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex gap-3 text-xs font-medium">
-          <button type="button" onClick={selectAll} className="text-violet-600 hover:underline dark:text-violet-400">Marcar todas</button>
-          <button type="button" onClick={selectNone} className="text-violet-600 hover:underline dark:text-violet-400">Desmarcar todas</button>
+        <div className="flex flex-wrap items-center gap-3 text-xs font-medium">
+          <button type="button" onClick={() => setSelected(new Set(rows.map(rowKey)))} className="text-violet-600 hover:underline dark:text-violet-400">Marcar todas</button>
+          <button type="button" onClick={() => setSelected(new Set())} className="text-violet-600 hover:underline dark:text-violet-400">Desmarcar todas</button>
+          {selectedRows.length > 0 && (
+            <>
+              <button type="button" onClick={() => setAdjust(selectedRows.map(toSelection))} className="text-violet-600 hover:underline dark:text-violet-400">
+                Ajustar selecionadas
+              </button>
+              <button type="button" disabled={busy} onClick={() => registerRows(selectedRows)} className="tk-btn-primary px-3 py-1.5 text-xs disabled:opacity-60">
+                ✓ Registrar selecionadas ({selectedRows.length})
+              </button>
+            </>
+          )}
         </div>
-        {selected.size > 0 && (
-          <button type="button" onClick={() => setBatchOpen(true)} className="tk-btn-primary px-3 py-1.5 text-xs">
-            Registrar produção selecionadas ({selected.size})
-          </button>
-        )}
       </div>
+      <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+        Ordenado pelo prazo de entrega mais próximo. A quantidade ao lado é editável (produziu só parte? digite e clique ✓). Use Ajustar para falhas, filamento ou outras mudanças.
+      </p>
+      {error && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      <div className="mt-2 space-y-2">
-        {rows.map((row, i) => {
-          const deadline = getDeadlineBadge(new Date(row.deliveryDate), row.status)
-          const isPartial = row.reservedQuantity > 0
+      <div className="mt-3 space-y-3">
+        {groups.map((group) => {
+          const first = group.rows[0]
+          const deadline = getDeadlineBadge(new Date(first.deliveryDate), first.status)
           return (
-            <div key={i} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
-              <label className="flex min-w-0 flex-1 items-start gap-2">
-                <input
-                  type="checkbox"
-                  checked={selected.has(i)}
-                  onChange={() => toggle(i)}
-                  className="mt-1 shrink-0 rounded border"
-                />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
-                    {row.productName}{row.partName && <span className="text-slate-500 dark:text-slate-400"> — Peça: {row.partName}</span>}
-                    {row.comboLabel && <span className="text-violet-600 dark:text-violet-400"> — {row.comboLabel}</span>}
-                  </p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Pedido {ORDER_CHANNEL_LABELS[row.channel]}
-                    {row.buyerOrPlatform ? ` · ${row.buyerOrPlatform}` : row.orderNumber ? ` · #${row.orderNumber}` : ' · sem comprador informado'}
-                  </p>
-                  {isPartial && (
-                    <div className="mt-1 flex items-center gap-2">
-                      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-                        <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, (row.reservedQuantity / row.quantity) * 100)}%` }} />
-                      </div>
-                      <span className="text-xs text-slate-400 dark:text-slate-500">{row.reservedQuantity} de {row.quantity} reservado</span>
-                    </div>
+            <section key={group.orderItemId} className="rounded-lg border border-slate-200 dark:border-slate-700">
+              <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/60">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <h3 className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{first.productName}</h3>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    Pedido {ORDER_CHANNEL_LABELS[first.channel]}
+                    {first.buyerOrPlatform ? ` · ${first.buyerOrPlatform}` : first.orderNumber ? ` · #${first.orderNumber}` : ''}
+                  </span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${deadline.className}`}>{deadline.label}</span>
+                  {first.reservedQuantity > 0 && (
+                    <span className="text-xs text-slate-400 dark:text-slate-500">{first.reservedQuantity} de {first.quantity} reservado</span>
                   )}
                 </div>
-              </label>
-              <div className="flex shrink-0 items-center gap-3">
-                <div className="text-right">
-                  <p className="text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">{row.neededUnits} <span className="text-xs font-normal text-slate-400">falta produzir</span></p>
-                  <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${deadline.className}`}>{deadline.label}</span>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={() => setAdjust(group.rows.map(toSelection))} className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                    Ajustar
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => registerRows(group.rows)} className="tk-btn-primary px-3 py-1.5 text-xs disabled:opacity-60">
+                    ✓ Registrar todas ({group.rows.length})
+                  </button>
                 </div>
-                <Link
-                  href={`/production?${new URLSearchParams({
-                    newRunProductId: row.productId,
-                    ...(row.partId ? { newRunPartId: row.partId } : {}),
-                    newRunQty: String(row.neededUnits),
-                    ...(row.filamentIds && row.filamentIds.length === 1 ? { newRunFilamentId: row.filamentIds[0] } : {}),
-                  }).toString()}`}
-                  className="shrink-0 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-violet-700 dark:bg-violet-500 dark:text-slate-950 dark:hover:bg-violet-400"
-                >
-                  Registrar produção
-                </Link>
-              </div>
-            </div>
+              </header>
+              <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+                {group.rows.map((row) => {
+                  const key = rowKey(row)
+                  const fil = row.filamentIds?.length === 1 ? filaments.find((f) => f.id === row.filamentIds![0]) : null
+                  return (
+                    <li key={key} className="flex flex-wrap items-center gap-3 px-3 py-2">
+                      <input type="checkbox" checked={selected.has(key)} onChange={() => toggle(key)} aria-label={`Selecionar ${row.partName ?? row.productName}`} className="rounded border" />
+                      <div className="min-w-0 flex-1">
+                        <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{row.partName ?? row.productName}</span>
+                        {row.comboLabel && (
+                          <span className="ml-2 inline-flex items-center gap-1.5 text-xs text-violet-600 dark:text-violet-400">
+                            {fil?.colorHex && <span style={{ background: fil.colorHex }} className="inline-block h-2.5 w-2.5 rounded-full border border-black/10" />}
+                            {row.comboLabel}
+                          </span>
+                        )}
+                      </div>
+                      <label className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                        <input
+                          type="number"
+                          min={1}
+                          inputMode="numeric"
+                          value={qty[key] ?? String(row.neededUnits)}
+                          onChange={(e) => setQty((prev) => ({ ...prev, [key]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              registerRows([row])
+                            }
+                          }}
+                          aria-label={`Quantidade de ${row.partName ?? row.productName}`}
+                          className="tk-input-full w-16 text-center"
+                        />
+                        de <b className="text-slate-900 dark:text-slate-100">{row.neededUnits}</b> que faltam
+                      </label>
+                      <button type="button" onClick={() => setAdjust([toSelection(row)])} className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                        Ajustar
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => registerRows([row])} className="tk-btn-primary px-3 py-1.5 text-xs disabled:opacity-60">
+                        ✓ Produzido
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
           )
         })}
       </div>
 
       <DemandBatchRegisterForm
-        open={batchOpen}
-        onOpenChange={(open) => { setBatchOpen(open); if (!open) selectNone() }}
-        selection={selection}
+        open={adjust !== null}
+        onOpenChange={(open) => { if (!open) setAdjust(null) }}
+        selection={adjustSelection}
         printers={printers}
         filaments={filaments}
       />
+
+      {toast && <UndoToast message={toast.message} onUndo={toast.batchId ? undo : undefined} onDismiss={() => setToast(null)} durationMs={10000} />}
     </div>
   )
 }

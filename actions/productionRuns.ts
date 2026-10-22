@@ -27,7 +27,7 @@ import { reconcileOrderReservations } from '@/lib/orderReservations'
 // produtos cuja ProductAssembly foi desfeita em cascata por esta ação --
 // ver actions/assembly.ts#reverseExcessAssemblyForRun. Usado pelo botão
 // "Excluir" de /stock pra "sinalizar quais peças ficaram incompletas".
-type ActionResult = { success: boolean; error?: string; reversedFrom?: { productName: string; unitsReversed: number }[] }
+type ActionResult = { success: boolean; error?: string; reversedFrom?: { productName: string; unitsReversed: number }[]; batchId?: string }
 
 // Bug "pedido não migra sozinho pra Aguardando montagem": produzir uma
 // PEÇA de um produto composto (ou a "peça sintética" de um produto simples
@@ -682,6 +682,23 @@ export async function createProductionRunDemandBatch(formData: FormData): Promis
   revalidatePath('/assembly')
   revalidatePath('/stock')
   revalidatePath('/orders')
+  return { success: true, batchId }
+}
+
+// "Desfazer" do registro em 1 clique: exclui todas as produções criadas
+// pelo mesmo lote (batchId devolvido por createProductionRunDemandBatch),
+// uma a uma via deleteProductionRun -- que já devolve filamento/acessório/
+// insumo ao estoque, desfaz montagem que dependia delas e reconcilia os
+// pedidos. A pendência "volta" sozinha: ela é derivada das produções
+// existentes (getOrderDemandQueue), nunca um contador à parte.
+export async function undoProductionBatch(batchId: string): Promise<ActionResult> {
+  if (!batchId) return { success: false, error: 'Lote inválido.' }
+  const runs = await prisma.productionRun.findMany({ where: { batchId }, select: { id: true } })
+  if (runs.length === 0) return { success: false, error: 'Essas produções já foram removidas.' }
+  for (const { id } of runs) {
+    const result = await deleteProductionRun(id)
+    if (!result.success) return result
+  }
   return { success: true }
 }
 
