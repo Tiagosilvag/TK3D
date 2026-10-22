@@ -1,11 +1,13 @@
 import { prisma } from '@/lib/prisma'
-import { formatCurrency, formatDayHeader } from '@/lib/format'
+import { formatCurrency, formatDayHeader, ORDER_CHANNEL_LABELS } from '@/lib/format'
 import { getSaleProfit, getSaleBatchCountsByChannel } from '@/actions/sales'
 import { getProductCostBreakdown, getGiftProductOptions } from '@/actions/products'
 import { getProductVariantStockOptions } from '@/lib/reports'
 import type { PlatformFeeTier } from '@/lib/costing'
 import { DateRangeFilter } from '@/components/DateRangeFilter'
 import { resolveDateRange } from '@/lib/dateRange'
+import { PendingDeliveriesPanel, type ReadyOrderRow } from './PendingDeliveriesPanel'
+import { resolveOrderItemColorLabel } from '@/actions/orders'
 import { SalesExplorer, type SaleDayGroup, type SaleBatchRow, type SaleItemRow } from './SalesExplorer'
 import type { SaleChannel } from '@prisma/client'
 
@@ -238,6 +240,25 @@ export default async function SalesPage({
   const freightPercentOfSold = totalSaleAmount > 0 ? (totalFreightCost / totalSaleAmount) * 100 : 0
   const netMarginOnReceived = totalReceived > 0 ? (totalProfit / totalReceived) * 100 : null
 
+  // Pedidos prontos (variação reservada), exceto consignados -- "✓ Entregar".
+  const readyOrderRecords = await prisma.orderItem.findMany({
+    where: { status: 'PRONTO_RESERVADO', order: { channel: { not: 'CONSIGNADO' } } },
+    include: { product: { select: { name: true } }, order: { select: { channel: true, buyerOrPlatform: true, deliveryDate: true } } },
+    orderBy: { order: { deliveryDate: 'asc' } },
+  })
+  const readyOrders: ReadyOrderRow[] = await Promise.all(
+    readyOrderRecords.map(async (i) => ({
+      id: i.id,
+      productName: i.product.name,
+      quantity: i.quantity,
+      unitPrice: i.unitPrice.toNumber(),
+      buyer: i.order.buyerOrPlatform,
+      channelLabel: ORDER_CHANNEL_LABELS[i.order.channel],
+      deliveryLabel: i.order.deliveryDate.toLocaleDateString('pt-BR'),
+      variation: i.colorComboKey ? ((await resolveOrderItemColorLabel(i.productId, i.colorComboKey))?.label ?? null) : null,
+    })),
+  )
+
   return (
     <div className="tk-page">
       <h1 className="tk-page-title">Vendas</h1>
@@ -271,6 +292,8 @@ export default async function SalesPage({
           <p className="text-xs text-slate-400 dark:text-slate-500">por venda</p>
         </div>
       </div>
+
+      <PendingDeliveriesPanel rows={readyOrders} />
 
       <DateRangeFilter action="/sales" from={range.from} to={range.to} hiddenParams={{ channel: activeChannel }} />
 

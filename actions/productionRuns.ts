@@ -66,6 +66,10 @@ async function maybeReconcileAfterProduction(productId: string, filamentId: stri
   })
   if (!needsAssembly) {
     await reconcileOrderReservations(productId, filamentId)
+    // Pedido SEM cor específica (colorComboKey nulo, a maioria) também precisa
+    // enxergar a unidade recém-produzida -- só reconciliar a chave do
+    // filamento deixava ele "Aguardando produção" até alguém abrir a fila.
+    await reconcileOrderReservations(productId, null)
     return
   }
   const pendingCombos = await prisma.orderItem.findMany({

@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { orderHeaderSchema, orderItemSchema, orderStatusEnum, updateOrderItemSchema, orderDraftItemUpdateSchema } from '@/lib/validation/order'
 import { formatCurrency } from '@/lib/format'
 import { getProductCostBreakdown } from '@/actions/products'
-import { consumePackagingForSale, deleteSale } from '@/actions/sales'
+import { consumePackagingForSale, deleteSale, getSaleProfit } from '@/actions/sales'
 import { deleteConsignmentDelivery } from '@/actions/consignmentDeliveries'
 import { resolveSalePlatformFee } from '@/actions/marketplacePlatforms'
 import { buildSaleCostSnapshot } from '@/lib/costing'
@@ -1330,4 +1330,23 @@ export async function getItemsAwaitingAssembly(orderItemIds: string[]): Promise<
     include: { product: { select: { name: true } }, order: { select: { buyerOrPlatform: true } } },
   })
   return items.map((i) => ({ orderItemId: i.id, productName: i.product.name, buyerOrPlatform: i.order.buyerOrPlatform }))
+}
+
+// "✓ Entregar" na tela de Vendas: registra a venda do pedido pronto (mesma
+// regra de "Marcar entregue" -- updateOrderItemStatus) e devolve o lucro da
+// venda pro aviso. O "Desfazer" é undoOrderItemDelivery.
+export async function deliverOrderItem(id: string): Promise<{ success: boolean; error?: string; profit?: number; saleTotal?: number }> {
+  const item = await prisma.orderItem.findUnique({ where: { id } })
+  if (!item) return { success: false, error: 'Item de pedido não encontrado.' }
+  if (item.status !== 'PRONTO_RESERVADO' || item.reservedQuantity < item.quantity) {
+    return { success: false, error: 'Este pedido ainda não está pronto em estoque.' }
+  }
+  const fd = new FormData()
+  fd.set('status', 'ENTREGUE')
+  const result = await updateOrderItemStatus(id, fd)
+  if (!result.success) return result
+  const done = await prisma.orderItem.findUnique({ where: { id } })
+  if (!done?.saleId) return { success: true }
+  const profit = await getSaleProfit(done.saleId)
+  return { success: true, profit: profit.profit, saleTotal: profit.saleTotal }
 }

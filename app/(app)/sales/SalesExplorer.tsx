@@ -9,6 +9,7 @@ import { ActionsMenu } from '@/components/ActionsMenu'
 import { deleteSale, removeSaleGiftUsage, removeSaleFreight } from '@/actions/sales'
 import { SaleForm, type ProductOption, type PlatformFeeInfo, type GiftProductOption } from './SaleForm'
 import { PlatformFeesPanel } from './PlatformFeesPanel'
+import { SaleQuantityPriceEdit } from './SaleQuantityPriceEdit'
 import type { VariantAttr } from '@/lib/reports'
 import type { SaleChannel } from '@prisma/client'
 
@@ -164,7 +165,7 @@ function BatchRow({ batch, expanded, onToggle }: { batch: SaleBatchRow; expanded
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
                     {item.productName}
-                    <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">{item.quantity} × {formatCurrency(item.unitPrice)}</span>
+                    <span className="ml-2 align-middle"><SaleQuantityPriceEdit id={item.id} quantity={item.quantity} unitPrice={item.unitPrice} /></span>
                   </p>
                   {item.colorAttrs.length > 0 && (
                     <div className="mt-1 flex flex-wrap items-center gap-1">

@@ -6,6 +6,7 @@ import { getProductCostBreakdown, getGiftProductCostBreakdown } from './products
 import { buildSaleCostSnapshot, type SaleCostSnapshot } from '@/lib/costing'
 import { resolveSalePlatformFee } from './marketplacePlatforms'
 import { revalidatePath } from 'next/cache'
+import { getProductVariantStockOptions } from '@/lib/reports'
 import type { Prisma, SaleChannel } from '@prisma/client'
 
 type ActionResult = { success: boolean; error?: string }
@@ -198,6 +199,49 @@ export async function removeSaleFreight(id: string): Promise<ActionResult> {
 // Mesmo raciocínio pro consumo de embalagem: desfaz o que a venda antiga
 // tinha consumido e reaplica com produto/quantidade novos (podem ter
 // mudado), nunca os dois somados/divergentes.
+// Corrige quantidade e valor unitário direto na linha da venda (digitar +
+// Enter). Refaz custo/taxa/embalagem como updateSale. A quantidade nunca passa
+// do estoque montado da variação vendida: se passar, recusa e nada muda.
+// Devolve os valores anteriores pro "Desfazer".
+export async function updateSaleQuantityPrice(
+  id: string,
+  quantity: number,
+  unitPrice: number,
+): Promise<{ success: boolean; error?: string; previous?: { quantity: number; unitPrice: number } }> {
+  if (!Number.isInteger(quantity) || quantity < 1) return { success: false, error: 'A quantidade deve ser um número inteiro maior que zero.' }
+  if (!(unitPrice > 0)) return { success: false, error: 'Informe um valor unitário maior que zero.' }
+  const sale = await prisma.sale.findUnique({ where: { id } })
+  if (!sale) return { success: false, error: 'Venda não encontrada.' }
+
+  const delta = quantity - sale.quantity
+  if (delta > 0 && sale.colorComboKey) {
+    const info = (await getProductVariantStockOptions()).find((p) => p.productId === sale.productId)
+    const variant = info?.variants.find((v) => v.key === sale.colorComboKey)
+    // `available` já desconta ESTA venda (ela existe) -- só o acréscimo precisa caber.
+    if (variant && delta > variant.available) {
+      return { success: false, error: `Só há ${variant.available} em estoque dessa variação para acrescentar (faltam ${delta - variant.available}). Mantive ${sale.quantity}.` }
+    }
+  }
+
+  const breakdown = await getProductCostBreakdown(sale.productId)
+  const platformFee = await resolveSalePlatformFee(sale.channel, unitPrice, sale.productId)
+  const snapshot = buildSaleCostSnapshot(
+    breakdown,
+    quantity,
+    platformFee ? { feePercent: platformFee.feePercent, feeFixed: platformFee.feeFixed, amountTotal: platformFee.feeAmountPerUnit * quantity } : undefined,
+  )
+  await prisma.$transaction(async (tx) => {
+    await restorePackagingForSale(tx, id)
+    await tx.sale.update({ where: { id }, data: { quantity, unitPrice, costSnapshot: snapshot as unknown as Prisma.InputJsonValue } })
+    await consumePackagingForSale(tx, id, sale.productId, quantity)
+  })
+  revalidatePath('/sales')
+  revalidatePath('/packaging')
+  revalidatePath('/stock')
+  revalidatePath('/dashboard')
+  return { success: true, previous: { quantity: sale.quantity, unitPrice: sale.unitPrice.toNumber() } }
+}
+
 export async function updateSale(id: string, formData: FormData): Promise<ActionResult> {
   const parsed = parse(formData)
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
