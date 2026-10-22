@@ -1,5 +1,5 @@
 import { formatCurrency } from '@/lib/format'
-import type { PlatformFeeInfo } from './SaleForm'
+import type { PlatformFeeInfo } from './types'
 
 // Redesign "Vendas" §5: extraído de dentro de SaleForm.tsx (vivia sempre
 // visível no rodapé do formulário) -- agora fica atrás do botão "Ver

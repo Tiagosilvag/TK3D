@@ -1119,6 +1119,19 @@ export interface SaleCostSnapshot {
     feePercent: number
     feeFixed: number
     amountTotal: number
+    // Taxa digitada à mão no modal "Nova venda": editar preço ou quantidade
+    // depois NÃO a recalcula (continua o valor informado).
+    manual?: boolean
+  }
+  // Venda feita pelo modal "Nova venda": custo de produção por unidade SEM
+  // embalagem + as embalagens escolhidas pra ESTA venda (custo unitário
+  // congelado). `total` já soma os dois, então todo leitor antigo continua
+  // certo. Ausente em venda anterior (embalagem vinha só da ficha do produto,
+  // embutida em unitCost.finalCost).
+  productionCostPerUnit?: number
+  packaging?: {
+    lines: { packagingItemId: string; name: string; quantityPerUnit: number; unitCost: number }[]
+    total: number
   }
 }
 

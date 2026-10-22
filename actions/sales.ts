@@ -7,6 +7,7 @@ import { buildSaleCostSnapshot, type SaleCostSnapshot } from '@/lib/costing'
 import { resolveSalePlatformFee } from './marketplacePlatforms'
 import { revalidatePath } from 'next/cache'
 import { getProductVariantStockOptions } from '@/lib/reports'
+import { getSaleModalInput, updateSaleFromModal } from './saleModal'
 import type { Prisma, SaleChannel } from '@prisma/client'
 
 type ActionResult = { success: boolean; error?: string }
@@ -212,6 +213,16 @@ export async function updateSaleQuantityPrice(
   if (!(unitPrice > 0)) return { success: false, error: 'Informe um valor unitário maior que zero.' }
   const sale = await prisma.sale.findUnique({ where: { id } })
   if (!sale) return { success: false, error: 'Venda não encontrada.' }
+
+  // Venda feita pelo modal "Nova venda" (embalagem própria, taxa possivelmente
+  // manual): refaz pelo mesmo caminho do modal, mantendo tudo o mais.
+  if ((sale.costSnapshot as unknown as SaleCostSnapshot | null)?.packaging) {
+    const input = await getSaleModalInput(id)
+    if (!input) return { success: false, error: 'Venda não encontrada.' }
+    const result = await updateSaleFromModal(id, { ...input, quantity, unitPrice })
+    if (!result.success) return { success: false, error: result.error }
+    return { success: true, previous: { quantity: sale.quantity, unitPrice: sale.unitPrice.toNumber() } }
+  }
 
   const delta = quantity - sale.quantity
   if (delta > 0 && sale.colorComboKey) {

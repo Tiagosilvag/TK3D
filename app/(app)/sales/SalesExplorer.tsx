@@ -1,13 +1,18 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { formatCurrency, getSaleChannelBadge, getMarginBadge } from '@/lib/format'
 import { VariantChip } from '@/components/VariantChip'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { StatusBadge } from '@/components/StatusBadge'
 import { ActionsMenu } from '@/components/ActionsMenu'
 import { deleteSale, removeSaleGiftUsage, removeSaleFreight } from '@/actions/sales'
-import { SaleForm, type ProductOption, type PlatformFeeInfo, type GiftProductOption } from './SaleForm'
+import { NewSaleModal, type SaleModalProduct, type SaleModalPackagingItem } from './NewSaleModal'
+import type { PlatformFeeInfo, GiftProductOption } from './types'
+import type { SaleModalInput } from '@/actions/saleModal'
+import { undoCreatedSale } from '@/actions/saleModal'
+import { UndoToast } from '@/components/UndoToast'
 import { PlatformFeesPanel } from './PlatformFeesPanel'
 import { SaleQuantityPriceEdit } from './SaleQuantityPriceEdit'
 import type { VariantAttr } from '@/lib/reports'
@@ -206,19 +211,23 @@ export function SalesExplorer({
   activeChannel,
   range,
   products,
+  packagingItems,
+  recentProductIds,
   platforms,
   giftProducts,
-  editingSale,
+  editing,
   defaultProductId,
 }: {
   dayGroups: SaleDayGroup[]
   channelCounts: Record<string, number>
   activeChannel: SaleChannel | undefined
   range: { from: string; to: string }
-  products: ProductOption[]
+  products: SaleModalProduct[]
+  packagingItems: SaleModalPackagingItem[]
+  recentProductIds: string[]
   platforms: PlatformFeeInfo[]
   giftProducts: GiftProductOption[]
-  editingSale?: Parameters<typeof SaleForm>[0]['editingSale']
+  editing?: { saleId: string; input: SaleModalInput }
   // 2.2: link de ação rápida "Registrar venda direta" em /stock chega com
   // ?productId=... pra pré-selecionar o produto -- formulário já abre
   // direto nesse caso (senão o link cairia numa tela sem o form visível).
@@ -226,21 +235,29 @@ export function SalesExplorer({
 }) {
   const [search, setSearch] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const [formOpen, setFormOpen] = useState(Boolean(editingSale) || Boolean(defaultProductId))
+  const router = useRouter()
+  const [formOpen, setFormOpen] = useState(Boolean(editing) || Boolean(defaultProductId))
   const [taxasOpen, setTaxasOpen] = useState(false)
+  const [toast, setToast] = useState<{ message: string; undoSaleId: string | null } | null>(null)
 
-  // Bug "clicar em Editar parece voltar pro início da tela": `formOpen`
-  // acima só usa `editingSale` como valor INICIAL do useState -- lido uma
-  // vez só, na montagem. Clicar em "Editar" num item (link pra
-  // /sales?editId=...) troca a prop `editingSale` numa navegação
-  // client-side pro MESMO componente já montado (não remonta), então
-  // esse useState nunca reabre o formulário sozinho -- a URL muda, o
-  // Next rola a página pro topo (comportamento padrão de <Link>), mas
-  // nada novo aparece ali, parecendo que "voltou pro índice". Reabre
-  // explicitamente sempre que a prop chegar preenchida.
+  // "Editar" chega como /sales?editId=...: a prop troca numa navegação
+  // client-side sem remontar, então reabre o modal explicitamente.
   useEffect(() => {
-    if (editingSale) setFormOpen(true)
-  }, [editingSale])
+    if (editing) setFormOpen(true)
+  }, [editing])
+
+  function closeModal() {
+    setFormOpen(false)
+    if (editing || defaultProductId) router.replace('/sales')
+  }
+
+  async function undoSale() {
+    const id = toast?.undoSaleId
+    setToast(null)
+    if (!id) return
+    await undoCreatedSale(id)
+    router.refresh()
+  }
 
   const allBatchIds = useMemo(() => dayGroups.flatMap((d) => d.batches.map((b) => b.batchId)), [dayGroups])
   const allExpanded = allBatchIds.length > 0 && allBatchIds.every((id) => expanded.has(id))
@@ -283,8 +300,8 @@ export function SalesExplorer({
           <button type="button" onClick={() => setTaxasOpen((v) => !v)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
             {taxasOpen ? 'Ocultar taxas cadastradas' : 'Ver taxas cadastradas'}
           </button>
-          <button type="button" onClick={() => setFormOpen((v) => !v)} className="tk-btn-primary">
-            {formOpen ? 'Fechar' : '+ Nova venda'}
+          <button type="button" onClick={() => setFormOpen(true)} className="tk-btn-primary">
+            + Nova venda
           </button>
         </div>
       </div>
@@ -296,17 +313,23 @@ export function SalesExplorer({
       )}
 
       {formOpen && (
-        <div className="mt-3">
-          {/* Mesmo motivo do useEffect acima: os campos internos de
-              SaleForm (channel/unitPrice/quantity/...) também só lêem
-              `editingSale` como valor inicial do useState -- sem a
-              `key`, trocar de "editar venda A" pra "editar venda B" (ou
-              de "nova venda" pra "editar") manteria os campos da venda
-              anterior na tela. A key força o React a desmontar/remontar
-              o formulário do zero a cada alvo diferente. */}
-          <SaleForm key={editingSale?.id ?? 'new'} products={products} platforms={platforms} giftProducts={giftProducts} editingSale={editingSale} defaultProductId={defaultProductId} />
-        </div>
+        <NewSaleModal
+          key={editing?.saleId ?? 'new'}
+          products={products}
+          packagingItems={packagingItems}
+          giftProducts={giftProducts}
+          platforms={platforms}
+          recentProductIds={recentProductIds}
+          editing={editing}
+          defaultProductId={defaultProductId}
+          onClose={closeModal}
+          onSaved={(message, undoSaleId) => {
+            setToast({ message, undoSaleId })
+            router.refresh()
+          }}
+        />
       )}
+      {toast && <UndoToast message={toast.message} onUndo={toast.undoSaleId ? undoSale : undefined} onDismiss={() => setToast(null)} durationMs={10000} />}
 
       <div className="mb-3 mt-6 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-1">

@@ -9,6 +9,9 @@ import { resolveDateRange } from '@/lib/dateRange'
 import { PendingDeliveriesPanel, type ReadyOrderRow } from './PendingDeliveriesPanel'
 import { resolveOrderItemColorLabel } from '@/actions/orders'
 import { SalesExplorer, type SaleDayGroup, type SaleBatchRow, type SaleItemRow } from './SalesExplorer'
+import type { SaleModalProduct, SaleModalPackagingItem } from './NewSaleModal'
+import { getSaleModalInput } from '@/actions/saleModal'
+import { productionCostExPackaging } from '@/lib/saleModal'
 import type { SaleChannel } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -24,7 +27,7 @@ export default async function SalesPage({
     : undefined
   const range = resolveDateRange({ from, to })
 
-  const [sales, productOptions, editingSaleRecord, platformRows, giftProducts, channelCounts] = await Promise.all([
+  const [sales, productOptions, editingInput, platformRows, giftProducts, channelCounts, settings, packagingRecords, usageRecords, directPriceRecords, recentSales] = await Promise.all([
     prisma.sale.findMany({
       where: { ...(activeChannel ? { channel: activeChannel } : {}), saleDate: { gte: range.gte, lte: range.lte } },
       orderBy: { saleDate: 'desc' },
@@ -33,7 +36,7 @@ export default async function SalesPage({
     // Brinde nunca é vendido sozinho -- excluído do seletor (já filtrado
     // dentro de getProductVariantStockOptions).
     getProductVariantStockOptions(),
-    editId ? prisma.sale.findUnique({ where: { id: editId } }) : null,
+    editId ? getSaleModalInput(editId) : null,
     // Melhoria "Redesign Vendas": taxas cadastradas de cada plataforma,
     // pro painel de referência (4) e pra prévia ao vivo do formulário (3)
     // calcularem a taxa client-side sem round-trip a cada campo mudado --
@@ -45,6 +48,11 @@ export default async function SalesPage({
     // mesmo período filtrado, independente do canal ativo -- pras abas
     // mostrarem a contagem de TODOS os canais ao mesmo tempo.
     getSaleBatchCountsByChannel({ gte: range.gte, lte: range.lte }),
+    prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
+    prisma.packagingItem.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+    prisma.productPackagingUsage.findMany(),
+    prisma.productChannelPrice.findMany({ where: { channel: 'DIRETA' } }),
+    prisma.sale.findMany({ orderBy: { createdAt: 'desc' }, take: 40, select: { productId: true } }),
   ])
 
   // Brinde: anexo por LOTE (não por linha de Sale) -- busca depois de
@@ -72,7 +80,22 @@ export default async function SalesPage({
   // vez. O custo não varia por cor/variação (o modelo de custeio não
   // diferencia por cor), então um valor por produto basta.
   const costBreakdowns = await Promise.all(productOptions.map((p) => getProductCostBreakdown(p.productId)))
-  const productOptionsWithCost = productOptions.map((p, i) => ({ ...p, unitCost: costBreakdowns[i].finalCost }))
+  const flags = {
+    includePackagingCost: settings.includePackagingCost,
+    includeFailureRate: settings.includeFailureRate,
+    failureRatePercent: settings.failureRatePercent.toNumber(),
+  }
+  const directPriceByProduct = new Map(directPriceRecords.map((r) => [r.productId, r.price.toNumber()]))
+  const modalProducts: SaleModalProduct[] = productOptions.map((p, i) => ({
+    productId: p.productId,
+    productName: p.productName,
+    variants: p.variants.map((v) => ({ key: v.key, label: v.label, colorHex: v.colorHex, available: v.available, attrs: v.attrs })),
+    productionCostPerUnit: productionCostExPackaging(costBreakdowns[i], flags),
+    defaultPackaging: usageRecords.filter((u) => u.productId === p.productId).map((u) => ({ packagingItemId: u.packagingItemId, quantityPerUnit: u.quantity.toNumber() })),
+    directPrice: directPriceByProduct.get(p.productId) ?? null,
+  }))
+  const packagingItems: SaleModalPackagingItem[] = packagingRecords.map((r) => ({ id: r.id, name: r.name, stock: r.currentStock.toNumber(), unitCost: r.avgUnitCost.toNumber() }))
+  const recentProductIds = [...new Set(recentSales.map((r) => r.productId))].slice(0, 6)
 
   const platforms = platformRows.map((p) => ({
     kind: p.platform,
@@ -80,20 +103,6 @@ export default async function SalesPage({
     feeFixed: p.feeFixed.toNumber(),
     feeTiers: p.feeTiers as unknown as PlatformFeeTier[] | null,
   }))
-
-  const editingSale = editingSaleRecord
-    ? {
-        id: editingSaleRecord.id,
-        channel: editingSaleRecord.channel,
-        productId: editingSaleRecord.productId,
-        quantity: editingSaleRecord.quantity,
-        unitPrice: editingSaleRecord.unitPrice.toNumber(),
-        saleDate: editingSaleRecord.saleDate.toISOString().slice(0, 10),
-        buyerOrPlatform: editingSaleRecord.buyerOrPlatform,
-        notes: editingSaleRecord.notes,
-        colorComboKey: editingSaleRecord.colorComboKey,
-      }
-    : undefined
 
   // getSaleProfit (task-10 brief, new feature) now returns {profit, estimated}
   // instead of a bare number -- estimated is true only for a legacy sale
@@ -303,10 +312,12 @@ export default async function SalesPage({
           channelCounts={channelCounts}
           activeChannel={activeChannel}
           range={{ from: range.from, to: range.to }}
-          products={productOptionsWithCost}
+          products={modalProducts}
+          packagingItems={packagingItems}
+          recentProductIds={recentProductIds}
           platforms={platforms}
           giftProducts={giftProducts}
-          editingSale={editingSale}
+          editing={editingInput && editId ? { saleId: editId, input: editingInput } : undefined}
           defaultProductId={productId}
         />
       </div>
