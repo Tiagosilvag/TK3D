@@ -829,6 +829,23 @@ model ProductionRun {
 // pro lado do ProductionRun por padrão (Restrict) seria estranho já que
 // isso é conteúdo interno do próprio run -- cascade explícito: some junto
 // se o run for apagado (deleteProductionRun já reverte estoque antes).
+// Registro de alterações de uma produção (editar/corrigir quantidades/excluir).
+// Guarda o estado anterior pra auditar uma correção feita por engano e pra
+// "restaurar" uma produção excluída. Sem FK: sobrevive à exclusão da run.
+model ProductionRunLog {
+  id              String   @id @default(cuid())
+  productionRunId String
+  productId       String
+  // EDITADA | QUANTIDADES | EXCLUIDA
+  kind            String
+  summary         String
+  before          Json
+  after           Json?
+  createdAt       DateTime @default(now())
+
+  @@index([productionRunId])
+}
+
 model ProductionRunFilamentUsage {
   id              String        @id @default(cuid())
   productionRunId String

@@ -8,7 +8,7 @@ import { StatusBadge } from '@/components/StatusBadge'
 import { ActionsMenu } from '@/components/ActionsMenu'
 import { ConfirmDeleteForm } from '@/components/ConfirmDeleteForm'
 import { CancelProductionRunForm } from './CancelProductionRunForm'
-import { deleteProductionRun, getPlateDetail, updateProductionRunFull, type ProductionByProductRow, type PlateListRow, type PlateDetail, type ProductionRunEditInput } from '@/actions/productionRuns'
+import { deleteProductionRun, getPlateDetail, updateProductionRunFull, restoreProductionRun, type ProductionByProductRow, type PlateListRow, type PlateDetail, type ProductionRunEditInput } from '@/actions/productionRuns'
 import { UndoToast } from '@/components/UndoToast'
 import { QuantityCell } from './QuantityCell'
 import { takeProductionUndo, type ProductionUndo } from './productionUndo'
@@ -107,7 +107,9 @@ export function ProductionRunsExplorer({
     const current = undo
     setUndo(null)
     if (!current) return
-    const result = await updateProductionRunFull(current.runId, current.previous)
+    const result = current.kind === 'restore'
+      ? await restoreProductionRun(current.data)
+      : await updateProductionRunFull(current.runId, current.previous)
     if (!result.success) setUndoError(result.error ?? 'Não foi possível desfazer.')
     router.refresh()
   }

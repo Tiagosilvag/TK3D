@@ -1319,3 +1319,15 @@ export async function getRecentOrderBuyers(limit = 6): Promise<string[]> {
   })
   return rows.map((r) => r.buyerOrPlatform!).filter(Boolean)
 }
+
+// Depois de registrar produção em 1 clique: quais itens de pedido chegaram a
+// "Aguardando montagem" (todas as peças existem, falta montar) -- usado pelo
+// aviso "o pedido segue para Aguardando montagem".
+export async function getItemsAwaitingAssembly(orderItemIds: string[]): Promise<{ orderItemId: string; productName: string; buyerOrPlatform: string | null }[]> {
+  if (orderItemIds.length === 0) return []
+  const items = await prisma.orderItem.findMany({
+    where: { id: { in: orderItemIds }, status: 'AGUARDANDO_MONTAGEM' },
+    include: { product: { select: { name: true } }, order: { select: { buyerOrPlatform: true } } },
+  })
+  return items.map((i) => ({ orderItemId: i.id, productName: i.product.name, buyerOrPlatform: i.order.buyerOrPlatform }))
+}

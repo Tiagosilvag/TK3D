@@ -52,3 +52,20 @@ describe('groupByOrderItem', () => {
     expect(g.map((x) => [x.orderItemId, x.rows.length])).toEqual([['a', 2], ['b', 1]])
   })
 })
+
+import { rollTotals } from '@/lib/demandOneClick'
+
+describe('rollTotals', () => {
+  it('soma o consumo (gramas × planejada + desperdício) por rolo entre as linhas', () => {
+    const totals = rollTotals(
+      [
+        { quantityPlanned: 2, filaments: [{ filamentId: 'preto', weightGramsPerUnit: 10, gramsWasted: 1 }] },
+        { quantityPlanned: 3, filaments: [{ filamentId: 'preto', weightGramsPerUnit: 5, gramsWasted: 0 }, { filamentId: 'branco', weightGramsPerUnit: 2, gramsWasted: 0 }, { filamentId: '', weightGramsPerUnit: 9, gramsWasted: 0 }] },
+      ],
+      new Map([['preto', 40]]),
+    )
+    expect(totals.get('preto')).toEqual({ used: 36, available: 40 })
+    expect(totals.get('branco')).toEqual({ used: 6, available: 0 })
+    expect(totals.has('')).toBe(false)
+  })
+})

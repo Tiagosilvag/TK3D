@@ -2,7 +2,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getDeadlineBadge, ORDER_CHANNEL_LABELS } from '@/lib/format'
-import type { OrderDemandRow } from '@/actions/orders'
+import { getItemsAwaitingAssembly, type OrderDemandRow } from '@/actions/orders'
 import { getProductProductionDefaults, type ProductProductionDefaults } from '@/actions/products'
 import { createProductionRunDemandBatch, undoProductionBatch } from '@/actions/productionRuns'
 import { buildOneClickItem, groupByOrderItem, rollShortfalls, type OneClickItem } from '@/lib/demandOneClick'
@@ -125,7 +125,10 @@ export function DemandQueuePanel({ rows, printers, filaments }: { rows: OrderDem
         return
       }
       const units = items.reduce((sum, i) => sum + i.quantitySuccess, 0)
-      setToast({ message: `${units} ${units === 1 ? 'peça registrada' : 'peças registradas'}.`, batchId: result.batchId })
+      // Pedido que ficou com todas as peças: segue para Aguardando montagem.
+      const ready = await getItemsAwaitingAssembly([...new Set(target.map((r) => r.orderItemId))])
+      const readyText = ready.length > 0 ? ` ${ready.map((r) => `${r.productName}${r.buyerOrPlatform ? ` (${r.buyerOrPlatform})` : ''}`).join(', ')} segue${ready.length > 1 ? 'm' : ''} para Aguardando montagem.` : ''
+      setToast({ message: `${units} ${units === 1 ? 'peça registrada' : 'peças registradas'}.${readyText}`, batchId: result.batchId })
       setSelected(new Set())
       router.refresh()
     } catch {

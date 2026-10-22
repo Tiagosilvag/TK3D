@@ -3,7 +3,7 @@ import { toFilamentSelectOption } from '@/lib/filamentPicker'
 import { prisma } from '@/lib/prisma'
 import { EditProductionRunForm } from './EditProductionRunForm'
 import { ProductionRunsExplorer, type ProductionRunRow } from './ProductionRunsExplorer'
-import { getProductionByProduct, getPlates, getProductionRunEditData } from '@/actions/productionRuns'
+import { getProductionByProduct, getPlates, getProductionRunEditData, getProductionRunLogs } from '@/actions/productionRuns'
 import { getOrderDemandQueue, getAccessoryDemandQueue } from '@/actions/orders'
 import { DemandQueuePanel } from './DemandQueuePanel'
 import { AccessoryDemandPanel } from './AccessoryDemandPanel'
@@ -159,6 +159,7 @@ export default async function ProductionPage({
   // em estoque, mais os que a própria produção já usa -- um rolo que acabou
   // de zerar por causa dela não pode sumir da lista).
   const editData = editingRunRecord && editingRunRecord.status !== 'CANCELADA' ? await getProductionRunEditData(editingRunRecord.id) : null
+  const editLogs = editData ? await getProductionRunLogs(editData.id) : []
   const editFilaments = editData
     ? [
         ...filamentRecords.map((f) => ({ ...toFilamentSelectOption(f), pricePerGram: f.avgUnitCostPerGram.toNumber() })),
@@ -301,6 +302,7 @@ export default async function ProductionPage({
             data={editData}
             printers={printers.map((p) => ({ id: p.id, name: p.name }))}
             filaments={editFilaments}
+            logs={editLogs}
             returnTo={`/production${editQueryBase ? `?${editQueryBase}` : ''}`}
           />
         </div>

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
-import { createOrder, getOrderDemandQueue } from '@/actions/orders'
-import { createProductionRun, deleteProductionRun, updateProductionRunFull, updateProductionRunQuantities, getProductionRunEditData } from '@/actions/productionRuns'
+import { createOrder, getOrderDemandQueue, getItemsAwaitingAssembly } from '@/actions/orders'
+import { createProductionRun, deleteProductionRun, restoreProductionRun, getProductionRunLogs, updateProductionRunFull, updateProductionRunQuantities, getProductionRunEditData } from '@/actions/productionRuns'
 import { confirmAssembly } from '@/actions/assembly'
 
 const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL })
@@ -13,6 +13,7 @@ async function cleanup() {
   await prisma.stockConsumption.deleteMany()
   await prisma.productAssembly.deleteMany()
   await prisma.productionRun.deleteMany()
+  await prisma.productionRunLog.deleteMany()
   await prisma.productPartFilament.deleteMany()
   await prisma.productPart.deleteMany()
   await prisma.product.deleteMany()
@@ -163,5 +164,53 @@ describe('updateProductionRunFull', () => {
 
     expect((await deleteProductionRun(run.id)).success).toBe(true)
     expect(await missing()).toBe(2)
+  })
+})
+
+describe('registro de alterações, restauração e aviso de pedido', () => {
+  it('cada edição, correção de quantidades e exclusão entra no registro, com resumo', async () => {
+    const { printer, preto, product, cabeca } = await setup()
+    const run = await produce(product.id, cabeca.id, printer.id, preto.id, 3, 10)
+    expect((await updateProductionRunQuantities(run.id, 2, 1)).success).toBe(true)
+    const before = await getProductionRunEditData(run.id)
+    expect((await updateProductionRunFull(run.id, { ...before, filaments: [{ filamentId: preto.id, weightGramsPerUnit: 20, gramsWasted: 0 }] })).success).toBe(true)
+    expect((await deleteProductionRun(run.id)).success).toBe(true)
+
+    const logs = await getProductionRunLogs(run.id)
+    expect(logs.map((l) => l.kind).sort()).toEqual(['EDITADA', 'EXCLUIDA', 'QUANTIDADES'])
+    expect(logs.find((l) => l.kind === 'QUANTIDADES')!.summary).toBe('Sucesso 3 → 2 · Falhas 0 → 1')
+    expect(logs.find((l) => l.kind === 'EDITADA')!.summary).toBe('Gramas 30 → 60 g')
+  })
+
+  it('exclusão devolve o rolo; restaurar recria a produção e debita de novo', async () => {
+    const { printer, preto, product, cabeca } = await setup()
+    const run = await produce(product.id, cabeca.id, printer.id, preto.id, 2, 10)
+    expect(await stock(preto.id)).toBe(980)
+
+    const deleted = await deleteProductionRun(run.id)
+    expect(deleted.success).toBe(true)
+    expect(await stock(preto.id)).toBe(1000)
+    expect(await prisma.productionRun.findUnique({ where: { id: run.id } })).toBeNull()
+
+    const restored = await restoreProductionRun(deleted.restorable!)
+    expect(restored.success).toBe(true)
+    expect(await stock(preto.id)).toBe(980)
+    const back = await prisma.productionRun.findUniqueOrThrow({ where: { id: run.id } })
+    expect([back.quantityPlanned, back.quantitySuccess, back.filamentId]).toEqual([2, 2, preto.id])
+    expect((await restoreProductionRun(deleted.restorable!)).success).toBe(false) // já existe
+  })
+
+  it('pedido com todas as peças produzidas aparece como aguardando montagem', async () => {
+    const { printer, preto, product, cabeca, corpo } = await setup()
+    await createOrder(fd({
+      channel: 'DIRETA', orderDate: '2026-09-01', deliveryDate: '2026-09-20',
+      itemsJson: JSON.stringify([{ productId: product.id, quantity: 1, unitPrice: 30 }]),
+    }))
+    const item = await prisma.orderItem.findFirstOrThrow({ where: { productId: product.id } })
+    await produce(product.id, cabeca.id, printer.id, preto.id, 1, 10)
+    expect(await getItemsAwaitingAssembly([item.id])).toEqual([])
+    await produce(product.id, corpo.id, printer.id, preto.id, 1, 20)
+    const ready = await getItemsAwaitingAssembly([item.id])
+    expect(ready.map((r) => r.productName)).toEqual(['BONECO'])
   })
 })

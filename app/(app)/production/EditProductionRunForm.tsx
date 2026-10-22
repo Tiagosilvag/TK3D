@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { updateProductionRunFull, deleteProductionRun, type ProductionRunEditData } from '@/actions/productionRuns'
+import { updateProductionRunFull, deleteProductionRun, type ProductionRunEditData, type ProductionRunLogRow } from '@/actions/productionRuns'
 import { WASTE_REASON_LABELS } from '@/lib/format'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
@@ -29,11 +29,13 @@ export function EditProductionRunForm({
   printers,
   filaments,
   returnTo,
+  logs,
 }: {
   data: ProductionRunEditData
   printers: { id: string; name: string }[]
   filaments: FilamentFormOption[]
   returnTo: string
+  logs: ProductionRunLogRow[]
 }) {
   const router = useRouter()
   const [date, setDate] = useState(data.date)
@@ -103,9 +105,10 @@ export function EditProductionRunForm({
   }
 
   async function remove() {
-    if (!window.confirm('Excluir esta produção? O filamento volta ao estoque e a pendência do pedido é recalculada.')) return
+    // Sem janela de confirmação: o "Desfazer" (10 s, na lista) recria a produção.
     const result = await deleteProductionRun(data.id)
     if (!result.success) return setError(result.error ?? 'Erro ao excluir.')
+    if (result.restorable) stashProductionUndo({ kind: 'restore', data: result.restorable, message: 'Produção excluída.' })
     router.push(returnTo)
   }
 
@@ -234,6 +237,20 @@ export function EditProductionRunForm({
           Excluir produção
         </button>
       </div>
+
+      {logs.length > 0 && (
+        <div className="border-t border-slate-100 pt-3 dark:border-slate-800">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Registro de alterações</h3>
+          <ul className="mt-2 space-y-1 text-xs text-slate-600 dark:text-slate-400">
+            {logs.map((l) => (
+              <li key={l.id}>
+                <span className="tabular-nums text-slate-400 dark:text-slate-500">{new Date(l.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                {' · '}{l.summary}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </form>
   )
 }

@@ -98,3 +98,27 @@ export function groupByOrderItem<T extends { orderItemId: string }>(rows: T[]): 
   }
   return [...groups.entries()].map(([orderItemId, list]) => ({ orderItemId, rows: list }))
 }
+
+export interface RollUsage {
+  used: number
+  available: number
+}
+
+// Consumo total por rolo somando TODAS as linhas ativas do formulário (quem
+// divide o mesmo rolo disputa o mesmo estoque) -- base do aviso "Usa X g ·
+// sobram Y g" em cada linha de filamento.
+export function rollTotals(
+  items: { quantityPlanned: number; filaments: { filamentId: string; weightGramsPerUnit: number; gramsWasted: number }[] }[],
+  stockByFilamentId: ReadonlyMap<string, number>,
+): Map<string, RollUsage> {
+  const used = new Map<string, number>()
+  for (const item of items) {
+    for (const f of item.filaments) {
+      if (!f.filamentId) continue
+      used.set(f.filamentId, (used.get(f.filamentId) ?? 0) + f.weightGramsPerUnit * item.quantityPlanned + f.gramsWasted)
+    }
+  }
+  const result = new Map<string, RollUsage>()
+  for (const [filamentId, total] of used) result.set(filamentId, { used: total, available: stockByFilamentId.get(filamentId) ?? 0 })
+  return result
+}

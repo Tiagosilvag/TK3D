@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createProductionRunBatch, createPlate } from '@/actions/productionRuns'
 import { getProductProductionDefaults, type ProductProductionPartDefault } from '@/actions/products'
@@ -11,7 +11,8 @@ import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { failedFor, plannedChangePatch, successChangePatch, failedChangePatch, type FilamentComponentRow } from '@/lib/productionRunRow'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
-import { FilamentSelect, type FilamentFormOption } from '@/components/FilamentSelect'
+import { FilamentSelect, AddColorsButton, type FilamentFormOption } from '@/components/FilamentSelect'
+import { rollTotals, type RollUsage } from '@/lib/demandOneClick'
 import { ProductSelect } from '@/components/ProductSelect'
 import type { WasteReason } from '@prisma/client'
 
@@ -122,11 +123,22 @@ export function FilamentEditor({
   disabled,
   plannedQuantity,
   contextLabel,
+  rollUsage,
+  onRemove,
+  onAddColors,
+  autoFocusIndex,
 }: {
   filaments: FilamentComponentRow[]
   filamentOptions: FilamentOption[]
   onChange: (index: number, patch: Partial<FilamentComponentRow>) => void
   disabled?: boolean
+  // Consumo por rolo somando todas as linhas do formulário (aviso "Usa X g ·
+  // sobram Y g"), remover uma cor, adicionar várias de uma vez e foco no
+  // campo de gramas da última cor adicionada.
+  rollUsage?: Map<string, RollUsage>
+  onRemove?: (index: number) => void
+  onAddColors?: (filamentIds: string[]) => void
+  autoFocusIndex?: number | null
   // Planejada da peça: gramas por unidade × planejada = quanto cada cor
   // precisa ter em estoque (o seletor esmaece o que não cobre).
   plannedQuantity?: string
@@ -136,6 +148,28 @@ export function FilamentEditor({
     return (parseFloat(row.weightGramsPerUnit) || 0) * (parseInt(plannedQuantity ?? '', 10) || 0)
   }
   const siblingIds = filaments.map((f) => f.filamentId).filter(Boolean)
+  const grams = (v: number) => `${v.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} g`
+  function rollLine(filamentId: string) {
+    const usage = filamentId ? rollUsage?.get(filamentId) : undefined
+    if (!usage) return null
+    const short = usage.used > usage.available + 1e-9
+    return (
+      <p className={`col-span-full text-xs ${short ? 'font-medium text-red-600 dark:text-red-400' : 'text-slate-400 dark:text-slate-500'}`}>
+        {short ? `Não cobre: usa ${grams(usage.used)} e o rolo tem ${grams(usage.available)}.` : `Usa ${grams(usage.used)} · sobram ${grams(usage.available - usage.used)}`}
+      </p>
+    )
+  }
+  const addColors = onAddColors ? (
+    <AddColorsButton
+      options={filamentOptions}
+      onAdd={onAddColors}
+      contextIds={siblingIds}
+      contextLabel={contextLabel}
+      className="col-span-full text-left text-xs font-medium text-violet-600 hover:underline dark:text-violet-400"
+    >
+      + Adicionar outra cor (impressão multi-material)
+    </AddColorsButton>
+  ) : null
   function priceFor(filamentId: string): number {
     return filamentOptions.find((f) => f.id === filamentId)?.pricePerGram ?? 0
   }
@@ -170,6 +204,8 @@ export function FilamentEditor({
           Custo
           <input type="text" value={cost ? cost.toFixed(2) : '—'} disabled className="tk-input-full opacity-60" />
         </label>
+        {rollLine(f.filamentId)}
+        {addColors}
       </>
     )
   }
@@ -184,7 +220,8 @@ export function FilamentEditor({
               <th className="pb-1 pr-2 font-medium">Cor/Filamento</th>
               <th className="pb-1 pr-2 font-medium">Gramas</th>
               <th className="pb-1 pr-2 font-medium">R$/g</th>
-              <th className="pb-1 font-medium">Custo</th>
+              <th className="pb-1 pr-2 font-medium">Custo</th>
+              <th className="pb-1"></th>
             </tr>
           </thead>
           <tbody>
@@ -192,7 +229,8 @@ export function FilamentEditor({
               const pricePerGram = priceFor(f.filamentId)
               const cost = (parseFloat(f.weightGramsPerUnit) || 0) * pricePerGram
               return (
-                <tr key={i}>
+                <Fragment key={i}>
+                <tr>
                   <td className="py-1 pr-2">
                     <FilamentSelect options={filamentOptions} value={f.filamentId} onChange={(id) => onChange(i, { filamentId: id })} disabled={disabled} need={needFor(f)} contextIds={siblingIds} contextLabel={contextLabel} />
                   </td>
@@ -205,16 +243,32 @@ export function FilamentEditor({
                       onChange={(e) => onChange(i, { weightGramsPerUnit: e.target.value })}
                       className="tk-input-full"
                       disabled={disabled}
+                      autoFocus={autoFocusIndex === i}
+                      onFocus={(e) => e.target.select()}
                     />
                   </td>
                   <td className="py-1 pr-2 tabular-nums text-slate-500 dark:text-slate-400">{pricePerGram ? pricePerGram.toFixed(4) : '—'}</td>
-                  <td className="py-1 tabular-nums text-slate-500 dark:text-slate-400">{cost ? cost.toFixed(2) : '—'}</td>
+                  <td className="py-1 pr-2 tabular-nums text-slate-500 dark:text-slate-400">{cost ? cost.toFixed(2) : '—'}</td>
+                  <td className="py-1 text-right">
+                    {onRemove && filaments.length > 1 && !disabled && (
+                      <button type="button" onClick={() => onRemove(i)} aria-label="Remover cor" className="text-slate-400 hover:text-red-600">✕</button>
+                    )}
+                  </td>
                 </tr>
+                {rollUsage?.get(f.filamentId) && (
+                  <tr>
+                    <td colSpan={5} className="pb-1">
+                      <div className="grid">{rollLine(f.filamentId)}</div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               )
             })}
           </tbody>
         </table>
       </div>
+      {addColors && <div className="grid">{addColors}</div>}
     </div>
   )
 }
@@ -316,6 +370,17 @@ export function ProductionRunBatchForm({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- só na abertura inicial, não a cada render
   }, [open])
+
+  // Aberto a partir de uma pendência: tudo já vem preenchido, o foco inicial
+  // vai pro botão de confirmar (Enter registra).
+  const focusedSubmitRef = useRef(false)
+  useEffect(() => {
+    if (!open) { focusedSubmitRef.current = false; return }
+    if (initialProductId && rows.length > 0 && !focusedSubmitRef.current) {
+      focusedSubmitRef.current = true
+      dialogRef.current?.querySelector<HTMLButtonElement>('button[type="submit"]')?.focus()
+    }
+  }, [open, initialProductId, rows.length])
 
   useEffect(() => {
     if (!platePrinterId) {
@@ -461,6 +526,27 @@ export function ProductionRunBatchForm({
     )
   }
 
+  // Foco no campo de gramas da última cor adicionada ("+ Adicionar outra cor").
+  const [focusAdded, setFocusAdded] = useState<{ key: string; index: number } | null>(null)
+
+  function removeRowFilament(key: string, index: number) {
+    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, filaments: r.filaments.filter((_, i) => i !== index) } : r)))
+  }
+
+  function addRowFilaments(key: string, ids: string[]) {
+    let firstNew = 0
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.key !== key) return r
+        // Linha única ainda sem cor escolhida é substituída, não duplicada.
+        const kept = r.filaments.filter((f) => f.filamentId)
+        firstNew = kept.length
+        return { ...r, filaments: [...kept, ...ids.map((filamentId) => ({ filamentId, weightGramsPerUnit: '0', gramsWasted: '0' }))] }
+      }),
+    )
+    setFocusAdded({ key, index: firstNew + ids.length - 1 })
+  }
+
   const isComposite = rows.length > 1 || (rows.length === 1 && rows[0].key !== 'product')
 
   // --- Plate: "+ Adicionar peça" -- escolhe um produto, mostra suas peças
@@ -525,6 +611,20 @@ export function ProductionRunBatchForm({
     )
   }
 
+  function removePlateItemFilament(key: string, index: number) {
+    setPlateItems((prev) => prev.map((r) => (r.key === key ? { ...r, filaments: r.filaments.filter((_, i) => i !== index) } : r)))
+  }
+
+  function addPlateItemFilaments(key: string, ids: string[]) {
+    setPlateItems((prev) =>
+      prev.map((r) => {
+        if (r.key !== key) return r
+        const kept = r.filaments.filter((f) => f.filamentId)
+        return { ...r, filaments: [...kept, ...ids.map((filamentId) => ({ filamentId, weightGramsPerUnit: '0', gramsWasted: '0' }))] }
+      }),
+    )
+  }
+
   function removePlateItem(key: string) {
     setPlateItems((prev) => prev.filter((r) => r.key !== key))
   }
@@ -571,6 +671,16 @@ export function ProductionRunBatchForm({
   const gastoTotalGrams = gastoRows.reduce((sum, g) => sum + g.grams, 0)
   const gastoTotalCost = gastoRows.reduce((sum, g) => sum + g.cost, 0)
 
+  // Consumo por rolo de TODAS as peças ativas juntas (+ desperdício): peças
+  // que usam o mesmo filamento disputam o mesmo estoque.
+  const rollUsage = rollTotals(
+    activeRowsForGasto.map((r) => ({
+      quantityPlanned: parseInt(r.quantityPlanned, 10) || 0,
+      filaments: r.filaments.map((f) => ({ filamentId: f.filamentId, weightGramsPerUnit: parseFloat(f.weightGramsPerUnit) || 0, gramsWasted: parseFloat(f.gramsWasted) || 0 })),
+    })),
+    new Map(filaments.map((f) => [f.id, f.stockGrams ?? 0])),
+  )
+
   async function individualAction() {
     if (!productId) {
       alert('Selecione um produto')
@@ -582,8 +692,12 @@ export function ProductionRunBatchForm({
       return
     }
     for (const row of checkedRows) {
-      if (!row.date || !row.printerId || row.filaments.some((f) => !f.filamentId) || !row.quantityPlanned || !row.quantitySuccess) {
-        alert(`Preencha data, impressora, filamento, planejada e sucesso de "${row.label}"`)
+      if (row.filaments.some((f) => !f.filamentId)) {
+        alert(`Selecione o filamento de "${row.label}"`)
+        return
+      }
+      if (!row.date || !row.printerId || !row.quantityPlanned || !row.quantitySuccess) {
+        alert(`Preencha data, impressora, planejada e sucesso de "${row.label}"`)
         return
       }
     }
@@ -820,6 +934,10 @@ export function ProductionRunBatchForm({
                               disabled={!row.checked}
                               plannedQuantity={row.quantityPlanned}
                               contextLabel={row.label}
+                              rollUsage={rollUsage}
+                              onRemove={(i) => removeRowFilament(row.key, i)}
+                              onAddColors={(ids) => addRowFilaments(row.key, ids)}
+                              autoFocusIndex={focusAdded?.key === row.key ? focusAdded.index : null}
                             />
                           )}
                         </div>
@@ -832,6 +950,10 @@ export function ProductionRunBatchForm({
                             disabled={!row.checked}
                             plannedQuantity={row.quantityPlanned}
                             contextLabel={row.label}
+                            rollUsage={rollUsage}
+                            onRemove={(i) => removeRowFilament(row.key, i)}
+                            onAddColors={(ids) => addRowFilaments(row.key, ids)}
+                            autoFocusIndex={focusAdded?.key === row.key ? focusAdded.index : null}
                           />
                         )}
 
@@ -1063,6 +1185,9 @@ export function ProductionRunBatchForm({
                                 filamentOptions={filaments}
                                 onChange={(i, patch) => updatePlateItemFilament(item.key, i, patch)}
                                 plannedQuantity={item.quantityPlanned}
+                                rollUsage={rollUsage}
+                                onRemove={(i) => removePlateItemFilament(item.key, i)}
+                                onAddColors={(ids) => addPlateItemFilaments(item.key, ids)}
                               />
                             )}
                           </div>
@@ -1073,6 +1198,9 @@ export function ProductionRunBatchForm({
                               filamentOptions={filaments}
                               onChange={(i, patch) => updatePlateItemFilament(item.key, i, patch)}
                               plannedQuantity={item.quantityPlanned}
+                              rollUsage={rollUsage}
+                              onRemove={(i) => removePlateItemFilament(item.key, i)}
+                              onAddColors={(ids) => addPlateItemFilaments(item.key, ids)}
                             />
                           )}
 

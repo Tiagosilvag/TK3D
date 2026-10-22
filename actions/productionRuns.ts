@@ -20,6 +20,7 @@ import {
 import { revalidatePath } from 'next/cache'
 import { Prisma, type ProductionStatus, type SupplyUnit, type WasteReason } from '@prisma/client'
 import { getOwnStockSummary } from '@/lib/reports'
+import { summarizeRunChange } from '@/lib/productionRunLog'
 import { productNeedsAssembly, productAutoAssembles } from '@/lib/products'
 import { getAssemblyStatus, reverseExcessAssemblyForRun, autoAssembleProductionRun } from '@/actions/assembly'
 import { reconcileOrderReservations } from '@/lib/orderReservations'
@@ -28,7 +29,7 @@ import { reconcileOrderReservations } from '@/lib/orderReservations'
 // produtos cuja ProductAssembly foi desfeita em cascata por esta ação --
 // ver actions/assembly.ts#reverseExcessAssemblyForRun. Usado pelo botão
 // "Excluir" de /stock pra "sinalizar quais peças ficaram incompletas".
-type ActionResult = { success: boolean; error?: string; reversedFrom?: { productName: string; unitsReversed: number }[]; batchId?: string }
+type ActionResult = { success: boolean; error?: string; reversedFrom?: { productName: string; unitsReversed: number }[]; batchId?: string; restorable?: ProductionRunEditData }
 
 // Bug "pedido não migra sozinho pra Aguardando montagem": produzir uma
 // PEÇA de um produto composto (ou a "peça sintética" de um produto simples
@@ -1030,6 +1031,7 @@ function comboKeyOf(filamentIds: string[]): string {
 export async function updateProductionRunFull(
   id: string,
   input: ProductionRunEditInput,
+  kind: 'EDITADA' | 'QUANTIDADES' = 'EDITADA',
 ): Promise<{ success: boolean; error?: string; previous?: ProductionRunEditInput }> {
   const planned = input.quantityPlanned
   const success = input.quantitySuccess
@@ -1145,6 +1147,18 @@ export async function updateProductionRunFull(
     })
   }
 
+  // Registro de alterações: estado anterior + novo + resumo do que mudou.
+  await prisma.productionRunLog.create({
+    data: {
+      productionRunId: id,
+      productId: run.productId,
+      kind,
+      summary: summarizeRunChange(previous, input),
+      before: previous as unknown as Prisma.InputJsonValue,
+      after: input as unknown as Prisma.InputJsonValue,
+    },
+  })
+
   revalidatePath('/production')
   revalidatePath('/filaments')
   revalidatePath('/assembly')
@@ -1168,7 +1182,7 @@ export async function updateProductionRunQuantities(
   const current = await getProductionRunEditData(id)
   const { id: _id, productId: _p, productName: _pn, productPartId: _pp, partName: _n, plateId: _pl, status: _s, ...rest } = current
   void _id; void _p; void _pn; void _pp; void _n; void _pl; void _s
-  return updateProductionRunFull(id, { ...rest, quantityPlanned: quantitySuccess + quantityFailed, quantitySuccess })
+  return updateProductionRunFull(id, { ...rest, quantityPlanned: quantitySuccess + quantityFailed, quantitySuccess }, 'QUANTIDADES')
 }
 
 // Melhoria "Editar impressora depois de criar": corrige a impressora de uma
@@ -1288,6 +1302,9 @@ function buildFilamentRestoreOps(
 export async function deleteProductionRun(id: string): Promise<ActionResult> {
   const run = await prisma.productionRun.findUniqueOrThrow({ where: { id }, include: { filamentUsages: true } })
   let reversedFrom: ActionResult['reversedFrom']
+  // Estado completo ANTES de excluir: alimenta o "Desfazer" (restoreProductionRun)
+  // e o registro de alterações.
+  const restorable = await getProductionRunEditData(id)
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -1347,8 +1364,86 @@ export async function deleteProductionRun(id: string): Promise<ActionResult> {
   // "excluir/cancelar produção não atualiza Montagem/Estoque").
   revalidatePath('/assembly')
   revalidatePath('/stock')
+  await prisma.productionRunLog.create({
+    data: {
+      productionRunId: id,
+      productId: run.productId,
+      kind: 'EXCLUIDA',
+      summary: `Produção excluída (${restorable.quantitySuccess} de ${restorable.quantityPlanned} unidades)`,
+      before: restorable as unknown as Prisma.InputJsonValue,
+    },
+  })
+
   revalidatePath('/orders')
-  return { success: true, reversedFrom }
+  return { success: true, reversedFrom, restorable }
+}
+
+// "Desfazer" de uma exclusão: registra de novo a produção com os mesmos dados
+// (mesmo id, mesmos filamentos/quantidades), debitando o estoque outra vez.
+// Perde só o vínculo com uma Plate (a exclusão não o restaura).
+export async function restoreProductionRun(data: ProductionRunEditData): Promise<{ success: boolean; error?: string }> {
+  if (await prisma.productionRun.findUnique({ where: { id: data.id } })) return { success: false, error: 'Esta produção já existe.' }
+  const planned = data.quantityPlanned
+  const components = data.filaments.map((f) => ({ filamentId: f.filamentId, gramsUsed: f.weightGramsPerUnit * planned, gramsWasted: f.gramsWasted }))
+  const first = components[0]
+  const prepared = await prepareProductionRunCreation(
+    {
+      id: data.id,
+      batchId: randomUUID(),
+      plateId: null,
+      productId: data.productId,
+      productPartId: data.productPartId,
+      printerId: data.printerId,
+      filamentId: first.filamentId,
+      date: new Date(`${data.date}T12:00:00`),
+      quantityPlanned: planned,
+      quantitySuccess: data.quantitySuccess,
+      quantityFailed: planned - data.quantitySuccess,
+      gramsUsed: first.gramsUsed,
+      gramsWasted: first.gramsWasted,
+      timeWastedHours: data.timeWastedHours,
+      wasteReason: (data.wasteReason || null) as WasteReason | null,
+      notes: data.notes || null,
+    },
+    components.length > 1 ? components : undefined,
+    new Map(),
+    data.printTimeHoursPerUnit,
+  )
+  if (!prepared.success) return { success: false, error: prepared.error }
+  await prisma.$transaction(prepared.ops)
+
+  await maybeReconcileAfterProduction(data.productId, first.filamentId)
+  if (data.quantitySuccess > 0) {
+    await maybeAutoAssembleAfterProduction({
+      productId: data.productId,
+      productPartId: data.productPartId,
+      quantitySuccess: data.quantitySuccess,
+      filamentId: first.filamentId,
+      filamentUsages: components.length > 1 ? components.map((c) => ({ filamentId: c.filamentId })) : [],
+    })
+  }
+  await prisma.productionRunLog.create({
+    data: { productionRunId: data.id, productId: data.productId, kind: 'RESTAURADA', summary: 'Exclusão desfeita', before: data as unknown as Prisma.InputJsonValue },
+  })
+
+  revalidatePath('/production')
+  revalidatePath('/filaments')
+  revalidatePath('/assembly')
+  revalidatePath('/stock')
+  revalidatePath('/orders')
+  return { success: true }
+}
+
+export interface ProductionRunLogRow {
+  id: string
+  kind: string
+  summary: string
+  createdAt: string
+}
+
+export async function getProductionRunLogs(productionRunId: string): Promise<ProductionRunLogRow[]> {
+  const rows = await prisma.productionRunLog.findMany({ where: { productionRunId }, orderBy: { createdAt: 'desc' }, take: 15 })
+  return rows.map((r) => ({ id: r.id, kind: r.kind, summary: r.summary, createdAt: r.createdAt.toISOString() }))
 }
 
 // Spec §5.5: cancels a production run WITHOUT deleting it (history is kept —
