@@ -20,7 +20,17 @@ export interface ReadyOrderRow {
 // venda com o preço, o comprador e a variação do pedido, a embalagem do
 // produto e a taxa do canal -- 1 clique, com o lucro no aviso e Desfazer por
 // 10 s (devolve o pedido à lista, a embalagem ao estoque e apaga a venda).
-export function PendingDeliveriesPanel({ rows }: { rows: ReadyOrderRow[] }) {
+export function PendingDeliveriesPanel({
+  rows,
+  title = 'Pedidos prontos para entregar',
+  hint = '✓ Entregar registra a venda com o preço e o comprador do pedido, a variação reservada e a embalagem do produto.',
+  doneLabel = 'Venda registrada',
+}: {
+  rows: ReadyOrderRow[]
+  title?: string
+  hint?: string
+  doneLabel?: string
+}) {
   const router = useRouter()
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -34,7 +44,7 @@ export function PendingDeliveriesPanel({ rows }: { rows: ReadyOrderRow[] }) {
     setBusyId(null)
     if (!result.success) return setError(result.error ?? 'Não foi possível entregar.')
     const profit = result.profit !== undefined ? ` Lucro ${formatCurrency(result.profit)}.` : ''
-    setToast({ message: `Venda registrada: ${row.productName}.${profit}`, itemId: row.id })
+    setToast({ message: `${doneLabel}: ${row.productName}.${profit}`, itemId: row.id })
     router.refresh()
   }
 
@@ -54,10 +64,10 @@ export function PendingDeliveriesPanel({ rows }: { rows: ReadyOrderRow[] }) {
   return (
     <div className="tk-panel mb-4 p-4">
       <div className="flex items-center gap-2">
-        <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">Pedidos prontos para entregar</h2>
+        <h2 className="font-display text-sm font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
         <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">{rows.length}</span>
       </div>
-      <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">✓ Entregar registra a venda com o preço e o comprador do pedido, a variação reservada e a embalagem do produto.</p>
+      <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{hint}</p>
       {error && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>}
       <ul className="mt-3 space-y-2">
         {rows.map((r) => (

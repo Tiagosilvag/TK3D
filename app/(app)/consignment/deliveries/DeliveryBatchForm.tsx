@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createConsignmentDeliveryBatch, getLastConsignmentDeliveryItems } from '@/actions/consignmentDeliveries'
+import { createConsignmentDeliveryBatch, getLastConsignmentDeliveryItems, getPartnerHoldings, deleteConsignmentDeliveryBatch } from '@/actions/consignmentDeliveries'
+import { UndoToast } from '@/components/UndoToast'
 import { formatCurrency } from '@/lib/format'
 import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
@@ -177,9 +178,19 @@ export function DeliveryBatchForm({
   const [prices, setPrices] = useState<Record<string, number>>({})
   const [repeating, setRepeating] = useState(false)
   const [error, setError] = useState('')
+  const [holdings, setHoldings] = useState<{ productId: string; colorComboKey: string | null; remaining: number }[]>([])
+  const [toast, setToast] = useState<{ message: string; batchId: string } | null>(null)
 
   const productById = useMemo(() => new Map(products.map((p) => [p.productId, p])), [products])
   const selectedPartner = partners.find((p) => p.id === partnerId) ?? null
+
+  // O que ela já tem: base do aviso "vai somar na mesma linha".
+  useEffect(() => {
+    let cancelled = false
+    if (!partnerId) { setHoldings([]); return }
+    void getPartnerHoldings(partnerId).then((h) => { if (!cancelled) setHoldings(h) })
+    return () => { cancelled = true }
+  }, [partnerId])
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -241,6 +252,21 @@ export function DeliveryBatchForm({
   function handleClear() {
     setQuantities({})
     setPrices({})
+    setError('')
+  }
+
+  // "Entregar tudo disponível": todas as variações com estoque livre.
+  function handleDeliverAll() {
+    const next: Record<string, number> = {}
+    for (const p of products) {
+      for (const v of p.variants) if (v.available > 0) next[lineKey(p.productId, v.key)] = v.available
+    }
+    setQuantities(next)
+    setPrices((prev) => {
+      const out = { ...prev }
+      for (const p of products) if (out[p.productId] === undefined && p.variants.some((v) => v.available > 0)) out[p.productId] = p.suggestedPrice ?? 0
+      return out
+    })
     setError('')
   }
 
@@ -313,6 +339,17 @@ export function DeliveryBatchForm({
   const totalCost = itemsByProduct.reduce((sum, { product, lines }) => sum + lines.reduce((s, l) => s + l.quantity * product.unitCost, 0), 0)
   const estimatedProfit = selectedPartner ? totalValue * (1 - selectedPartner.defaultCommissionPercent) - totalCost : null
 
+  // Variações que ela já tem e que esta entrega vai somar: antes → depois.
+  const mergeNotices = itemsByProduct.flatMap(({ product, lines }) =>
+    lines.flatMap((l) => {
+      const have = holdings.find((h) => h.productId === product.productId && (h.colorComboKey ?? null) === l.variantKey)?.remaining ?? 0
+      if (have <= 0) return []
+      const variant = l.variantKey ? product.variants.find((v) => v.key === l.variantKey) : undefined
+      const name = variant ? `${product.productName} (${compactVariantLabel(variant)})` : product.productName
+      return [{ key: `${product.productId}::${l.variantKey}`, text: `${name}: ${have} → ${have + l.quantity}` }]
+    }),
+  )
+
   const dateLabel = dateMode === 'hoje' ? 'hoje' : dateMode === 'ontem' ? 'ontem' : new Date(deliveryDate).toLocaleDateString('pt-BR')
 
   const filteredProducts = useMemo(() => {
@@ -364,10 +401,21 @@ export function DeliveryBatchForm({
     }
     onOpenChange(false)
     resetAll()
+    if (result.batchId) setToast({ message: 'Entrega registrada.', batchId: result.batchId })
+    router.refresh()
+  }
+
+  async function undoDelivery() {
+    const t = toast
+    setToast(null)
+    if (!t) return
+    await deleteConsignmentDeliveryBatch(t.batchId)
     router.refresh()
   }
 
   return (
+    <>
+    {toast && <UndoToast message={toast.message} onUndo={() => void undoDelivery()} onDismiss={() => setToast(null)} durationMs={10000} />}
     <dialog
       ref={dialogRef}
       onClose={() => { onOpenChange(false); resetAll() }}
@@ -629,6 +677,7 @@ export function DeliveryBatchForm({
                 <button type="button" onClick={() => void handleRepeatLast()} disabled={repeating} className="text-violet-600 hover:underline disabled:opacity-50 dark:text-violet-400">
                   {repeating ? 'Carregando…' : '↻ Repetir última entrega'}
                 </button>
+                <button type="button" onClick={handleDeliverAll} className="text-violet-600 hover:underline dark:text-violet-400">Entregar tudo disponível</button>
                 {itemsByProduct.length > 0 && (
                   <button type="button" onClick={handleClear} className="text-red-600 hover:underline dark:text-red-400">
                     Limpar
@@ -700,6 +749,13 @@ export function DeliveryBatchForm({
           </div>
         </div>
 
+        {mergeNotices.length > 0 && (
+          <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+            <p className="font-medium">Já estão com ela e vão somar na mesma linha:</p>
+            <ul className="mt-0.5 list-disc pl-4">{mergeNotices.map((n) => <li key={n.key}>{n.text}</li>)}</ul>
+          </div>
+        )}
+
         {notesOpen ? (
           <label className="text-sm">
             Observações (opcional)
@@ -717,5 +773,6 @@ export function DeliveryBatchForm({
         </div>
       </form>
     </dialog>
+    </>
   )
 }

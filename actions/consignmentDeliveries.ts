@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { consignmentDeliverySchema, consignmentDeliveryBatchSchema, consignmentDeliveryBatchEditSchema } from '@/lib/validation/consignment'
 import { revalidatePath } from 'next/cache'
 
-type ActionResult = { success: boolean; error?: string }
+type ActionResult = { success: boolean; error?: string; batchId?: string }
 
 function isForeignKeyConstraintError(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003'
@@ -70,7 +70,22 @@ export async function createConsignmentDeliveryBatch(formData: FormData): Promis
     })),
   })
   revalidatePath('/consignment/deliveries')
-  return { success: true }
+  revalidatePath('/consignment/partners')
+  return { success: true, batchId }
+}
+
+// Quanto a parceira já tem de cada variação (entregue − vendido − devolvido),
+// pro aviso "vai somar" do modal de entrega.
+export async function getPartnerHoldings(partnerId: string): Promise<{ productId: string; colorComboKey: string | null; remaining: number }[]> {
+  const rows = await prisma.consignmentDelivery.findMany({ where: { partnerId }, include: { saleReports: true } })
+  const map = new Map<string, { productId: string; colorComboKey: string | null; remaining: number }>()
+  for (const d of rows) {
+    const key = `${d.productId}::${d.colorComboKey ?? ''}`
+    const entry = map.get(key) ?? { productId: d.productId, colorComboKey: d.colorComboKey || null, remaining: 0 }
+    entry.remaining += d.quantityDelivered - d.returnedQuantity - d.saleReports.reduce((s, r) => s + r.quantitySold, 0)
+    map.set(key, entry)
+  }
+  return [...map.values()].filter((h) => h.remaining > 0)
 }
 
 // ConsignmentDelivery has no soft-delete flag (it's not a catalog entity like

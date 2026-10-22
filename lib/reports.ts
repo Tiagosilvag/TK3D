@@ -1212,6 +1212,22 @@ export interface ConsignmentPartnerDetail {
   products: ConsignmentProductBreakdown[]
   saleableDeliveries: ConsignmentSaleableDelivery[]
   history: ConsignmentHistoryEvent[]
+  ledger: PartnerLedger
+}
+
+// Registros crus da parceira (Movimentos): cada linha já com nome do produto
+// e a variação (attrs) pra tela editar sem nova consulta.
+export interface LedgerVariantRef {
+  productId: string
+  productName: string
+  colorComboKey: string | null
+  label: string | null
+  attrs: VariantAttr[]
+}
+export interface PartnerLedger {
+  deliveries: { batchId: string; date: string; items: (LedgerVariantRef & { id: string; quantity: number; unitPrice: number; sold: number; returned: number; fromOrder: boolean })[] }[]
+  sales: (LedgerVariantRef & { id: string; date: string; commissionPercent: number; quantity: number; unitPrice: number })[]
+  returns: (LedgerVariantRef & { deliveryId: string; date: string | null; quantity: number })[]
 }
 
 export async function getConsignmentPartnerDetail(partnerId: string): Promise<ConsignmentPartnerDetail | null> {
@@ -1490,7 +1506,37 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
     products: productsBreakdown,
     saleableDeliveries,
     history,
+    ledger: buildPartnerLedger(partner.deliveries, variantInfoByProductAndKey),
   }
+}
+
+function buildPartnerLedger(
+  deliveries: {
+    id: string; batchId: string; productId: string; product: { name: string }; colorComboKey: string | null; quantityDelivered: number
+    unitPrice: { toNumber(): number }; deliveryDate: Date; returnedQuantity: number; lastReturnedAt: Date | null
+    saleReports: { id: string; quantitySold: number; reportDate: Date; commissionPercent: { toNumber(): number }; unitPrice: { toNumber(): number } | null }[]
+  }[],
+  info: Map<string, { label: string; attrs: VariantAttr[] }>,
+): PartnerLedger {
+  const ref = (d: (typeof deliveries)[number]): LedgerVariantRef => {
+    const v = d.colorComboKey ? info.get(`${d.productId}::${d.colorComboKey}`) : undefined
+    return { productId: d.productId, productName: d.product.name, colorComboKey: d.colorComboKey, label: v?.label ?? null, attrs: v?.attrs ?? [] }
+  }
+  const batches = new Map<string, PartnerLedger['deliveries'][number]>()
+  const sales: PartnerLedger['sales'] = []
+  const returns: PartnerLedger['returns'] = []
+  for (const d of deliveries) {
+    const sold = d.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
+    const batch = batches.get(d.batchId) ?? { batchId: d.batchId, date: d.deliveryDate.toISOString().slice(0, 10), items: [] }
+    batch.items.push({ ...ref(d), id: d.id, quantity: d.quantityDelivered, unitPrice: d.unitPrice.toNumber(), sold, returned: d.returnedQuantity, fromOrder: false })
+    batches.set(d.batchId, batch)
+    for (const r of d.saleReports) {
+      sales.push({ ...ref(d), id: r.id, date: r.reportDate.toISOString().slice(0, 10), commissionPercent: r.commissionPercent.toNumber(), quantity: r.quantitySold, unitPrice: (r.unitPrice ?? d.unitPrice).toNumber() })
+    }
+    if (d.returnedQuantity > 0) returns.push({ ...ref(d), deliveryId: d.id, date: d.lastReturnedAt?.toISOString().slice(0, 10) ?? null, quantity: d.returnedQuantity })
+  }
+  const byDateDesc = <T extends { date: string | null }>(a: T, b: T) => (b.date ?? '').localeCompare(a.date ?? '')
+  return { deliveries: [...batches.values()].sort(byDateDesc), sales: sales.sort(byDateDesc), returns: returns.sort(byDateDesc) }
 }
 
 // Redesign "Relatórios de venda" (consignação): uma linha por

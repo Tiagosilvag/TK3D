@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { consignmentSaleReportSchema, consignmentSaleReportBatchSchema } from '@/lib/validation/consignment'
 import { revalidatePath } from 'next/cache'
 
-type ActionResult = { success: boolean; error?: string }
+type ActionResult = { success: boolean; error?: string; reportIds?: string[] }
 
 // The balance check below (quantitySold <= remaining) cannot be expressed in
 // the Zod schema alone because it depends on a database query — the sum of
@@ -77,7 +77,7 @@ export async function createConsignmentSaleReportBatch(formData: FormData): Prom
       if (!delivery) return { success: false, error: 'Entrega não encontrada' }
       productName = delivery.product.name
       const alreadySold = delivery.saleReports.reduce((sum, r) => sum + r.quantitySold, 0)
-      const deliveryRemaining = Math.max(0, delivery.quantityDelivered - alreadySold)
+      const deliveryRemaining = Math.max(0, delivery.quantityDelivered - alreadySold - delivery.returnedQuantity)
       if (deliveryRemaining <= 0) continue
       const take = Math.min(deliveryRemaining, remainingToSell)
       plannedReports.push({ deliveryId, quantitySold: take, commissionPercent: item.commissionPercent, unitPrice: item.unitPrice })
@@ -89,7 +89,7 @@ export async function createConsignmentSaleReportBatch(formData: FormData): Prom
     }
   }
 
-  await prisma.$transaction(
+  const created = await prisma.$transaction(
     plannedReports.map((r) =>
       prisma.consignmentSaleReport.create({
         data: {
@@ -105,6 +105,16 @@ export async function createConsignmentSaleReportBatch(formData: FormData): Prom
   )
   revalidatePath('/consignment/reports')
   revalidatePath('/consignment/deliveries')
+  revalidatePath('/consignment/partners')
+  return { success: true, reportIds: created.map((c) => c.id) }
+}
+
+// "Desfazer" do modal de venda: apaga exatamente os registros criados por ele.
+export async function undoConsignmentSaleReportBatch(ids: string[]): Promise<ActionResult> {
+  await prisma.consignmentSaleReport.deleteMany({ where: { id: { in: ids } } })
+  revalidatePath('/consignment/reports')
+  revalidatePath('/consignment/deliveries')
+  revalidatePath('/consignment/partners')
   return { success: true }
 }
 

@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createConsignmentSaleReportBatch } from '@/actions/consignmentSaleReports'
+import { UndoToast } from '@/components/UndoToast'
+import { createConsignmentSaleReportBatch, undoConsignmentSaleReportBatch } from '@/actions/consignmentSaleReports'
 import type { ConsignmentSaleableDelivery } from '@/lib/reports'
 import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { formatCurrency } from '@/lib/format'
@@ -90,6 +91,9 @@ export function RegisterSaleForm({
   const [notesOpen, setNotesOpen] = useState(false)
   const [error, setError] = useState('')
   const [savedMessage, setSavedMessage] = useState<string | null>(null)
+  const [commissionText, setCommissionText] = useState(String(Math.round(defaultCommissionPercent * 10000) / 100).replace('.', ','))
+  const [toast, setToast] = useState<{ message: string; ids: string[] } | null>(null)
+  const commissionPercent = Math.min(1, Math.max(0, (Number(commissionText.replace(',', '.')) || 0) / 100))
 
   const categoryColors = useMemo(() => buildCategoryColors(deliveries), [deliveries])
   const deliveryByKey = useMemo(() => new Map(deliveries.map((d) => [d.groupKey, d])), [deliveries])
@@ -185,6 +189,24 @@ export function RegisterSaleForm({
     })
   }
 
+  // "Vendeu tudo": tudo o que ela tem, entre os itens visíveis.
+  function sellAllVisible() {
+    setQuantities((prev) => {
+      const next = { ...prev }
+      for (const d of visibleDeliveries) next[d.groupKey] = d.remaining
+      return next
+    })
+    setError('')
+  }
+
+  async function undoSale() {
+    const t = toast
+    setToast(null)
+    if (!t) return
+    await undoConsignmentSaleReportBatch(t.ids)
+    router.refresh()
+  }
+
   function handleClear() {
     setQuantities({})
     setError('')
@@ -193,7 +215,7 @@ export function RegisterSaleForm({
   const soldLines = useMemo(() => Object.entries(quantities).filter(([, qty]) => qty > 0).map(([groupKey, qty]) => ({ delivery: deliveryByKey.get(groupKey)!, qty })).filter((l) => l.delivery), [quantities, deliveryByKey])
   const totalPieces = soldLines.reduce((sum, l) => sum + l.qty, 0)
   const totalSoldValue = soldLines.reduce((sum, l) => sum + l.qty * priceFor(l.delivery), 0)
-  const totalCommission = totalSoldValue * defaultCommissionPercent
+  const totalCommission = totalSoldValue * commissionPercent
   const totalCost = soldLines.reduce((sum, l) => sum + l.qty * l.delivery.unitCost, 0)
   const totalProfit = totalSoldValue - totalCommission - totalCost
 
@@ -220,7 +242,7 @@ export function RegisterSaleForm({
         soldLines.map((l) => ({
           deliveryIds: l.delivery.deliveryIds,
           quantitySold: l.qty,
-          commissionPercent: defaultCommissionPercent,
+          commissionPercent,
           unitPrice: priceFor(l.delivery),
         })),
       ),
@@ -232,6 +254,7 @@ export function RegisterSaleForm({
     }
     setSavedMessage(`Venda registrada · ${totalPieces} ${totalPieces === 1 ? 'peça' : 'peças'} · ${formatCurrency(totalSoldValue)}`)
     setQuantities({})
+    if (result.reportIds?.length) setToast({ message: `Venda registrada · ${totalPieces} ${totalPieces === 1 ? 'peça' : 'peças'}.`, ids: result.reportIds })
     router.refresh()
   }
 
@@ -251,7 +274,10 @@ export function RegisterSaleForm({
         <form action={action} className="grid grid-cols-1 gap-3 p-5">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">{(defaultCommissionPercent * 100).toFixed(0)}% comissão</p>
+              <label className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                Comissão
+                <input value={commissionText} onChange={(e) => setCommissionText(e.target.value)} onFocus={(e) => e.target.select()} inputMode="decimal" aria-label="Comissão %" className="tk-input-full w-14 py-0.5 text-center" />%
+              </label>
               <h3 className="font-display text-base font-semibold">Registrar venda</h3>
             </div>
             <button type="button" onClick={() => dialogRef.current?.close()} aria-label="Fechar" className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>
@@ -274,6 +300,9 @@ export function RegisterSaleForm({
             />
             <button type="button" onClick={applyOnePerVisible} className="shrink-0 rounded-lg bg-violet-100 px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-200 dark:bg-violet-500/20 dark:text-violet-300 dark:hover:bg-violet-500/30">
               +1 em cada
+            </button>
+            <button type="button" onClick={sellAllVisible} className="shrink-0 rounded-lg bg-violet-100 px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-200 dark:bg-violet-500/20 dark:text-violet-300 dark:hover:bg-violet-500/30">
+              Vendeu tudo
             </button>
             {Object.keys(quantities).length > 0 && (
               <button type="button" onClick={handleClear} className="shrink-0 text-xs font-medium text-red-600 hover:underline dark:text-red-400">
@@ -382,7 +411,7 @@ export function RegisterSaleForm({
               <p className="text-sm font-bold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(totalSoldValue)}</p>
             </div>
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-500 dark:text-amber-400">Comissão {(defaultCommissionPercent * 100).toFixed(0)}%</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-500 dark:text-amber-400">Comissão {(commissionPercent * 100).toFixed(0)}%</p>
               <p className="text-sm font-bold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(totalCommission)}</p>
             </div>
             <div>
@@ -432,6 +461,7 @@ export function RegisterSaleForm({
           </div>
         </form>
       </dialog>
+      {toast && <UndoToast message={toast.message} onUndo={() => void undoSale()} onDismiss={() => setToast(null)} durationMs={10000} />}
     </>
   )
 }
