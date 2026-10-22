@@ -1048,6 +1048,7 @@ export interface ConsignmentDeliveryLine {
   returnedQuantity: number
   remaining: number
   saleReportsCount: number
+  unitPrice: number
 }
 
 export interface ConsignmentVariantBreakdown {
@@ -1071,6 +1072,9 @@ export interface ConsignmentVariantBreakdown {
   attrs: VariantAttr[]
   accessories: ConsignmentAccessoryChip[]
   deliveries: ConsignmentDeliveryLine[]
+  // Preço da linha: o da entrega mais recente que ainda tem saldo com ela
+  // (senão a mais recente) -- é o usado pelo "✓ Vendeu 1".
+  unitPrice: number
 }
 
 // Melhoria "Resultado das vendas": quanto cada produto já rendeu de verdade
@@ -1188,6 +1192,11 @@ export interface ConsignmentPartnerDetail {
   itemsWithPartner: number
   totalSold: number
   commissionOwed: number
+  // Pagamentos de comissão já feitos ao parceiro e o que ainda falta pagar
+  // (comissão total − pagamentos, nunca negativo).
+  commissionPaid: number
+  commissionDue: number
+  payments: { id: string; amount: number; paidAt: Date; notes: string | null }[]
   // Melhoria "Resultado das vendas": somas dos mesmos campos reais de cada
   // ConsignmentProductBreakdown (ver comentário lá) -- soldCommission é
   // sempre === commissionOwed acima (mesmo dado, 2 nomes porque o card
@@ -1213,6 +1222,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
         include: { product: true, saleReports: true },
         orderBy: { deliveryDate: 'desc' },
       },
+      payments: { orderBy: { paidAt: 'desc' } },
     },
   })
   if (!partner) return null
@@ -1347,6 +1357,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
       returnedQuantity: delivery.returnedQuantity,
       remaining: deliveryRemaining,
       saleReportsCount: delivery.saleReports.length,
+      unitPrice: delivery.unitPrice.toNumber(),
     })
 
     const deliveryUnitCost = unitCostByProduct.get(delivery.productId) ?? 0
@@ -1436,6 +1447,7 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
         attrs: v.key ? (variantInfoByProductAndKey.get(`${productId}::${v.key}`)?.attrs ?? []) : [],
         accessories: v.key ? (accessoriesByComboPair.get(`${productId}::${v.key}`) ?? []) : [],
         deliveries: v.deliveries,
+        unitPrice: (v.deliveries.find((d) => d.remaining > 0) ?? v.deliveries[0])?.unitPrice ?? 0,
       })),
       unitPrice: representativeUnitPrice,
       unitCost,
@@ -1465,6 +1477,9 @@ export async function getConsignmentPartnerDetail(partnerId: string): Promise<Co
     itemsWithPartner,
     totalSold,
     commissionOwed,
+    commissionPaid: partner.payments.reduce((sum, p) => sum + p.amount.toNumber(), 0),
+    commissionDue: Math.max(0, Math.round((commissionOwed - partner.payments.reduce((sum, p) => sum + p.amount.toNumber(), 0)) * 100) / 100),
+    payments: partner.payments.map((p) => ({ id: p.id, amount: p.amount.toNumber(), paidAt: p.paidAt, notes: p.notes })),
     soldValue,
     soldCommission: commissionOwed,
     soldCost,

@@ -109,7 +109,7 @@ export async function getAttentionAlerts(now = new Date()): Promise<AttentionAle
   const todayEnd = endOfDay(now)
   const openItem = { items: { some: { status: { notIn: ['ENTREGUE', 'CANCELADO'] as ('ENTREGUE' | 'CANCELADO')[] } } } }
 
-  const [overdueOrders, todayOrders, awaitingProduction, filamentsEmpty, filamentsLow, packagings, supplies, settings, reports] = await Promise.all([
+  const [overdueOrders, todayOrders, awaitingProduction, filamentsEmpty, filamentsLow, packagings, supplies, settings, reports, paymentsAgg] = await Promise.all([
     prisma.order.count({ where: { ...openItem, deliveryDate: { lt: todayStart } } }),
     prisma.order.count({ where: { ...openItem, deliveryDate: { gte: todayStart, lte: todayEnd } } }),
     prisma.orderItem.count({ where: { status: { in: ['AGUARDANDO_PRODUCAO', 'PARCIAL_AGUARDANDO_PRODUCAO'] } } }),
@@ -119,6 +119,7 @@ export async function getAttentionAlerts(now = new Date()): Promise<AttentionAle
     prisma.supply.findMany({ include: { purchases: { select: { quantity: true } } } }),
     prisma.settings.findUniqueOrThrow({ where: { id: 1 } }),
     prisma.consignmentSaleReport.findMany({ include: { delivery: { select: { unitPrice: true } } } }),
+    prisma.consignmentPartnerPayment.aggregate({ _sum: { amount: true } }),
   ])
 
   const packagingLow = packagings.filter((p) => getPackagingStockStatus(p.currentStock.toNumber(), p.minStock.toNumber()).label !== 'Em estoque').length
@@ -129,9 +130,14 @@ export async function getAttentionAlerts(now = new Date()): Promise<AttentionAle
     const label = getStockStatusWithThresholds(calculateStockPercentRemaining(s.currentStock.toNumber(), ref), low, critical).label
     return label === 'Esgotado' || label === 'Estoque crítico'
   }).length
-  const commissionOwed = reports.reduce(
-    (sum, r) => sum + r.quantitySold * (r.unitPrice ?? r.delivery.unitPrice).toNumber() * r.commissionPercent.toNumber(),
+  // A pagar = comissão total das vendas − pagamentos já registrados.
+  const commissionOwed = Math.max(
     0,
+    Math.round(
+      (reports.reduce((sum, r) => sum + r.quantitySold * (r.unitPrice ?? r.delivery.unitPrice).toNumber() * r.commissionPercent.toNumber(), 0) -
+        (paymentsAgg._sum.amount?.toNumber() ?? 0)) *
+        100,
+    ) / 100,
   )
 
   const alerts: AttentionAlert[] = [

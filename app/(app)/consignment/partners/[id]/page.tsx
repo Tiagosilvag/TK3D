@@ -5,6 +5,8 @@ import { PartnerDetailHeader } from './PartnerDetailHeader'
 import { PartnerFinancialSummary } from './PartnerFinancialSummary'
 import { PartnerStockSection } from './PartnerStockSection'
 import { PartnerHistorySection } from './PartnerHistorySection'
+import { PartnerCommissionBlock } from './PartnerCommissionBlock'
+import { PartnerQuickStock } from './PartnerQuickStock'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,6 +36,21 @@ export default async function ConsignmentPartnerDetailPage({ params }: { params:
 
       <div className="mt-6">
         <PartnerFinancialSummary detail={detail} productsWithStock={productsWithStock} />
+      </div>
+
+      <div className="mt-6">
+        <PartnerCommissionBlock
+          partnerId={detail.partnerId}
+          grossSold={detail.soldValue}
+          commissionTotal={detail.commissionOwed}
+          paid={detail.commissionPaid}
+          due={detail.commissionDue}
+          payments={detail.payments.map((p) => ({ id: p.id, amount: p.amount, paidAt: p.paidAt.toISOString() }))}
+        />
+      </div>
+
+      <div className="mt-6">
+        <PartnerQuickStock partnerId={detail.partnerId} products={detail.products} />
       </div>
 
       <div className="mt-6">

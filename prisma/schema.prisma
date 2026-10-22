@@ -1396,6 +1396,21 @@ model ConsignmentPartner {
   // Pedido do usuário "criar pedidos de encomendas de consignados
   // também" -- ver Order.consignmentPartnerId.
   orders                   Order[]
+  payments                 ConsignmentPartnerPayment[]
+}
+
+// Pagamento de comissão feito ao parceiro (parcial ou total). "A pagar" =
+// comissão total das vendas − Σ pagamentos, sempre derivado.
+model ConsignmentPartnerPayment {
+  id        String             @id @default(cuid())
+  partnerId String
+  partner   ConsignmentPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  amount    Decimal            @db.Decimal(10, 2)
+  paidAt    DateTime
+  notes     String?
+  createdAt DateTime           @default(now())
+
+  @@index([partnerId])
 }
 
 model ConsignmentDelivery {
