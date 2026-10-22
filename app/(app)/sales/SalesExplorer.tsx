@@ -11,7 +11,7 @@ import { deleteSale, removeSaleGiftUsage, removeSaleFreight } from '@/actions/sa
 import { NewSaleModal, type SaleModalProduct, type SaleModalPackagingItem } from './NewSaleModal'
 import type { PlatformFeeInfo, GiftProductOption } from './types'
 import type { SaleModalInput } from '@/actions/saleModal'
-import { undoCreatedSale } from '@/actions/saleModal'
+import { undoCreatedSale, getSaleModalInput } from '@/actions/saleModal'
 import { UndoToast } from '@/components/UndoToast'
 import { PlatformFeesPanel } from './PlatformFeesPanel'
 import { SaleQuantityPriceEdit } from './SaleQuantityPriceEdit'
@@ -114,7 +114,7 @@ function SaleAccount({ batch }: { batch: SaleBatchRow }) {
   )
 }
 
-function BatchRow({ batch, expanded, onToggle }: { batch: SaleBatchRow; expanded: boolean; onToggle: () => void }) {
+function BatchRow({ batch, expanded, onToggle, onRepeat }: { batch: SaleBatchRow; expanded: boolean; onToggle: () => void; onRepeat: (saleId: string) => void }) {
   const marginBadge = getMarginBadge(batch.totals.margin)
 
   return (
@@ -161,7 +161,7 @@ function BatchRow({ batch, expanded, onToggle }: { batch: SaleBatchRow; expanded
           </div>
           <div>
             <p className="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Custo</p>
-            <p>{formatCurrency(batch.totals.costTotal)}</p>
+            <p title="Produção + embalagem + taxa + frete + brinde">{formatCurrency(batch.totals.saleTotal - batch.totals.profit)}</p>
           </div>
           <div>
             <p className="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">Lucro</p>
@@ -193,7 +193,7 @@ function BatchRow({ batch, expanded, onToggle }: { batch: SaleBatchRow; expanded
             </div>
           )}
           {batch.items.map((item) => {
-            const itemMargin = getMarginBadge(item.saleTotal - item.platformFeeAmount > 0 ? item.profit / (item.saleTotal - item.platformFeeAmount) : null)
+            const itemMargin = getMarginBadge(item.saleTotal > 0 ? item.profit / item.saleTotal : null)
             return (
               <div key={item.id} className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
                 <div className="min-w-0">
@@ -222,6 +222,7 @@ function BatchRow({ batch, expanded, onToggle }: { batch: SaleBatchRow; expanded
                   </span>
                   <ActionsMenu>
                     <Link href={`/sales?editId=${item.id}`} className="tk-menu-item">Editar</Link>
+                    <button type="button" onClick={() => onRepeat(item.id)} className="tk-menu-item">Repetir</button>
                     <ConfirmDeleteForm action={() => deleteSale(item.id)} className="tk-menu-item-danger" />
                   </ActionsMenu>
                 </div>
@@ -268,6 +269,12 @@ export function SalesExplorer({
   const [formOpen, setFormOpen] = useState(Boolean(editing) || Boolean(defaultProductId))
   const [taxasOpen, setTaxasOpen] = useState(false)
   const [toast, setToast] = useState<{ message: string; undoSaleId: string | null } | null>(null)
+  const [repeatInput, setRepeatInput] = useState<SaleModalInput | null>(null)
+
+  async function repeatSale(saleId: string) {
+    const input = await getSaleModalInput(saleId)
+    if (input) { setRepeatInput(input); setFormOpen(true) }
+  }
 
   // "Editar" chega como /sales?editId=...: a prop troca numa navegação
   // client-side sem remontar, então reabre o modal explicitamente.
@@ -277,6 +284,7 @@ export function SalesExplorer({
 
   function closeModal() {
     setFormOpen(false)
+    setRepeatInput(null)
     if (editing || defaultProductId) router.replace('/sales')
   }
 
@@ -343,7 +351,8 @@ export function SalesExplorer({
 
       {formOpen && (
         <NewSaleModal
-          key={editing?.saleId ?? 'new'}
+          key={editing?.saleId ?? (repeatInput ? 'repeat' : 'new')}
+          prefill={repeatInput ?? undefined}
           products={products}
           packagingItems={packagingItems}
           giftProducts={giftProducts}
@@ -403,7 +412,7 @@ export function SalesExplorer({
             </div>
             <div className="space-y-2">
               {day.batches.map((batch) => (
-                <BatchRow key={batch.batchId} batch={batch} expanded={expanded.has(batch.batchId)} onToggle={() => toggleBatch(batch.batchId)} />
+                <BatchRow key={batch.batchId} batch={batch} expanded={expanded.has(batch.batchId)} onToggle={() => toggleBatch(batch.batchId)} onRepeat={(id) => void repeatSale(id)} />
               ))}
             </div>
           </div>

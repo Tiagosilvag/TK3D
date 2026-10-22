@@ -148,7 +148,10 @@ export default async function SalesPage({
   const totalSaleAmount = profits.reduce((sum, p) => sum + p.saleTotal, 0)
   const totalFees = profits.reduce((sum, p) => sum + p.platformFeeAmount, 0)
   const totalProfit = profits.reduce((sum, p) => sum + p.profit, 0) - totalGiftCost - totalFreightCost
-  const totalReceived = totalSaleAmount - totalFees - totalFreightCost
+  // Custos = tudo que sai da receita até o lucro: produção, embalagem, taxa, frete e brinde.
+  const totalCosts = totalSaleAmount - totalProfit
+  const costsPercentOfSold = totalSaleAmount > 0 ? (totalCosts / totalSaleAmount) * 100 : 0
+  const marginOnSold = totalSaleAmount > 0 ? (totalProfit / totalSaleAmount) * 100 : null
 
   const avgTicket = batches.length > 0 ? totalSaleAmount / batches.length : 0
 
@@ -218,7 +221,7 @@ export default async function SalesPage({
       colorDots: [...dotsByHex.entries()].map(([hex, label]) => ({ hex, label })),
       gift: batch.gift ? { id: batch.gift.id, productName: batch.gift.product.name, cost: batchGiftCost } : null,
       freight: batch.freight ? { id: batch.freight.id, cost: batchFreightCost } : null,
-      totals: { quantity, saleTotal: totals.saleTotal, platformFeeAmount: totals.platformFeeAmount, received, costTotal, packagingCost: items.reduce((sum, i) => sum + i.packagingCost, 0), profit, margin: received > 0 ? profit / received : null },
+      totals: { quantity, saleTotal: totals.saleTotal, platformFeeAmount: totals.platformFeeAmount, received, costTotal, packagingCost: items.reduce((sum, i) => sum + i.packagingCost, 0), profit, margin: totals.saleTotal > 0 ? profit / totals.saleTotal : null },
     }
   })
 
@@ -249,7 +252,6 @@ export default async function SalesPage({
   const periodLabel = !from && !to ? 'últimos 30 dias' : `${new Date(`${range.from}T00:00:00`).toLocaleDateString('pt-BR')} – ${new Date(`${range.to}T00:00:00`).toLocaleDateString('pt-BR')}`
   const feesPercentOfSold = totalSaleAmount > 0 ? (totalFees / totalSaleAmount) * 100 : 0
   const freightPercentOfSold = totalSaleAmount > 0 ? (totalFreightCost / totalSaleAmount) * 100 : 0
-  const netMarginOnReceived = totalReceived > 0 ? (totalProfit / totalReceived) * 100 : null
 
   // Pedidos prontos (variação reservada), exceto consignados -- "✓ Entregar".
   const readyOrderRecords = await prisma.orderItem.findMany({
@@ -275,7 +277,7 @@ export default async function SalesPage({
     <div className="tk-page">
       <h1 className="tk-page-title">Vendas</h1>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <div className="tk-panel p-3">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Total vendido</p>
           <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(totalSaleAmount)}</p>
@@ -294,9 +296,14 @@ export default async function SalesPage({
           </div>
         )}
         <div className="tk-panel p-3">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Custos</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900 dark:text-slate-100">{formatCurrency(totalCosts)}</p>
+          <p className="text-xs text-slate-400 dark:text-slate-500">{costsPercentOfSold.toFixed(0)}% do vendido</p>
+        </div>
+        <div className="tk-panel p-3">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Lucro líquido</p>
           <p className={`mt-1 text-lg font-semibold tabular-nums ${totalProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{formatCurrency(totalProfit)}</p>
-          <p className="text-xs text-slate-400 dark:text-slate-500">{netMarginOnReceived !== null ? `${netMarginOnReceived.toFixed(0)}% de margem` : '—'}</p>
+          <p className="text-xs text-slate-400 dark:text-slate-500">{marginOnSold !== null ? `${marginOnSold.toFixed(0)}% de margem` : '—'}</p>
         </div>
         <div className="tk-panel p-3">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Ticket médio</p>

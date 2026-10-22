@@ -64,6 +64,7 @@ export function NewSaleModal({
   platforms,
   recentProductIds,
   editing,
+  prefill,
   defaultProductId,
   onClose,
   onSaved,
@@ -74,13 +75,15 @@ export function NewSaleModal({
   platforms: PlatformFeeInfo[]
   recentProductIds: string[]
   editing?: { saleId: string; input: SaleModalInput }
+  // "↻ Repetir" de uma venda da lista: abre como venda NOVA com os mesmos dados.
+  prefill?: SaleModalInput
   defaultProductId?: string
   onClose: () => void
   onSaved: (message: string, undoSaleId: string | null) => void
 }) {
-  const initial = editing?.input
+  const initial = editing?.input ?? prefill
   const [channel, setChannel] = useState<ChannelValue>(initial?.channel ?? 'DIRETA')
-  const [saleDate, setSaleDate] = useState(initial?.saleDate ?? todayInBrasiliaString())
+  const [saleDate, setSaleDate] = useState(prefill && !editing ? todayInBrasiliaString() : (initial?.saleDate ?? todayInBrasiliaString()))
   const [buyer, setBuyer] = useState(initial?.buyer ?? '')
   const [notes, setNotes] = useState(initial?.notes ?? '')
   const [productId, setProductId] = useState(initial?.productId ?? defaultProductId ?? '')
