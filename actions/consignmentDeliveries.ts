@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { consignmentDeliverySchema, consignmentDeliveryBatchSchema, consignmentDeliveryBatchEditSchema } from '@/lib/validation/consignment'
 import { revalidatePath } from 'next/cache'
 
-type ActionResult = { success: boolean; error?: string; batchId?: string }
+type ActionResult = { success: boolean; error?: string; batchId?: string; previousPrices?: { deliveryId: string; unitPrice: number }[] }
 
 function isForeignKeyConstraintError(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003'
@@ -57,6 +57,26 @@ export async function createConsignmentDeliveryBatch(formData: FormData): Promis
   if (!parsed.success) return { success: false, error: parsed.error.issues[0].message }
 
   const batchId = randomUUID()
+  // Preço novo numa variação que ela já tem: atualiza o preço das linhas com
+  // saldo (vale para as próximas vendas) e guarda os antigos para o Desfazer.
+  const previousPrices: { deliveryId: string; unitPrice: number }[] = []
+  for (const item of parsed.data.items) {
+    const held = await prisma.consignmentDelivery.findMany({
+      where: {
+        partnerId: parsed.data.partnerId,
+        productId: item.productId,
+        ...(item.colorComboKey ? { colorComboKey: item.colorComboKey } : { OR: [{ colorComboKey: null }, { colorComboKey: '' }] }),
+      },
+      include: { saleReports: true },
+    })
+    for (const d of held) {
+      const balance = d.quantityDelivered - d.returnedQuantity - d.saleReports.reduce((s, r) => s + r.quantitySold, 0)
+      if (balance > 0 && Math.abs(d.unitPrice.toNumber() - item.unitPrice) >= 0.005) {
+        previousPrices.push({ deliveryId: d.id, unitPrice: d.unitPrice.toNumber() })
+        await prisma.consignmentDelivery.update({ where: { id: d.id }, data: { unitPrice: item.unitPrice } })
+      }
+    }
+  }
   await prisma.consignmentDelivery.createMany({
     data: parsed.data.items.map((item) => ({
       batchId,
@@ -71,18 +91,20 @@ export async function createConsignmentDeliveryBatch(formData: FormData): Promis
   })
   revalidatePath('/consignment/deliveries')
   revalidatePath('/consignment/partners')
-  return { success: true, batchId }
+  return { success: true, batchId, previousPrices }
 }
 
 // Quanto a parceira já tem de cada variação (entregue − vendido − devolvido),
 // pro aviso "vai somar" do modal de entrega.
-export async function getPartnerHoldings(partnerId: string): Promise<{ productId: string; colorComboKey: string | null; remaining: number }[]> {
+export async function getPartnerHoldings(partnerId: string): Promise<{ productId: string; colorComboKey: string | null; remaining: number; unitPrice: number }[]> {
   const rows = await prisma.consignmentDelivery.findMany({ where: { partnerId }, include: { saleReports: true } })
-  const map = new Map<string, { productId: string; colorComboKey: string | null; remaining: number }>()
+  const map = new Map<string, { productId: string; colorComboKey: string | null; remaining: number; unitPrice: number }>()
   for (const d of rows) {
     const key = `${d.productId}::${d.colorComboKey ?? ''}`
-    const entry = map.get(key) ?? { productId: d.productId, colorComboKey: d.colorComboKey || null, remaining: 0 }
-    entry.remaining += d.quantityDelivered - d.returnedQuantity - d.saleReports.reduce((s, r) => s + r.quantitySold, 0)
+    const entry = map.get(key) ?? { productId: d.productId, colorComboKey: d.colorComboKey || null, remaining: 0, unitPrice: d.unitPrice.toNumber() }
+    const balance = d.quantityDelivered - d.returnedQuantity - d.saleReports.reduce((s, r) => s + r.quantitySold, 0)
+    entry.remaining += balance
+    if (balance > 0) entry.unitPrice = d.unitPrice.toNumber()
     map.set(key, entry)
   }
   return [...map.values()].filter((h) => h.remaining > 0)

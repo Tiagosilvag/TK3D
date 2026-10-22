@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 import { sellVariantUnits, returnVariantUnits } from '@/actions/consignmentMovements'
 import { payPartnerCommission } from '@/actions/consignmentPayments'
+import { createConsignmentDeliveryBatch } from '@/actions/consignmentDeliveries'
+import { restoreDeliveryPrices } from '@/actions/consignmentMovements'
 import { editPartnerLedger, restorePartnerLedger } from '@/actions/consignmentLedger'
 import { getConsignmentPartnerDetail } from '@/lib/reports'
 
@@ -103,5 +105,21 @@ describe('editPartnerLedger', () => {
     expect(ok.success).toBe(true)
     const tooMuch = await editPartnerLedger(partner.id, { type: 'return', deliveryId: first.id, quantity: 9 })
     expect(tooMuch.success).toBe(false)
+  })
+
+  it('entregar a mesma variação com preço novo atualiza o preço dela e dá para restaurar', async () => {
+    const { partner, product, first, second } = await setup()
+    const fd = new FormData()
+    fd.set('partnerId', partner.id)
+    fd.set('deliveryDate', '2026-10-20')
+    fd.set('itemsJson', JSON.stringify([{ productId: product.id, colorComboKey: 'k1', quantityDelivered: 1, unitPrice: 30 }]))
+    const result = await createConsignmentDeliveryBatch(fd)
+    expect(result.success).toBe(true)
+    expect(result.previousPrices).toHaveLength(2)
+    const rows = await prisma.consignmentDelivery.findMany({ where: { id: { in: [first.id, second.id] } } })
+    expect(rows.every((r) => r.unitPrice.toNumber() === 30)).toBe(true)
+    await restoreDeliveryPrices(result.previousPrices!)
+    expect((await prisma.consignmentDelivery.findUniqueOrThrow({ where: { id: first.id } })).unitPrice.toNumber()).toBe(20)
+    expect((await prisma.consignmentDelivery.findUniqueOrThrow({ where: { id: second.id } })).unitPrice.toNumber()).toBe(25)
   })
 })

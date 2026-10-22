@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createConsignmentDeliveryBatch, getLastConsignmentDeliveryItems, getPartnerHoldings, deleteConsignmentDeliveryBatch } from '@/actions/consignmentDeliveries'
 import { UndoToast } from '@/components/UndoToast'
+import { restoreDeliveryPrices } from '@/actions/consignmentMovements'
 import { formatCurrency } from '@/lib/format'
 import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { SubmitButton } from '@/components/SubmitButton'
@@ -181,8 +182,8 @@ export function DeliveryBatchForm({
   const [prices, setPrices] = useState<Record<string, number>>({})
   const [repeating, setRepeating] = useState(false)
   const [error, setError] = useState('')
-  const [holdings, setHoldings] = useState<{ productId: string; colorComboKey: string | null; remaining: number }[]>([])
-  const [toast, setToast] = useState<{ message: string; batchId: string } | null>(null)
+  const [holdings, setHoldings] = useState<{ productId: string; colorComboKey: string | null; remaining: number; unitPrice: number }[]>([])
+  const [toast, setToast] = useState<{ message: string; batchId: string; previousPrices: { deliveryId: string; unitPrice: number }[] } | null>(null)
 
   const productById = useMemo(() => new Map(products.map((p) => [p.productId, p])), [products])
   const selectedPartner = partners.find((p) => p.id === partnerId) ?? null
@@ -345,11 +346,14 @@ export function DeliveryBatchForm({
   // Variações que ela já tem e que esta entrega vai somar: antes → depois.
   const mergeNotices = itemsByProduct.flatMap(({ product, lines }) =>
     lines.flatMap((l) => {
-      const have = holdings.find((h) => h.productId === product.productId && (h.colorComboKey ?? null) === l.variantKey)?.remaining ?? 0
+      const held = holdings.find((h) => h.productId === product.productId && (h.colorComboKey ?? null) === l.variantKey)
+      const have = held?.remaining ?? 0
       if (have <= 0) return []
+      const newPrice = prices[product.productId] ?? product.suggestedPrice ?? 0
+      const priceNote = held && newPrice > 0 && Math.abs(held.unitPrice - newPrice) >= 0.005 ? ` · preço ${formatCurrency(held.unitPrice)} → ${formatCurrency(newPrice)} (atualiza o preço dela)` : ''
       const variant = l.variantKey ? product.variants.find((v) => v.key === l.variantKey) : undefined
       const name = variant ? `${product.productName} (${compactVariantLabel(variant)})` : product.productName
-      return [{ key: `${product.productId}::${l.variantKey}`, text: `${name}: ${have} → ${have + l.quantity}` }]
+      return [{ key: `${product.productId}::${l.variantKey}`, text: `${name}: ${have} → ${have + l.quantity}${priceNote}` }]
     }),
   )
 
@@ -404,7 +408,7 @@ export function DeliveryBatchForm({
     }
     onOpenChange(false)
     resetAll()
-    if (result.batchId) setToast({ message: 'Entrega registrada.', batchId: result.batchId })
+    if (result.batchId) setToast({ message: (result.previousPrices?.length ?? 0) > 0 ? 'Entrega registrada. Preço atualizado nas variações que ela já tinha.' : 'Entrega registrada.', batchId: result.batchId, previousPrices: result.previousPrices ?? [] })
     router.refresh()
   }
 
@@ -413,6 +417,7 @@ export function DeliveryBatchForm({
     setToast(null)
     if (!t) return
     await deleteConsignmentDeliveryBatch(t.batchId)
+    if (t.previousPrices.length > 0) await restoreDeliveryPrices(t.previousPrices)
     router.refresh()
   }
 
