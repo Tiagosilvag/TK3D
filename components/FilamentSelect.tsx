@@ -1,12 +1,40 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { FilamentPicker, MaterialTag, Swatch } from '@/components/FilamentPicker'
+import { splitColorName, type PickerFilament } from '@/lib/filamentPicker'
 
 export interface FilamentSelectOption {
   id: string
   name: string
   colorHex: string | null
+  // Campos estruturados do cadastro (lib/filamentPicker.ts#toFilamentSelectOption)
+  // -- o seletor novo agrupa/filtra por eles. Ausentes (opção montada à
+  // mão), cai no `name` inteiro como nome da cor.
+  manufacturer?: string
+  material?: string
+  colorName?: string
+  stockGrams?: number
 }
+
+// Opção usada pelos formulários de produto/produção: o seletor + preço por grama.
+export type FilamentFormOption = FilamentSelectOption & { pricePerGram: number }
+
+function toPickerFilament(o: FilamentSelectOption): PickerFilament {
+  return {
+    id: o.id,
+    manufacturer: o.manufacturer ?? '',
+    material: o.material ?? 'OUTRO',
+    colorName: o.colorName ?? o.name,
+    colorHex: o.colorHex,
+    stockGrams: o.stockGrams ?? 0,
+  }
+}
+
+// Seletor de filamento ÚNICO do app (Produto, Produção, edição): cartões
+// por família de cor, tipo PLA/PETG, filtros de marca/acabamento, busca
+// sem acento, teclado e cobertura de estoque -- ver FilamentPicker.tsx. O
+// painel continua sendo portado pro <dialog> ancestral (explicação abaixo).
 
 // Melhoria "Filamento com bolinha de cor": um <select> nativo não permite
 // nenhum elemento (nem um <span> colorido) dentro de <option> -- só texto
@@ -51,6 +79,9 @@ export function FilamentSelect({
   placeholder = 'Selecione',
   className = 'tk-input-full',
   disabled = false,
+  need = 0,
+  contextIds = [],
+  contextLabel,
 }: {
   name?: string
   options: FilamentSelectOption[]
@@ -59,97 +90,102 @@ export function FilamentSelect({
   placeholder?: string
   className?: string
   disabled?: boolean
+  // Gramas necessárias nesta escolha (g/un × planejada); 0 = não se aplica.
+  need?: number
+  // Outras cores da mesma peça (definem PLA/PETG padrão do seletor).
+  contextIds?: string[]
+  contextLabel?: string
 }) {
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [search, setSearch] = useState('')
   const [mounted, setMounted] = useState(false)
-  const panelRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const pickerFilaments = useMemo(() => options.map(toPickerFilament), [options])
 
   useEffect(() => setMounted(true), [])
 
-  useEffect(() => {
-    if (!pickerOpen) return
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') setPickerOpen(false)
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [pickerOpen])
-
   const selected = options.find((o) => o.id === value) ?? null
-  const term = search.trim().toLowerCase()
-  const visible = term
-    ? options.filter((o) => o.name.toLowerCase().includes(term))
-    : options
-
-  function openPicker() {
-    setSearch('')
-    setPickerOpen(true)
-  }
-  function pick(id: string) {
-    onChange(id)
-    setPickerOpen(false)
-  }
+  const split = selected ? splitColorName(selected.colorName ?? selected.name) : null
 
   return (
     <>
       <button
         ref={triggerRef}
         type="button"
-        onClick={openPicker}
+        onClick={() => setPickerOpen(true)}
         disabled={disabled}
         className={`flex items-center justify-between gap-2 text-left ${disabled ? 'opacity-60' : ''} ${className}`}
       >
         <span className="flex min-w-0 items-center gap-2">
-          {selected?.colorHex && <span style={{ background: selected.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />}
-          <span className={`truncate ${selected ? '' : 'text-slate-400 dark:text-slate-500'}`}>{selected ? selected.name : placeholder}</span>
+          {selected && split ? (
+            <>
+              <Swatch item={{ colorHex: selected.colorHex, finish: split.finish }} className="h-5 w-5" />
+              <span className="flex min-w-0 flex-wrap items-center gap-x-1.5">
+                <span className="truncate font-medium">{split.color}{split.finish !== 'Comum' ? ` ${split.finish}` : ''}</span>
+                {selected.material && <MaterialTag material={selected.material} />}
+                {selected.manufacturer && <span className="truncate text-[11px] text-slate-500 dark:text-slate-400">{selected.manufacturer}</span>}
+              </span>
+            </>
+          ) : (
+            <span className="truncate text-slate-400 dark:text-slate-500">{placeholder}</span>
+          )}
         </span>
         <span className="shrink-0 text-slate-400">▾</span>
       </button>
       {name && <input type="hidden" name={name} value={value} />}
       {mounted && pickerOpen && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={() => setPickerOpen(false)}>
-          <div
-            ref={panelRef}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
-          >
-            <div className="flex max-h-[70vh] flex-col">
-              <div className="border-b border-slate-200 p-3 dark:border-slate-800">
-                <input
-                  autoFocus
-                  type="search"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Buscar filamento..."
-                  className="tk-input-full"
-                />
-              </div>
-              <div className="overflow-y-auto p-2">
-                {visible.length === 0 ? (
-                  <p className="px-2 py-4 text-center text-sm text-slate-400 dark:text-slate-500">Nenhum filamento encontrado.</p>
-                ) : (
-                  visible.map((o) => (
-                    <button
-                      key={o.id}
-                      type="button"
-                      onClick={() => pick(o.id)}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800 ${o.id === value ? 'bg-violet-50 dark:bg-violet-500/10' : ''}`}
-                    >
-                      {o.colorHex ? (
-                        <span style={{ background: o.colorHex }} className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" />
-                      ) : (
-                        <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-slate-300 dark:border-slate-600" />
-                      )}
-                      <span className="truncate">{o.name}</span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        </div>,
+        <FilamentPicker
+          filaments={pickerFilaments}
+          mode="single"
+          selectedId={value || null}
+          need={need}
+          contextIds={contextIds}
+          contextLabel={contextLabel}
+          onPick={(ids) => { onChange(ids[0]); setPickerOpen(false) }}
+          onClose={() => setPickerOpen(false)}
+        />,
+        triggerRef.current?.closest('dialog') ?? document.body,
+      )}
+    </>
+  )
+}
+
+// "+ Adicionar outra cor": mesmo seletor em modo de marcação múltipla --
+// marca várias, confirma uma vez, o pai cria uma linha por cor escolhida.
+export function AddColorsButton({
+  options,
+  onAdd,
+  contextIds = [],
+  contextLabel,
+  className,
+  children,
+}: {
+  options: FilamentSelectOption[]
+  onAdd: (ids: string[]) => void
+  contextIds?: string[]
+  contextLabel?: string
+  className?: string
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  const [mounted, setMounted] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const pickerFilaments = useMemo(() => options.map(toPickerFilament), [options])
+  useEffect(() => setMounted(true), [])
+
+  return (
+    <>
+      <button ref={triggerRef} type="button" onClick={() => setOpen(true)} className={className}>
+        {children}
+      </button>
+      {mounted && open && createPortal(
+        <FilamentPicker
+          filaments={pickerFilaments}
+          mode="multi"
+          contextIds={contextIds}
+          contextLabel={contextLabel}
+          onPick={(ids) => { onAdd(ids); setOpen(false) }}
+          onClose={() => setOpen(false)}
+        />,
         triggerRef.current?.closest('dialog') ?? document.body,
       )}
     </>

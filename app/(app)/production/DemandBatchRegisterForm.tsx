@@ -1,4 +1,5 @@
 'use client'
+import type { FilamentFormOption } from '@/components/FilamentSelect'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createProductionRunDemandBatch } from '@/actions/productionRuns'
@@ -14,7 +15,7 @@ import type { WasteReason } from '@prisma/client'
 const WASTE_REASON_OPTIONS = Object.keys(WASTE_REASON_LABELS) as WasteReason[]
 
 type PrinterOption = { id: string; name: string; costPerHour: number }
-type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
+type FilamentOption = FilamentFormOption
 
 // Pedido do usuário: "quero conseguir registrar produção de todos os
 // pendentes, quero selecionar todos ou alguns" -- 1 linha por item marcado
@@ -257,6 +258,7 @@ export function DemandBatchRegisterForm({
                         filaments={row.filaments}
                         filamentOptions={filaments}
                         onChange={(i, patch) => updateRowFilament(row.key, i, patch)}
+                        plannedQuantity={row.quantityPlanned}
                       />
                     )}
                   </div>
@@ -266,6 +268,7 @@ export function DemandBatchRegisterForm({
                       filaments={row.filaments}
                       filamentOptions={filaments}
                       onChange={(i, patch) => updateRowFilament(row.key, i, patch)}
+                        plannedQuantity={row.quantityPlanned}
                     />
                   )}
 

@@ -1,4 +1,5 @@
 'use client'
+import type { FilamentFormOption } from '@/components/FilamentSelect'
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -18,7 +19,7 @@ type Option = { id: string; name: string; category?: string }
 // ProductionRunBatchForm mostrar o campo informativo e o rateio da Plate ao
 // vivo sem precisar buscar o Printer inteiro no client.
 type PrinterOption = { id: string; name: string; costPerHour: number }
-type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
+type FilamentOption = FilamentFormOption
 
 // Melhoria "Produção" (reformulação Plate): a lista principal volta a ser
 // uma linha por PEÇA/run, não mais agrupada por batchId -- desde que cada

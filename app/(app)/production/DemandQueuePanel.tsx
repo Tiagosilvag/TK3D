@@ -1,4 +1,5 @@
 'use client'
+import type { FilamentFormOption } from '@/components/FilamentSelect'
 import { useState } from 'react'
 import Link from 'next/link'
 import { getDeadlineBadge, ORDER_CHANNEL_LABELS } from '@/lib/format'
@@ -6,7 +7,7 @@ import type { OrderDemandRow } from '@/actions/orders'
 import { DemandBatchRegisterForm, type DemandSelection } from './DemandBatchRegisterForm'
 
 type PrinterOption = { id: string; name: string; costPerHour: number }
-type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
+type FilamentOption = FilamentFormOption
 
 // Melhoria "Pedidos com reserva de estoque" §3: painel "Peças pendentes
 // de encomenda" no topo de Produção -- só peça que ainda NÃO existe

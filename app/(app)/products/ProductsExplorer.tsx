@@ -1,4 +1,5 @@
 'use client'
+import type { FilamentFormOption } from '@/components/FilamentSelect'
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -30,7 +31,7 @@ export interface ProductCardData {
 }
 
 type PrinterOption = { id: string; name: string; costPerHour: number }
-type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
+type FilamentOption = FilamentFormOption
 type AccessoryOption = { id: string; name: string; colorName: string; avgUnitCost: number }
 
 // Melhoria "Produtos" §1/§2: listagem vira grade de cards horizontais (foto

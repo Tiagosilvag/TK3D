@@ -6,10 +6,10 @@ import { formatCurrency } from '@/lib/format'
 import { calculateGiftEquipmentCostPerUnit } from '@/lib/costing'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
-import { FilamentSelect } from '@/components/FilamentSelect'
+import { FilamentSelect, AddColorsButton, type FilamentFormOption } from '@/components/FilamentSelect'
 
 type PrinterOption = { id: string; name: string; costPerHour: number }
-type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
+type FilamentOption = FilamentFormOption
 type AccessoryOption = { id: string; name: string; colorName: string; avgUnitCost: number }
 
 type ProductValues = {
@@ -191,8 +191,17 @@ export function ProductForm({
     )
   }
 
-  function addPartFilamentRow(partIndex: number) {
-    setParts((rows) => rows.map((r, i) => (i === partIndex ? { ...r, filaments: [...r.filaments, emptyPartFilamentRow()] } : r)))
+  // "+ Adicionar outra cor": o seletor em modo de marcação múltipla devolve
+  // todas as cores escolhidas de uma vez -- uma linha por cor (peso a preencher).
+  function addPartFilamentRows(partIndex: number, filamentIds: string[]) {
+    setParts((rows) =>
+      rows.map((r, i) => {
+        if (i !== partIndex) return r
+        // Linha única ainda vazia (sem cor escolhida) é substituída em vez de ficar sobrando.
+        const kept = r.filaments.filter((f) => f.filamentId || f.weightGrams)
+        return { ...r, filaments: [...kept, ...filamentIds.map((filamentId) => ({ ...emptyPartFilamentRow(), filamentId }))] }
+      }),
+    )
   }
 
   function removePartFilamentRow(partIndex: number, filamentIndex: number) {
@@ -549,6 +558,9 @@ export function ProductForm({
                             options={filaments}
                             value={frow.filamentId}
                             onChange={(id) => updatePartFilamentRow(i, fi, { filamentId: id })}
+                            contextIds={row.filaments.filter((_, j) => j !== fi).map((f) => f.filamentId).filter(Boolean)}
+                            contextLabel={row.name || undefined}
+                            need={parseFloat(frow.weightGrams) || 0}
                           />
                           {rowFilament && rowFilament.pricePerGram <= 0 && (
                             <span className="mt-1 block text-amber-600 dark:text-amber-400">⚠️ sem preço</span>
@@ -578,9 +590,15 @@ export function ProductForm({
                       </div>
                     )
                   })}
-                  <button type="button" onClick={() => addPartFilamentRow(i)} className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400">
+                  <AddColorsButton
+                    options={filaments}
+                    onAdd={(ids) => addPartFilamentRows(i, ids)}
+                    contextIds={row.filaments.map((f) => f.filamentId).filter(Boolean)}
+                    contextLabel={row.name || undefined}
+                    className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400"
+                  >
                     + Adicionar outra cor (impressão multi-material)
-                  </button>
+                  </AddColorsButton>
                 </div>
               </div>
             ))}

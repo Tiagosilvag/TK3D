@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { toFilamentSelectOption } from '@/lib/filamentPicker'
 import {
   calculatePrinterDepreciationCostPerHour,
   resolvePlatformPrice,
@@ -112,10 +113,8 @@ export default async function ProductsPage() {
   })
 
   const filamentOptions = filaments.map((f) => ({
-    id: f.id,
-    name: `${f.manufacturer} ${f.colorName} (${f.material})`,
+    ...toFilamentSelectOption(f),
     pricePerGram: f.avgUnitCostPerGram.toNumber(),
-    colorHex: f.colorHex,
   }))
 
   const accessoryOptions = accessories.map((a) => ({ id: a.id, name: a.name, colorName: a.colorName, avgUnitCost: a.avgUnitCost.toNumber() }))

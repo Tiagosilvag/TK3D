@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { toFilamentSelectOption } from '@/lib/filamentPicker'
 import { prisma } from '@/lib/prisma'
 import { EditProductionRunForm } from './EditProductionRunForm'
 import { ProductionRunsExplorer, type ProductionRunRow } from './ProductionRunsExplorer'
@@ -245,10 +246,8 @@ export default async function ProductionPage({
   })
 
   const filaments = filamentRecords.map((f) => ({
-    id: f.id,
-    name: `${f.manufacturer} ${f.colorName} (${f.material}) (${f.currentStockGrams.toNumber()}g restantes)`,
+    ...toFilamentSelectOption(f),
     pricePerGram: f.avgUnitCostPerGram.toNumber(),
-    colorHex: f.colorHex,
   }))
 
   const printerOptions = printers.map((p) => {

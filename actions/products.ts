@@ -1,4 +1,6 @@
 'use server'
+import { toFilamentSelectOption } from '@/lib/filamentPicker'
+import type { FilamentFormOption } from '@/components/FilamentSelect'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
@@ -681,14 +683,6 @@ export async function getProductProductionDefaults(productId: string): Promise<P
   }
 }
 
-function filamentOptionLabel(f: {
-  manufacturer: string
-  colorName: string
-  material: string
-}): string {
-  return `${f.manufacturer} ${f.colorName} (${f.material})`
-}
-
 // Filament options for the product edit form's dropdown. Filtered to
 // in-stock filaments (currentStockGrams > 0), which is correct for picking
 // a NEW filament -- BUT if the product's *current* filament has since
@@ -701,7 +695,7 @@ function filamentOptionLabel(f: {
 // up separately and returned as a clearly-labeled "(esgotado)" option, so
 // defaultValue always matches a real <option> and the user must actively
 // choose to keep it or pick a replacement.
-export async function getEditableFilamentOptions(productId: string): Promise<{ id: string; name: string; pricePerGram: number; colorHex: string | null }[]> {
+export async function getEditableFilamentOptions(productId: string): Promise<FilamentFormOption[]> {
   const product = await prisma.product.findUniqueOrThrow({ where: { id: productId } })
   const inStock = await prisma.filament.findMany({
     where: { currentStockGrams: { gt: 0 } },
@@ -716,8 +710,8 @@ export async function getEditableFilamentOptions(productId: string): Promise<{ i
   const priceOf = (f: { avgUnitCostPerGram: Prisma.Decimal }) => f.avgUnitCostPerGram.toNumber()
 
   return [
-    ...(depletedCurrent ? [{ id: depletedCurrent.id, name: `${filamentOptionLabel(depletedCurrent)} (esgotado)`, pricePerGram: priceOf(depletedCurrent), colorHex: depletedCurrent.colorHex }] : []),
-    ...inStock.map((f) => ({ id: f.id, name: filamentOptionLabel(f), pricePerGram: priceOf(f), colorHex: f.colorHex })),
+    ...(depletedCurrent ? [{ ...toFilamentSelectOption(depletedCurrent, ' (esgotado)'), pricePerGram: priceOf(depletedCurrent) }] : []),
+    ...inStock.map((f) => ({ ...toFilamentSelectOption(f), pricePerGram: priceOf(f) })),
   ]
 }
 

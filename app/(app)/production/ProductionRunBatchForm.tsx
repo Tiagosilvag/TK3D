@@ -11,7 +11,7 @@ import { todayInBrasiliaString as today } from '@/lib/timezone'
 import { failedFor, plannedChangePatch, successChangePatch, failedChangePatch, type FilamentComponentRow } from '@/lib/productionRunRow'
 import { SubmitButton } from '@/components/SubmitButton'
 import { HoursInput } from '@/components/HoursInput'
-import { FilamentSelect } from '@/components/FilamentSelect'
+import { FilamentSelect, type FilamentFormOption } from '@/components/FilamentSelect'
 import { ProductSelect } from '@/components/ProductSelect'
 import type { WasteReason } from '@prisma/client'
 
@@ -32,7 +32,7 @@ type PrinterOption = { id: string; name: string; costPerHour: number }
 // colorHex agora, pra usar o mesmo FilamentSelect (components/
 // FilamentSelect.tsx) já usado em ProductForm.tsx -- <select> nativo não
 // tem como mostrar a bolinha de cor dentro de <option>.
-type FilamentOption = { id: string; name: string; pricePerGram: number; colorHex: string | null }
+type FilamentOption = FilamentFormOption
 
 // Melhoria "Produção" §3: uma "linha" do modal -- uma peça marcável do
 // produto composto, ou a única linha implícita de um produto simples (sem
@@ -120,12 +120,22 @@ export function FilamentEditor({
   filamentOptions,
   onChange,
   disabled,
+  plannedQuantity,
+  contextLabel,
 }: {
   filaments: FilamentComponentRow[]
   filamentOptions: FilamentOption[]
   onChange: (index: number, patch: Partial<FilamentComponentRow>) => void
   disabled?: boolean
+  // Planejada da peça: gramas por unidade × planejada = quanto cada cor
+  // precisa ter em estoque (o seletor esmaece o que não cobre).
+  plannedQuantity?: string
+  contextLabel?: string
 }) {
+  function needFor(row: FilamentComponentRow): number {
+    return (parseFloat(row.weightGramsPerUnit) || 0) * (parseInt(plannedQuantity ?? '', 10) || 0)
+  }
+  const siblingIds = filaments.map((f) => f.filamentId).filter(Boolean)
   function priceFor(filamentId: string): number {
     return filamentOptions.find((f) => f.id === filamentId)?.pricePerGram ?? 0
   }
@@ -138,7 +148,7 @@ export function FilamentEditor({
       <>
         <label className="text-xs">
           Filamento
-          <FilamentSelect options={filamentOptions} value={f.filamentId} onChange={(id) => onChange(0, { filamentId: id })} disabled={disabled} />
+          <FilamentSelect options={filamentOptions} value={f.filamentId} onChange={(id) => onChange(0, { filamentId: id })} disabled={disabled} need={needFor(f)} contextLabel={contextLabel} />
         </label>
         <label className="text-xs">
           Peso por unidade (g)
@@ -184,7 +194,7 @@ export function FilamentEditor({
               return (
                 <tr key={i}>
                   <td className="py-1 pr-2">
-                    <FilamentSelect options={filamentOptions} value={f.filamentId} onChange={(id) => onChange(i, { filamentId: id })} disabled={disabled} />
+                    <FilamentSelect options={filamentOptions} value={f.filamentId} onChange={(id) => onChange(i, { filamentId: id })} disabled={disabled} need={needFor(f)} contextIds={siblingIds} contextLabel={contextLabel} />
                   </td>
                   <td className="py-1 pr-2">
                     <input
@@ -808,6 +818,8 @@ export function ProductionRunBatchForm({
                               filamentOptions={filaments}
                               onChange={(i, patch) => updateRowFilament(row.key, i, patch)}
                               disabled={!row.checked}
+                              plannedQuantity={row.quantityPlanned}
+                              contextLabel={row.label}
                             />
                           )}
                         </div>
@@ -818,6 +830,8 @@ export function ProductionRunBatchForm({
                             filamentOptions={filaments}
                             onChange={(i, patch) => updateRowFilament(row.key, i, patch)}
                             disabled={!row.checked}
+                            plannedQuantity={row.quantityPlanned}
+                            contextLabel={row.label}
                           />
                         )}
 
@@ -1048,6 +1062,7 @@ export function ProductionRunBatchForm({
                                 filaments={item.filaments}
                                 filamentOptions={filaments}
                                 onChange={(i, patch) => updatePlateItemFilament(item.key, i, patch)}
+                                plannedQuantity={item.quantityPlanned}
                               />
                             )}
                           </div>
@@ -1057,6 +1072,7 @@ export function ProductionRunBatchForm({
                               filaments={item.filaments}
                               filamentOptions={filaments}
                               onChange={(i, patch) => updatePlateItemFilament(item.key, i, patch)}
+                              plannedQuantity={item.quantityPlanned}
                             />
                           )}
 
