@@ -27,6 +27,8 @@ export interface SaleModalInput {
   freight: number
   // null = taxa automática do canal; número = taxa total digitada à mão.
   platformFeeTotal: number | null
+  // Só Mercado Livre: tabela de taxa (null = a do anúncio cadastrado, senão Clássico).
+  listingType?: 'CLASSICO' | 'PREMIUM' | null
   packaging: PackagingLineInput[]
   gift: { productId: string; quantity: number; unitCost: number } | null
 }
@@ -89,8 +91,8 @@ async function buildSnapshot(input: SaleModalInput): Promise<{ snapshot: SaleCos
   if (input.platformFeeTotal !== null) {
     platformFee = { feePercent: 0, feeFixed: 0, amountTotal: input.platformFeeTotal, manual: true }
   } else {
-    const auto = await resolveSalePlatformFee(input.channel, input.unitPrice, input.productId)
-    if (auto) platformFee = { feePercent: auto.feePercent, feeFixed: auto.feeFixed, amountTotal: auto.feeAmountPerUnit * input.quantity }
+    const auto = await resolveSalePlatformFee(input.channel, input.unitPrice, input.productId, input.channel === 'MERCADO_LIVRE' ? input.listingType : null)
+    if (auto) platformFee = { feePercent: auto.feePercent, feeFixed: auto.feeFixed, amountTotal: auto.feeAmountPerUnit * input.quantity, ...(input.channel === 'MERCADO_LIVRE' && input.listingType ? { listingType: input.listingType } : {}) }
   }
 
   const snapshot: SaleCostSnapshot = {
@@ -236,6 +238,7 @@ export async function getSaleModalInput(saleId: string | 'latest'): Promise<Sale
     unitPrice: sale.unitPrice.toNumber(),
     freight: freight?.amount.toNumber() ?? 0,
     platformFeeTotal: snapshot?.platformFee?.manual ? snapshot.platformFee.amountTotal : null,
+    listingType: snapshot?.platformFee?.listingType ?? null,
     packaging: legacy,
     gift: gift ? { productId: gift.productId, quantity: gift.quantity, unitCost: gift.unitCost.toNumber() } : null,
   }

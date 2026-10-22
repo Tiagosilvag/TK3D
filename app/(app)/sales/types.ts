@@ -9,6 +9,8 @@ export interface PlatformFeeInfo {
   feePercent: number
   feeFixed: number
   feeTiers: PlatformFeeTier[] | null
+  // Mercado Livre: 2ª tabela (Premium); feeTiers é a Clássico.
+  feeTiersPremium?: PlatformFeeTier[] | null
 }
 
 // Brinde: produto sem preço, anexável como custo extra numa venda.

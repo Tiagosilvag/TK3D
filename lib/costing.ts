@@ -1116,6 +1116,8 @@ export interface SaleCostSnapshot {
   // (nunca tiveram taxa) e pra venda anterior a este ajuste (nenhum dado
   // histórico pra reconstruir -- nunca inventado retroativamente).
   platformFee?: {
+    // Mercado Livre: tabela de taxa usada (Clássico/Premium), pra reeditar sem mudar a taxa.
+    listingType?: 'CLASSICO' | 'PREMIUM'
     feePercent: number
     feeFixed: number
     amountTotal: number

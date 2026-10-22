@@ -132,4 +132,30 @@ describe('updateSaleFromModal / undoCreatedSale', () => {
     const latest = await getSaleModalInput('latest')
     expect([latest?.buyer, latest?.quantity, latest?.packaging.length]).toEqual(['ULTIMA', 3, 1])
   })
+
+  it('Mercado Livre: Premium usa a 2ª tabela de faixas e a escolha sobrevive à edição', async () => {
+    const { base } = await setup()
+    const ml = await prisma.marketplacePlatform.upsert({
+      where: { platform: 'MERCADO_LIVRE' },
+      update: {},
+      create: { platform: 'MERCADO_LIVRE', feePercent: 0.1, feeFixed: 0, avgFreight: 0 },
+    })
+    const prev = { feePercent: ml.feePercent, feeFixed: ml.feeFixed, feeTiers: ml.feeTiers, feeTiersPremium: ml.feeTiersPremium }
+    await prisma.marketplacePlatform.update({
+      where: { id: ml.id },
+      data: { feePercent: 0.1, feeFixed: 0, feeTiers: [{ maxPrice: null, feePercent: 0.1, feeFixed: 0 }], feeTiersPremium: [{ maxPrice: null, feePercent: 0.2, feeFixed: 0 }] },
+    })
+    try {
+      const classico = await createSaleFromModal({ ...base, channel: 'MERCADO_LIVRE', listingType: 'CLASSICO' })
+      const premium = await createSaleFromModal({ ...base, channel: 'MERCADO_LIVRE', listingType: 'PREMIUM' })
+      expect((await getSaleProfit(classico.saleId!)).platformFeeAmount).toBeCloseTo(6, 6) // 10% de 60
+      expect((await getSaleProfit(premium.saleId!)).platformFeeAmount).toBeCloseTo(12, 6) // 20% de 60
+      expect((await getSaleModalInput(premium.saleId!))?.listingType).toBe('PREMIUM')
+    } finally {
+      await prisma.marketplacePlatform.update({
+        where: { id: ml.id },
+        data: { feePercent: prev.feePercent, feeFixed: prev.feeFixed, feeTiers: prev.feeTiers ?? undefined, feeTiersPremium: prev.feeTiersPremium ?? undefined },
+      })
+    }
+  })
 })

@@ -175,11 +175,12 @@ export async function resolveSalePlatformFee(
   channel: SaleChannel,
   unitPrice: number,
   productId?: string,
+  forcedListingType?: ListingType | null,
 ): Promise<{ feePercent: number; feeFixed: number; feeAmountPerUnit: number } | null> {
   if (channel !== 'SHOPEE' && channel !== 'MERCADO_LIVRE') return null
   const platformConfig = await prisma.marketplacePlatform.findUniqueOrThrow({ where: { platform: channel } })
   const listing = productId ? await findRelevantListing(productId, platformConfig.id) : null
-  const tiers = resolveListingTiers(platformConfig, listing?.listingType)
+  const tiers = resolveListingTiers(platformConfig, forcedListingType ?? listing?.listingType)
   const { feePercent, feeFixed } =
     tiers && tiers.length > 0
       ? resolveTieredPlatformFee(tiers, unitPrice)

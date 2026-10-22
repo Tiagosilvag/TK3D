@@ -95,6 +95,7 @@ export function NewSaleModal({
   const [giftProductId, setGiftProductId] = useState(initial?.gift?.productId ?? giftProducts[0]?.id ?? '')
   const [giftQty, setGiftQty] = useState(String(initial?.gift?.quantity ?? 1))
   const [giftCost, setGiftCost] = useState(String(initial?.gift?.unitCost ?? giftProducts[0]?.unitCost ?? 0))
+  const [listingType, setListingType] = useState<'CLASSICO' | 'PREMIUM'>(initial?.listingType ?? 'CLASSICO')
   const [listingPrice, setListingPrice] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -107,7 +108,9 @@ export function NewSaleModal({
 
   const product = useMemo(() => products.find((p) => p.productId === productId) ?? null, [products, productId])
   const packagingById = useMemo(() => new Map(packagingItems.map((p) => [p.id, p])), [packagingItems])
-  const platform = platforms.find((p) => p.kind === channel) ?? null
+  const basePlatform = platforms.find((p) => p.kind === channel) ?? null
+  // Mercado Livre: Premium usa a 2ª tabela de faixas.
+  const platform = basePlatform && channel === 'MERCADO_LIVRE' && listingType === 'PREMIUM' && basePlatform.feeTiersPremium?.length ? { ...basePlatform, feeTiers: basePlatform.feeTiersPremium } : basePlatform
 
   useEffect(() => {
     if (initial) return
@@ -153,7 +156,7 @@ export function NewSaleModal({
       } else {
         try {
           const [result, fr] = await Promise.all([
-            getPlatformSalePrice(product!.productId, channel as MarketplacePlatformKind),
+            getPlatformSalePrice(product!.productId, channel as MarketplacePlatformKind, channel === 'MERCADO_LIVRE' ? listingType : undefined),
             resolveSaleFreight(channel as SaleChannel, product!.productId),
           ])
           price = result.price
@@ -169,7 +172,7 @@ export function NewSaleModal({
     }
     void fill()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- só quando produto/plataforma mudam
-  }, [productId, channel])
+  }, [productId, channel, listingType])
 
   function chooseProduct(p: SaleModalProduct) {
     setProductId(p.productId)
@@ -252,6 +255,7 @@ export function NewSaleModal({
       unitPrice: priceNum,
       freight: freightNum,
       platformFeeTotal: feeManual !== null ? feeTotal : null,
+      listingType: channel === 'MERCADO_LIVRE' ? listingType : null,
       packaging: lines.filter((l) => l.quantityPerUnit > 0).map((l) => ({ packagingItemId: l.packagingItemId, quantityPerUnit: l.quantityPerUnit })),
       gift: gift && gift.quantity > 0 ? gift : null,
     }
@@ -347,6 +351,18 @@ export function NewSaleModal({
                     </button>
                   ))}
                 </div>
+                {channel === 'MERCADO_LIVRE' && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="text-xs text-slate-500 dark:text-slate-400">Tipo de anúncio</span>
+                    <div className="inline-flex gap-1 rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800">
+                      {(['CLASSICO', 'PREMIUM'] as const).map((t) => (
+                        <button key={t} type="button" aria-pressed={listingType === t} onClick={() => { setListingType(t); setFeeManual(null) }} className={`rounded-md px-2.5 py-1 text-xs ${listingType === t ? 'bg-white font-semibold shadow-sm dark:bg-slate-900' : 'text-slate-500 dark:text-slate-400'}`}>
+                          {t === 'CLASSICO' ? 'Clássico' : 'Premium'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <label className={label}>Data da venda<input type="date" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} className={`${input} mt-1`} required /></label>

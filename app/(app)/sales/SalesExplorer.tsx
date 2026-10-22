@@ -32,6 +32,8 @@ export interface SaleItemRow {
   platformFeeAmount: number
   platformFeeBreakdown: { feePercent: number; feeFixed: number } | null
   profit: number
+  // Embalagem dentro de costTotal (venda feita pelo modal novo; 0 nas antigas).
+  packagingCost: number
   estimated: boolean
   // Attrs estruturados (peça/cor por hierarquia, VariantChip compact) --
   // vazio quando a venda não tem colorComboKey ou é anterior ao
@@ -57,6 +59,7 @@ export interface SaleBatchRow {
     platformFeeAmount: number
     received: number
     costTotal: number
+    packagingCost: number
     profit: number
     margin: number | null
   }
@@ -84,6 +87,31 @@ function matchesSearch(batch: SaleBatchRow, term: string): boolean {
   const needle = term.toLowerCase()
   if (batch.buyerOrPlatform?.toLowerCase().includes(needle)) return true
   return batch.items.some((i) => i.productName.toLowerCase().includes(needle))
+}
+
+// Conta do lucro da venda (mesma ordem do modal): o que sobrou, linha a linha.
+function SaleAccount({ batch }: { batch: SaleBatchRow }) {
+  const t = batch.totals
+  const giftCost = batch.gift?.cost ?? 0
+  const freightCost = batch.freight?.cost ?? 0
+  const production = t.costTotal - giftCost - t.packagingCost
+  const rows: { label: string; value: number; minus?: boolean }[] = [
+    { label: 'Receita', value: t.saleTotal },
+    { label: 'Produção', value: production, minus: true },
+    { label: 'Embalagem', value: t.packagingCost, minus: true },
+    { label: 'Taxa', value: t.platformFeeAmount, minus: true },
+    { label: 'Frete', value: freightCost, minus: true },
+    { label: 'Brinde', value: giftCost, minus: true },
+  ]
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs tabular-nums dark:border-slate-700 dark:bg-slate-900">
+      <span className="font-medium text-slate-500 dark:text-slate-400">Conta do lucro</span>
+      {rows.filter((r) => r.value > 0 || r.label === 'Receita').map((r) => (
+        <span key={r.label} className="text-slate-600 dark:text-slate-300">{r.minus ? '− ' : ''}{r.label} {formatCurrency(r.value)}</span>
+      ))}
+      <span className={`font-semibold ${t.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>= Lucro {formatCurrency(t.profit)}{t.margin !== null ? ` (${(t.margin * 100).toFixed(0)}%)` : ''}</span>
+    </div>
+  )
 }
 
 function BatchRow({ batch, expanded, onToggle }: { batch: SaleBatchRow; expanded: boolean; onToggle: () => void }) {
@@ -147,6 +175,7 @@ function BatchRow({ batch, expanded, onToggle }: { batch: SaleBatchRow; expanded
 
       {expanded && (
         <div className="space-y-2 border-t border-slate-100 bg-slate-50/50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/40">
+          <SaleAccount batch={batch} />
           {batch.gift && (
             <div className="flex items-center gap-1.5">
               <span className="inline-flex items-center gap-1 rounded-full bg-pink-100 px-2 py-0.5 text-xs font-medium text-pink-700 dark:bg-pink-900/40 dark:text-pink-300">

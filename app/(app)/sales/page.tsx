@@ -102,6 +102,7 @@ export default async function SalesPage({
     feePercent: p.feePercent.toNumber(),
     feeFixed: p.feeFixed.toNumber(),
     feeTiers: p.feeTiers as unknown as PlatformFeeTier[] | null,
+    feeTiersPremium: p.feeTiersPremium as unknown as PlatformFeeTier[] | null,
   }))
 
   // getSaleProfit (task-10 brief, new feature) now returns {profit, estimated}
@@ -173,6 +174,7 @@ export default async function SalesPage({
         platformFeeAmount: p.platformFeeAmount,
         platformFeeBreakdown: p.platformFeeBreakdown,
         profit: p.profit,
+        packagingCost: (s.costSnapshot as { packaging?: { total?: number } } | null)?.packaging?.total ?? 0,
         estimated: p.estimated,
         colorAttrs: colorInfo?.attrs ?? [],
         colorLabel: colorInfo?.label ?? null,
@@ -216,7 +218,7 @@ export default async function SalesPage({
       colorDots: [...dotsByHex.entries()].map(([hex, label]) => ({ hex, label })),
       gift: batch.gift ? { id: batch.gift.id, productName: batch.gift.product.name, cost: batchGiftCost } : null,
       freight: batch.freight ? { id: batch.freight.id, cost: batchFreightCost } : null,
-      totals: { quantity, saleTotal: totals.saleTotal, platformFeeAmount: totals.platformFeeAmount, received, costTotal, profit, margin: received > 0 ? profit / received : null },
+      totals: { quantity, saleTotal: totals.saleTotal, platformFeeAmount: totals.platformFeeAmount, received, costTotal, packagingCost: items.reduce((sum, i) => sum + i.packagingCost, 0), profit, margin: received > 0 ? profit / received : null },
     }
   })
 
